@@ -340,6 +340,58 @@ class _HomeScreenState extends State<HomeScreen>
                                           artist: _selectedTrack!.artist,
                                           audioSource: _selectedTrack!.path,
                                           isUrl: _selectedTrack!.isUrl,
+                                          rating: _selectedTrack!.rating,
+                                          notes: _selectedTrack!.comment,
+                                          generalTags:
+                                              _selectedTrack!.generalTags,
+                                          onRatingChanged: (rating) {
+                                            if (_selectedTrack?.id != null) {
+                                              context
+                                                  .read<CollectionBloc>()
+                                                  .add(
+                                                    UpdateTrackRating(
+                                                      _selectedTrack!.id!,
+                                                      rating,
+                                                    ),
+                                                  );
+                                            }
+                                          },
+                                          onNotesChanged: (notes) {
+                                            if (_selectedTrack?.id != null) {
+                                              context
+                                                  .read<CollectionBloc>()
+                                                  .add(
+                                                    UpdateTrackComment(
+                                                      _selectedTrack!.id!,
+                                                      notes,
+                                                    ),
+                                                  );
+                                            }
+                                          },
+                                          onAddGeneralTag: (tag) {
+                                            if (_selectedTrack?.id != null) {
+                                              context
+                                                  .read<CollectionBloc>()
+                                                  .add(
+                                                    AddTrackGeneralTag(
+                                                      _selectedTrack!.id!,
+                                                      tag,
+                                                    ),
+                                                  );
+                                            }
+                                          },
+                                          onRemoveGeneralTag: (tag) {
+                                            if (_selectedTrack?.id != null) {
+                                              context
+                                                  .read<CollectionBloc>()
+                                                  .add(
+                                                    RemoveTrackGeneralTag(
+                                                      _selectedTrack!.id!,
+                                                      tag,
+                                                    ),
+                                                  );
+                                            }
+                                          },
                                         ),
                               ),
                             ],

@@ -279,12 +279,21 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
   ) async {
     if (state is CollectionLoaded) {
       final currentTracks = (state as CollectionLoaded).tracks;
-
       try {
         await _collectionService.updateRating(event.trackId, event.rating);
-        final tracks = await _collectionService.getAllTracks();
-        emit(CollectionLoaded(tracks: tracks));
+
+        // Update the track in the current state
+        final updatedTracks =
+            currentTracks.map((track) {
+              if (track.id == event.trackId) {
+                return track.copyWith(rating: event.rating);
+              }
+              return track;
+            }).toList();
+
+        emit(CollectionLoaded(tracks: updatedTracks));
       } catch (e) {
+        print('Error updating rating: $e');
         emit(CollectionError(e.toString(), tracks: currentTracks));
       }
     }
@@ -296,12 +305,21 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
   ) async {
     if (state is CollectionLoaded) {
       final currentTracks = (state as CollectionLoaded).tracks;
-
       try {
         await _collectionService.updateComment(event.trackId, event.comment);
-        final tracks = await _collectionService.getAllTracks();
-        emit(CollectionLoaded(tracks: tracks));
+
+        // Update the track in the current state
+        final updatedTracks =
+            currentTracks.map((track) {
+              if (track.id == event.trackId) {
+                return track.copyWith(comment: event.comment);
+              }
+              return track;
+            }).toList();
+
+        emit(CollectionLoaded(tracks: updatedTracks));
       } catch (e) {
+        print('Error updating comment: $e');
         emit(CollectionError(e.toString(), tracks: currentTracks));
       }
     }
@@ -313,12 +331,25 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
   ) async {
     if (state is CollectionLoaded) {
       final currentTracks = (state as CollectionLoaded).tracks;
-
       try {
         await _collectionService.addGeneralTag(event.trackId, event.tag);
-        final tracks = await _collectionService.getAllTracks();
-        emit(CollectionLoaded(tracks: tracks));
+
+        // Update the track in the current state
+        final updatedTracks =
+            currentTracks.map((track) {
+              if (track.id == event.trackId) {
+                List<String> newTags = List<String>.from(track.generalTags);
+                if (!newTags.contains(event.tag)) {
+                  newTags.add(event.tag);
+                }
+                return track.copyWith(generalTags: newTags);
+              }
+              return track;
+            }).toList();
+
+        emit(CollectionLoaded(tracks: updatedTracks));
       } catch (e) {
+        print('Error adding general tag: $e');
         emit(CollectionError(e.toString(), tracks: currentTracks));
       }
     }
@@ -330,12 +361,23 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
   ) async {
     if (state is CollectionLoaded) {
       final currentTracks = (state as CollectionLoaded).tracks;
-
       try {
         await _collectionService.removeGeneralTag(event.trackId, event.tag);
-        final tracks = await _collectionService.getAllTracks();
-        emit(CollectionLoaded(tracks: tracks));
+
+        // Update the track in the current state
+        final updatedTracks =
+            currentTracks.map((track) {
+              if (track.id == event.trackId) {
+                List<String> newTags = List<String>.from(track.generalTags);
+                newTags.remove(event.tag);
+                return track.copyWith(generalTags: newTags);
+              }
+              return track;
+            }).toList();
+
+        emit(CollectionLoaded(tracks: updatedTracks));
       } catch (e) {
+        print('Error removing general tag: $e');
         emit(CollectionError(e.toString(), tracks: currentTracks));
       }
     }
