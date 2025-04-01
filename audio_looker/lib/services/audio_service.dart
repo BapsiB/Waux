@@ -55,71 +55,96 @@ class AudioService {
 
   Future<void> loadAudio(String source, {bool isUrl = false}) async {
     try {
+      print(
+        '🔍 AudioService: Starting to load audio from: $source, isUrl: $isUrl',
+      );
+
       if (isUrl) {
         // For network URLs
         try {
+          print('🔍 AudioService: Setting URL in player');
           await _audioPlayer.setUrl(source);
+          print('✅ AudioService: Successfully set URL in player');
         } catch (e) {
-          print('Error setting URL: $e');
+          print('❌ AudioService: Error setting URL: $e');
           // Continue with waveform extraction even if playback fails
         }
 
-        // Download for waveform extraction
+        print('🔍 AudioService: Extracting waveform from URL');
         await _extractWaveformFromUrl(source);
+        print('✅ AudioService: Completed URL waveform extraction');
       } else {
         // For local files
         try {
+          print('🔍 AudioService: Setting file path in player: $source');
           await _audioPlayer.setFilePath(source);
+          print('✅ AudioService: Successfully set file path in player');
         } catch (e) {
-          print('Error setting file path: $e');
+          print('❌ AudioService: Error setting file path: $e');
           // Continue with waveform extraction even if playback fails
         }
 
-        // Generate waveform data
+        print('🔍 AudioService: Extracting waveform from file');
         await _extractWaveformFromFile(source);
+        print('✅ AudioService: Completed file waveform extraction');
       }
+
+      print('✅ AudioService: Successfully completed loadAudio');
     } catch (e) {
-      print('Error loading audio: $e');
+      print('❌ AudioService: Error in loadAudio: $e');
 
       // Generate a random waveform as fallback
+      print('🔍 AudioService: Generating random waveform as fallback');
       _generateRandomWaveform();
       if (_waveformData != null) {
+        print('🔍 AudioService: Adding random waveform data to stream');
         _waveformController.add(_waveformData!);
+        print('✅ AudioService: Successfully added random waveform to stream');
       }
     }
   }
 
   Future<void> _extractWaveformFromFile(String filePath) async {
+    print('🔍 AudioService: Starting waveform extraction from file: $filePath');
     final tempDir = await getTemporaryDirectory();
     final outputFile = '${tempDir.path}/waveform_data.txt';
+    print('🔍 AudioService: Output file path: $outputFile');
 
     // Use FFmpeg Kit to extract audio data for waveform
-    print('Running FFmpeg to extract waveform from: $filePath');
+    print('🔍 AudioService: Running FFmpeg command');
 
+    // Modify the FFmpeg command to add -y flag which forces overwrite
     final session = await FFmpegKit.execute(
-      '-i "$filePath" -ac 1 -filter:a aresample=8000 -map 0:a -c:a pcm_s16le -f data "$outputFile"',
+      '-y -i "$filePath" -ac 1 -filter:a aresample=8000 -map 0:a -c:a pcm_s16le -f data "$outputFile"',
     );
 
     final returnCode = await session.getReturnCode();
+    print(
+      '🔍 AudioService: FFmpeg return code: ${returnCode?.getValue() ?? "unknown"}',
+    );
 
     if (ReturnCode.isSuccess(returnCode)) {
-      print('FFmpeg succeeded, processing waveform data');
+      print('✅ AudioService: FFmpeg succeeded, processing waveform data');
       await _processWaveformData(outputFile);
+      print('✅ AudioService: Completed processing waveform data');
     } else {
       print(
-        'FFmpeg failed with return code: ${returnCode?.getValue() ?? "unknown"}',
+        '❌ AudioService: FFmpeg failed with return code: ${returnCode?.getValue() ?? "unknown"}',
       );
 
       // Get logs for debugging
       final logs = await session.getLogs();
       for (final log in logs) {
-        print('FFmpeg log: ${log.getMessage()}');
+        print('❌ AudioService FFmpeg log: ${log.getMessage()}');
       }
 
       // Use fallback method
+      print('🔍 AudioService: Using random waveform fallback');
       _generateRandomWaveform();
       if (_waveformData != null) {
+        print('🔍 AudioService: Adding random waveform data to stream');
         _waveformController.add(_waveformData!);
+        print('✅ AudioService: Successfully added random waveform to stream');
       }
     }
   }
@@ -147,14 +172,19 @@ class AudioService {
 
   Future<void> _processWaveformData(String dataFilePath) async {
     try {
+      print(
+        '🔍 AudioService: Starting to process waveform data from: $dataFilePath',
+      );
       final file = File(dataFilePath);
       if (!await file.exists()) {
-        print('Waveform data file not found at: $dataFilePath');
+        print('❌ AudioService: Waveform data file not found at: $dataFilePath');
         throw Exception('Waveform data file not found');
       }
 
       final bytes = await file.readAsBytes();
-      print('Read ${bytes.length} bytes from waveform data file');
+      print(
+        '🔍 AudioService: Read ${bytes.length} bytes from waveform data file',
+      );
 
       // Convert bytes to audio samples (16-bit PCM)
       List<double> samples = [];
@@ -203,25 +233,36 @@ class AudioService {
 
       // Notify listeners
       _waveformController.add(_waveformData!);
+      // Notify listeners
+      print('🔍 AudioService: Adding processed waveform data to stream');
+      _waveformController.add(_waveformData!);
+      print('✅ AudioService: Successfully added waveform data to stream');
     } catch (e) {
-      print('Error processing waveform data: $e');
+      print('❌ AudioService: Error processing waveform data: $e');
 
       // Fallback to a random waveform on error
+      print(
+        '🔍 AudioService: Using random waveform fallback after processing error',
+      );
       _generateRandomWaveform();
 
       // Notify listeners even on error
       if (_waveformData != null) {
+        print('🔍 AudioService: Adding fallback waveform data to stream');
         _waveformController.add(_waveformData!);
+        print('✅ AudioService: Successfully added fallback waveform to stream');
       }
     }
   }
 
-  // Generates a random waveform as fallback
   void _generateRandomWaveform() {
-    print('Generating random waveform data');
+    print('🔍 AudioService: Generating random waveform data');
     _waveformData = List.generate(
       100,
       (index) => (0.3 + 0.7 * (index % 10) / 10),
+    );
+    print(
+      '✅ AudioService: Generated ${_waveformData?.length ?? 0} random data points',
     );
   }
 

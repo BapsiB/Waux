@@ -150,6 +150,7 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   StreamSubscription? _durationSubscription;
   StreamSubscription? _waveformSubscription;
   String? _currentSource;
+  Timer? _loadingTimeout;
 
   AudioPlayerBloc(this._audioService) : super(AudioPlayerInitial()) {
     on<LoadAudio>(_onLoadAudio);
@@ -167,56 +168,136 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     LoadAudio event,
     Emitter<AudioPlayerState> emit,
   ) async {
+    print('🔄 Bloc: Received LoadAudio event for source: ${event.source}');
     emit(AudioPlayerLoading());
 
+    // Set timeout to prevent infinite loading
+    _loadingTimeout?.cancel();
+    _loadingTimeout = Timer(const Duration(seconds: 15), () {
+      print('⏱️ Bloc: Loading timed out after 15 seconds');
+      if (state is AudioPlayerLoading) {
+        // If we're still loading after 15 seconds, force transition to loaded state
+        // even if we have to use empty/default data
+        print('⚠️ Bloc: Forcing transition from loading state due to timeout');
+
+        final tagsList =
+            _currentSource != null
+                ? _audioService.getTagsForAudio(_currentSource!)
+                : [];
+
+        emit(
+          AudioPlayerLoaded(
+            isPlaying: false,
+            position: Duration.zero,
+            duration: Duration.zero,
+            waveformData: _audioService.waveformData ?? [],
+            tags: List<AudioTag>.from(tagsList),
+          ),
+        );
+      }
+    });
+
     try {
+      print('🔄 Bloc: Cleaning up previous subscriptions');
       // Clean up previous subscriptions
       await _cancelSubscriptions();
 
-      // Load the audio
-      await _audioService.loadAudio(event.source, isUrl: event.isUrl);
+      // Set the current source before loading to ensure we can get tags for it
       _currentSource = event.source;
 
+      print(
+        '🔄 Bloc: Loading audio from: ${event.source}, isUrl: ${event.isUrl}',
+      );
+      // Load the audio
+      await _audioService.loadAudio(event.source, isUrl: event.isUrl);
+      print('✅ Bloc: Successfully loaded audio');
+
       // Set up new subscriptions
-      _positionSubscription = _audioService.positionStream.listen((position) {
-        add(UpdatePlaybackPosition(position));
-      });
+      print('🔄 Bloc: Setting up stream subscriptions');
+      _setupSubscriptions();
 
-      _stateSubscription = _audioService.playerStateStream.listen((state) {
-        add(UpdatePlaybackState(state));
-      });
-
-      _durationSubscription = _audioService.durationStream.listen((duration) {
-        if (duration != null && state is AudioPlayerLoaded) {
-          emit((state as AudioPlayerLoaded).copyWith(duration: duration));
-        }
-      });
-
-      _waveformSubscription = _audioService.waveformStream.listen((
-        waveformData,
-      ) {
-        add(UpdateWaveformData(waveformData));
-      });
-
-      // Initial state
+      // IMPORTANT CHANGE: Immediately emit loaded state with whatever data we have
+      // Don't wait for streams to emit
       final tagsList =
           _currentSource != null
               ? _audioService.getTagsForAudio(_currentSource!)
               : [];
-      final List<AudioTag> tags = List<AudioTag>.from(tagsList);
 
+      print('🔄 Bloc: Transitioning to loaded state');
       emit(
         AudioPlayerLoaded(
           isPlaying: false,
           position: Duration.zero,
+          // Use a reasonable default duration if none is available yet
           duration: Duration.zero,
-          waveformData: _audioService.waveformData,
-          tags: tags,
+          // Use whatever waveform data is available, empty list if none
+          waveformData: _audioService.waveformData ?? [],
+          tags: List<AudioTag>.from(tagsList),
         ),
       );
+
+      print('✅ Bloc: Successfully transitioned to loaded state');
+
+      // Cancel timeout since we've successfully loaded
+      _loadingTimeout?.cancel();
+      _loadingTimeout = null;
     } catch (e) {
-      emit(AudioPlayerError(e.toString()));
+      print('❌ Bloc: Error loading audio: $e');
+      emit(AudioPlayerError('Failed to load audio: ${e.toString()}'));
+
+      // Cancel timeout on error
+      _loadingTimeout?.cancel();
+      _loadingTimeout = null;
     }
+  }
+
+  void _setupSubscriptions() {
+    // Position stream
+    _positionSubscription = _audioService.positionStream.listen(
+      (position) {
+        add(UpdatePlaybackPosition(position));
+      },
+      onError: (error) {
+        print('❌ Bloc: Error in position stream: $error');
+      },
+    );
+
+    // Player state stream
+    _stateSubscription = _audioService.playerStateStream.listen(
+      (state) {
+        add(UpdatePlaybackState(state));
+      },
+      onError: (error) {
+        print('❌ Bloc: Error in player state stream: $error');
+      },
+    );
+
+    // Duration stream
+    _durationSubscription = _audioService.durationStream.listen(
+      (duration) {
+        if (duration != null && state is AudioPlayerLoaded) {
+          emit((state as AudioPlayerLoaded).copyWith(duration: duration));
+        }
+      },
+      onError: (error) {
+        print('❌ Bloc: Error in duration stream: $error');
+      },
+    );
+
+    // Waveform stream
+    _waveformSubscription = _audioService.waveformStream.listen(
+      (waveformData) {
+        print('✅ Bloc: Received waveform data: ${waveformData.length} points');
+        add(UpdateWaveformData(waveformData));
+      },
+      onError: (error) {
+        print('❌ Bloc: Error in waveform stream: $error');
+        // Even if there's an error, we still want to try updating with whatever we have
+        if (_audioService.waveformData != null) {
+          add(UpdateWaveformData(_audioService.waveformData!));
+        }
+      },
+    );
   }
 
   void _onPlayAudio(PlayAudio event, Emitter<AudioPlayerState> emit) {

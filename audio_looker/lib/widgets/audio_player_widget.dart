@@ -89,9 +89,13 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     return BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
       builder: (context, state) {
         if (state is AudioPlayerInitial) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(
+            child: CircularProgressIndicator(color: Colors.teal),
+          );
         } else if (state is AudioPlayerLoading) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(
+            child: CircularProgressIndicator(color: Colors.yellow),
+          );
         } else if (state is AudioPlayerError) {
           return Center(child: Text('Error: ${state.message}'));
         } else if (state is AudioPlayerLoaded) {
@@ -185,7 +189,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                           ),
                         )
                       else
-                        const Center(child: CircularProgressIndicator()),
+                        const Center(
+                          child: CircularProgressIndicator(color: Colors.pink),
+                        ),
 
                       // Tag markers
                       if (waveformData != null)
