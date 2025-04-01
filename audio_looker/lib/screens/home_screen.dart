@@ -14,10 +14,16 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _urlController = TextEditingController();
   Track? _selectedTrack;
+  bool _isPlayerMinimized = false;
+
+  // Animation controller for the player
+  late AnimationController _animationController;
+  late Animation<double> _playerHeightAnimation;
 
   @override
   void initState() {
@@ -27,6 +33,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Listen to search changes
     _searchController.addListener(_onSearchChanged);
+
+    // Initialize animation controller
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+
+    // Create animation for player height
+    _playerHeightAnimation = Tween<double>(
+      begin: 490, // Full height
+      end: 100, // Minimized height
+    ).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
+
+    // Add listener to rebuild widget when animation values change
+    _animationController.addListener(() {
+      setState(() {});
+    });
   }
 
   @override
@@ -34,6 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _urlController.dispose();
+    _animationController.dispose();
     super.dispose();
   }
 
@@ -41,6 +67,17 @@ class _HomeScreenState extends State<HomeScreen> {
     context.read<CollectionBloc>().add(
       SearchCollection(_searchController.text),
     );
+  }
+
+  void _togglePlayerSize() {
+    setState(() {
+      _isPlayerMinimized = !_isPlayerMinimized;
+      if (_isPlayerMinimized) {
+        _animationController.forward();
+      } else {
+        _animationController.reverse();
+      }
+    });
   }
 
   Future<void> _pickAndAddAudioFile() async {
@@ -238,6 +275,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                 onTap: () {
                                   setState(() {
                                     _selectedTrack = track;
+                                    // Expand player if it's minimized
+                                    if (_isPlayerMinimized) {
+                                      _togglePlayerSize();
+                                    }
                                   });
                                 },
                               ),
@@ -246,10 +287,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
 
-                      // Audio player
+                      // Animated audio player
                       if (_selectedTrack != null)
-                        Container(
-                          height: 450,
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          height: _playerHeightAnimation.value,
                           decoration: BoxDecoration(
                             color: Theme.of(context).cardColor,
                             boxShadow: [
@@ -260,11 +302,47 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ],
                           ),
-                          child: AudioPlayerWidget(
-                            title: _selectedTrack!.title,
-                            artist: _selectedTrack!.artist,
-                            audioSource: _selectedTrack!.path,
-                            isUrl: _selectedTrack!.isUrl,
+                          child: Column(
+                            children: [
+                              // Toggle button for player size
+                              Container(
+                                height: 36,
+                                color: Theme.of(
+                                  context,
+                                ).primaryColor.withOpacity(0.1),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    IconButton(
+                                      icon: Icon(
+                                        _isPlayerMinimized
+                                            ? Icons.keyboard_arrow_up
+                                            : Icons.keyboard_arrow_down,
+                                      ),
+                                      onPressed: _togglePlayerSize,
+                                      tooltip:
+                                          _isPlayerMinimized
+                                              ? 'Expand player'
+                                              : 'Minimize player',
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // Audio player content
+                              Expanded(
+                                child:
+                                    _isPlayerMinimized
+                                        ? _buildMinimizedPlayer()
+                                        : AudioPlayerWidget(
+                                          key: ValueKey(_selectedTrack!.path),
+                                          title: _selectedTrack!.title,
+                                          artist: _selectedTrack!.artist,
+                                          audioSource: _selectedTrack!.path,
+                                          isUrl: _selectedTrack!.isUrl,
+                                        ),
+                              ),
+                            ],
                           ),
                         ),
                     ],
@@ -274,6 +352,63 @@ class _HomeScreenState extends State<HomeScreen> {
                 return const Center(child: Text('Something went wrong'));
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Minimized player view
+  Widget _buildMinimizedPlayer() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _selectedTrack!.title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  _selectedTrack!.artist,
+                  style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.skip_previous),
+                onPressed: () {
+                  // Add functionality to play previous track
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.play_arrow),
+                onPressed: () {
+                  // Add functionality to play/pause
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.skip_next),
+                onPressed: () {
+                  // Add functionality to play next track
+                },
+              ),
+            ],
           ),
         ],
       ),

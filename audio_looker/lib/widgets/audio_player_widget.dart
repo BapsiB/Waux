@@ -377,4 +377,17 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
       },
     );
   }
+
+  @override
+  void didUpdateWidget(AudioPlayerWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Check if the audio source has changed
+    if (oldWidget.audioSource != widget.audioSource) {
+      // Load the new audio file
+      context.read<AudioPlayerBloc>().add(
+        LoadAudio(source: widget.audioSource, isUrl: widget.isUrl),
+      );
+    }
+  }
 }
