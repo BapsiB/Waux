@@ -64,7 +64,6 @@ class AudioService {
         try {
           print('🔍 AudioService: Setting URL in player');
           await _audioPlayer.setUrl(source);
-          print('✅ AudioService: Successfully set URL in player');
         } catch (e) {
           print('❌ AudioService: Error setting URL: $e');
           // Continue with waveform extraction even if playback fails

@@ -48,6 +48,46 @@ class SearchCollection extends CollectionEvent {
   List<Object?> get props => [query];
 }
 
+class UpdateTrackRating extends CollectionEvent {
+  final int trackId;
+  final int rating;
+
+  const UpdateTrackRating(this.trackId, this.rating);
+
+  @override
+  List<Object?> get props => [trackId, rating];
+}
+
+class UpdateTrackComment extends CollectionEvent {
+  final int trackId;
+  final String comment;
+
+  const UpdateTrackComment(this.trackId, this.comment);
+
+  @override
+  List<Object?> get props => [trackId, comment];
+}
+
+class AddTrackGeneralTag extends CollectionEvent {
+  final int trackId;
+  final String tag;
+
+  const AddTrackGeneralTag(this.trackId, this.tag);
+
+  @override
+  List<Object?> get props => [trackId, tag];
+}
+
+class RemoveTrackGeneralTag extends CollectionEvent {
+  final int trackId;
+  final String tag;
+
+  const RemoveTrackGeneralTag(this.trackId, this.tag);
+
+  @override
+  List<Object?> get props => [trackId, tag];
+}
+
 class ImportCollectionFromFile extends CollectionEvent {
   final String path;
 
@@ -76,7 +116,14 @@ abstract class CollectionState extends Equatable {
 
 class CollectionInitial extends CollectionState {}
 
-class CollectionLoading extends CollectionState {}
+class CollectionLoading extends CollectionState {
+  final List<Track>? currentTracks; // Keep current tracks while loading
+
+  const CollectionLoading({this.currentTracks});
+
+  @override
+  List<Object?> get props => [currentTracks];
+}
 
 class CollectionLoaded extends CollectionState {
   final List<Track> tracks;
@@ -90,11 +137,12 @@ class CollectionLoaded extends CollectionState {
 
 class CollectionError extends CollectionState {
   final String message;
+  final List<Track>? tracks; // Keep tracks on error for better UX
 
-  const CollectionError(this.message);
+  const CollectionError(this.message, {this.tracks});
 
   @override
-  List<Object?> get props => [message];
+  List<Object?> get props => [message, tracks];
 }
 
 // BLoC
@@ -103,12 +151,24 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
 
   CollectionBloc(this._collectionService) : super(CollectionInitial()) {
     on<LoadCollection>(_onLoadCollection);
-    on<AddTrackFromPath>(_onAddTrackFromPath); // Changed from AddTrackFromFile
+    on<AddTrackFromPath>(_onAddTrackFromPath);
     on<AddTrackFromUrl>(_onAddTrackFromUrl);
     on<RemoveTrack>(_onRemoveTrack);
     on<SearchCollection>(_onSearchCollection);
+    on<UpdateTrackRating>(_onUpdateTrackRating);
+    on<UpdateTrackComment>(_onUpdateTrackComment);
+    on<AddTrackGeneralTag>(_onAddTrackGeneralTag);
+    on<RemoveTrackGeneralTag>(_onRemoveTrackGeneralTag);
     on<ImportCollectionFromFile>(_onImportCollectionFromFile);
     on<ExportCollectionToFile>(_onExportCollectionToFile);
+
+    // Listen to loading state changes from service
+    _collectionService.loadingStream.listen((isLoading) {
+      if (isLoading && state is CollectionLoaded) {
+        final currentState = state as CollectionLoaded;
+        emit(CollectionLoading(currentTracks: currentState.tracks));
+      }
+    });
   }
 
   Future<void> _onLoadCollection(
@@ -126,24 +186,24 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
   }
 
   Future<void> _onAddTrackFromPath(
-    // Renamed from _onAddTrackFromFile
     AddTrackFromPath event,
     Emitter<CollectionState> emit,
   ) async {
+    List<Track>? currentTracks;
+
     if (state is CollectionLoaded) {
-      try {
-        emit(CollectionLoading());
+      currentTracks = (state as CollectionLoaded).tracks;
+      emit(CollectionLoading(currentTracks: currentTracks));
+    } else {
+      emit(CollectionLoading());
+    }
 
-        // Update this line to use the path instead of File object
-        await _collectionService.addLocalFile(
-          event.filePath,
-        ); // Assuming you'll update CollectionService too
-
-        final tracks = await _collectionService.getAllTracks();
-        emit(CollectionLoaded(tracks: tracks));
-      } catch (e) {
-        emit(CollectionError(e.toString()));
-      }
+    try {
+      await _collectionService.addLocalFile(event.filePath);
+      final tracks = await _collectionService.getAllTracks();
+      emit(CollectionLoaded(tracks: tracks));
+    } catch (e) {
+      emit(CollectionError(e.toString(), tracks: currentTracks));
     }
   }
 
@@ -151,20 +211,21 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     AddTrackFromUrl event,
     Emitter<CollectionState> emit,
   ) async {
+    List<Track>? currentTracks;
+
     if (state is CollectionLoaded) {
-      try {
-        // Mark loading state while keeping current tracks
-        emit(CollectionLoading());
+      currentTracks = (state as CollectionLoaded).tracks;
+      emit(CollectionLoading(currentTracks: currentTracks));
+    } else {
+      emit(CollectionLoading());
+    }
 
-        // Add track
-        await _collectionService.addUrl(event.url);
-
-        // Reload all tracks
-        final tracks = await _collectionService.getAllTracks();
-        emit(CollectionLoaded(tracks: tracks));
-      } catch (e) {
-        emit(CollectionError(e.toString()));
-      }
+    try {
+      await _collectionService.addUrl(event.url);
+      final tracks = await _collectionService.getAllTracks();
+      emit(CollectionLoaded(tracks: tracks));
+    } catch (e) {
+      emit(CollectionError(e.toString(), tracks: currentTracks));
     }
   }
 
@@ -173,18 +234,15 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     Emitter<CollectionState> emit,
   ) async {
     if (state is CollectionLoaded) {
+      final currentTracks = (state as CollectionLoaded).tracks;
+      emit(CollectionLoading(currentTracks: currentTracks));
+
       try {
-        // Mark loading state while keeping current tracks
-        emit(CollectionLoading());
-
-        // Remove track
         await _collectionService.deleteTrack(event.trackId);
-
-        // Reload all tracks
         final tracks = await _collectionService.getAllTracks();
         emit(CollectionLoaded(tracks: tracks));
       } catch (e) {
-        emit(CollectionError(e.toString()));
+        emit(CollectionError(e.toString(), tracks: currentTracks));
       }
     }
   }
@@ -194,9 +252,10 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     Emitter<CollectionState> emit,
   ) async {
     if (state is CollectionLoaded) {
-      try {
-        emit(CollectionLoading());
+      final currentTracks = (state as CollectionLoaded).tracks;
+      emit(CollectionLoading(currentTracks: currentTracks));
 
+      try {
         final tracks =
             event.query.isEmpty
                 ? await _collectionService.getAllTracks()
@@ -209,7 +268,75 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           ),
         );
       } catch (e) {
-        emit(CollectionError(e.toString()));
+        emit(CollectionError(e.toString(), tracks: currentTracks));
+      }
+    }
+  }
+
+  Future<void> _onUpdateTrackRating(
+    UpdateTrackRating event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentTracks = (state as CollectionLoaded).tracks;
+
+      try {
+        await _collectionService.updateRating(event.trackId, event.rating);
+        final tracks = await _collectionService.getAllTracks();
+        emit(CollectionLoaded(tracks: tracks));
+      } catch (e) {
+        emit(CollectionError(e.toString(), tracks: currentTracks));
+      }
+    }
+  }
+
+  Future<void> _onUpdateTrackComment(
+    UpdateTrackComment event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentTracks = (state as CollectionLoaded).tracks;
+
+      try {
+        await _collectionService.updateComment(event.trackId, event.comment);
+        final tracks = await _collectionService.getAllTracks();
+        emit(CollectionLoaded(tracks: tracks));
+      } catch (e) {
+        emit(CollectionError(e.toString(), tracks: currentTracks));
+      }
+    }
+  }
+
+  Future<void> _onAddTrackGeneralTag(
+    AddTrackGeneralTag event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentTracks = (state as CollectionLoaded).tracks;
+
+      try {
+        await _collectionService.addGeneralTag(event.trackId, event.tag);
+        final tracks = await _collectionService.getAllTracks();
+        emit(CollectionLoaded(tracks: tracks));
+      } catch (e) {
+        emit(CollectionError(e.toString(), tracks: currentTracks));
+      }
+    }
+  }
+
+  Future<void> _onRemoveTrackGeneralTag(
+    RemoveTrackGeneralTag event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentTracks = (state as CollectionLoaded).tracks;
+
+      try {
+        await _collectionService.removeGeneralTag(event.trackId, event.tag);
+        final tracks = await _collectionService.getAllTracks();
+        emit(CollectionLoaded(tracks: tracks));
+      } catch (e) {
+        emit(CollectionError(e.toString(), tracks: currentTracks));
       }
     }
   }
@@ -218,15 +345,20 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     ImportCollectionFromFile event,
     Emitter<CollectionState> emit,
   ) async {
+    List<Track>? currentTracks;
+
+    if (state is CollectionLoaded) {
+      currentTracks = (state as CollectionLoaded).tracks;
+    }
+
+    emit(CollectionLoading(currentTracks: currentTracks));
+
     try {
-      emit(CollectionLoading());
-
       await _collectionService.importFromFile(event.path);
-
       final tracks = await _collectionService.getAllTracks();
       emit(CollectionLoaded(tracks: tracks));
     } catch (e) {
-      emit(CollectionError(e.toString()));
+      emit(CollectionError(e.toString(), tracks: currentTracks));
     }
   }
 
@@ -235,11 +367,13 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     Emitter<CollectionState> emit,
   ) async {
     if (state is CollectionLoaded) {
+      final currentTracks = (state as CollectionLoaded).tracks;
+
       try {
         await _collectionService.exportToFile(event.path);
         // State doesn't change after export
       } catch (e) {
-        emit(CollectionError(e.toString()));
+        emit(CollectionError(e.toString(), tracks: currentTracks));
       }
     }
   }

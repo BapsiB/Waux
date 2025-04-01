@@ -53,6 +53,45 @@ class AddAudioTag extends AudioPlayerEvent {
   List<Object?> get props => [source, position, label];
 }
 
+// Rating event
+class UpdateTrackRating extends AudioPlayerEvent {
+  final int rating;
+
+  const UpdateTrackRating(this.rating);
+
+  @override
+  List<Object?> get props => [rating];
+}
+
+// Notes event
+class UpdateTrackNotes extends AudioPlayerEvent {
+  final String notes;
+
+  const UpdateTrackNotes(this.notes);
+
+  @override
+  List<Object?> get props => [notes];
+}
+
+// General tags events
+class AddTrackGeneralTag extends AudioPlayerEvent {
+  final String tag;
+
+  const AddTrackGeneralTag(this.tag);
+
+  @override
+  List<Object?> get props => [tag];
+}
+
+class RemoveTrackGeneralTag extends AudioPlayerEvent {
+  final String tag;
+
+  const RemoveTrackGeneralTag(this.tag);
+
+  @override
+  List<Object?> get props => [tag];
+}
+
 class UpdatePlaybackState extends AudioPlayerEvent {
   final just_audio.PlayerState playerState;
 
