@@ -23,7 +23,7 @@ class LoadingIndicator extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const CircularProgressIndicator(),
+                    const CircularProgressIndicator(color: Colors.green),
                     const SizedBox(height: 16),
                     Text(
                       'Processing audio data...',

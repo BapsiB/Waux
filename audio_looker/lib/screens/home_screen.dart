@@ -6,6 +6,7 @@ import 'package:audio_looker/blocs/collection/collection_bloc.dart';
 import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/widgets/audio_player_widget.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:audio_looker/widgets/track_list_item.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -196,7 +197,9 @@ class _HomeScreenState extends State<HomeScreen>
             child: BlocBuilder<CollectionBloc, CollectionState>(
               builder: (context, state) {
                 if (state is CollectionInitial || state is CollectionLoading) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const Center(
+                    child: CircularProgressIndicator(color: Colors.orange),
+                  );
                 } else if (state is CollectionError) {
                   return Center(child: Text('Error: ${state.message}'));
                 } else if (state is CollectionLoaded) {
@@ -230,58 +233,41 @@ class _HomeScreenState extends State<HomeScreen>
                     );
                   }
 
-                  return Column(
+                  return // Replace the Column children array in your BlocBuilder in HomeScreen.dart
+                  Column(
                     children: [
                       // Tracks list
                       Expanded(
                         child: ListView.builder(
-                          itemCount: tracks.length,
+                          itemCount: state.tracks.length,
                           itemBuilder: (context, index) {
-                            final track = tracks[index];
+                            final track = state.tracks[index];
                             final isSelected = _selectedTrack?.id == track.id;
 
-                            return Card(
-                              margin: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              color:
-                                  isSelected
-                                      ? Theme.of(
-                                        context,
-                                      ).primaryColor.withOpacity(0.2)
-                                      : null,
-                              child: ListTile(
-                                leading: const Icon(Icons.music_note),
-                                title: Text(track.title),
-                                subtitle: Text(
-                                  '${track.artist} • ${track.album}',
-                                ),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.delete),
-                                  onPressed: () {
-                                    if (track.id != null) {
-                                      context.read<CollectionBloc>().add(
-                                        RemoveTrack(track.id!),
-                                      );
-                                      if (_selectedTrack?.id == track.id) {
-                                        setState(() {
-                                          _selectedTrack = null;
-                                        });
-                                      }
-                                    }
-                                  },
-                                ),
-                                onTap: () {
-                                  setState(() {
-                                    _selectedTrack = track;
-                                    // Expand player if it's minimized
-                                    if (_isPlayerMinimized) {
-                                      _togglePlayerSize();
-                                    }
-                                  });
-                                },
-                              ),
+                            return TrackListItem(
+                              track: track,
+                              isSelected: isSelected,
+                              onTap: () {
+                                setState(() {
+                                  _selectedTrack = track;
+                                  // Expand player if it's minimized
+                                  if (_isPlayerMinimized) {
+                                    _togglePlayerSize();
+                                  }
+                                });
+                              },
+                              onDelete: () {
+                                if (track.id != null) {
+                                  context.read<CollectionBloc>().add(
+                                    RemoveTrack(track.id!),
+                                  );
+                                  if (_selectedTrack?.id == track.id) {
+                                    setState(() {
+                                      _selectedTrack = null;
+                                    });
+                                  }
+                                }
+                              },
                             );
                           },
                         ),
@@ -399,6 +385,7 @@ class _HomeScreenState extends State<HomeScreen>
                         ),
                     ],
                   );
+                  ;
                 }
 
                 return const Center(child: Text('Something went wrong'));
