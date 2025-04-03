@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as pathLib;
 import 'package:audio_looker/services/collection_service.dart';
@@ -6,6 +5,7 @@ import 'package:audio_looker/services/collection_service.dart';
 class FolderTreeView extends StatefulWidget {
   final List<Track> tracks;
   final Track? selectedTrack;
+  final List<String> rootFolders; // Accept root folders from parent
   final Function(Track) onTrackSelected;
   final Function(int) onTrackDeleted;
 
@@ -13,6 +13,7 @@ class FolderTreeView extends StatefulWidget {
     Key? key,
     required this.tracks,
     this.selectedTrack,
+    required this.rootFolders, // Required parameter
     required this.onTrackSelected,
     required this.onTrackDeleted,
   }) : super(key: key);
@@ -31,41 +32,94 @@ class _FolderTreeViewState extends State<FolderTreeView> {
   void initState() {
     super.initState();
     _buildFolderStructure();
+
+    // Expand the special folders by default
+    _expandedFolders.add('Web Links');
+    _expandedFolders.add('Imported Files');
   }
 
   @override
   void didUpdateWidget(FolderTreeView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.tracks != widget.tracks) {
+    if (oldWidget.tracks != widget.tracks ||
+        oldWidget.rootFolders != widget.rootFolders) {
       _buildFolderStructure();
     }
   }
 
-  // Build the folder structure from the track list
+  // Build the folder structure from the track list and root folders
   void _buildFolderStructure() {
-    _folderStructure = {};
+    _folderStructure = <String, dynamic>{};
 
+    // Add special folders first
+    _folderStructure["Web Links"] = <String, dynamic>{"tracks": <dynamic>[]};
+
+    _folderStructure["Imported Files"] = <String, dynamic>{
+      "tracks": <dynamic>[],
+    };
+
+    // Add root folders (using basename as display name)
+    for (final rootPath in widget.rootFolders) {
+      final rootName = pathLib.basename(rootPath);
+      _folderStructure[rootName] = <String, dynamic>{
+        "rootPath": rootPath, // Store the full path for reference
+      };
+    }
+
+    // Now add tracks to the appropriate folders
     for (final track in widget.tracks) {
       if (track.isUrl) {
-        // Handle URL tracks separately
-        _addToStructure(_folderStructure, ['Web Links'], track);
+        // Put URLs in Web Links
+        (_folderStructure["Web Links"]["tracks"] as List<dynamic>).add(track);
       } else {
-        // Get the directory path relative to the root collection folder
-        final directory = pathLib.dirname(track.path);
+        final filePath = track.path;
+        final directory = pathLib.dirname(filePath);
 
-        // Split the path into segments
-        List<String> pathSegments = [];
+        // Check if this track belongs to a root folder
+        bool foundRoot = false;
+        for (final rootPath in widget.rootFolders) {
+          if (directory.startsWith(rootPath)) {
+            // This file belongs to this root folder
+            foundRoot = true;
 
-        // On Windows, normalize backslashes
-        final normalizedPath = directory.replaceAll('\\', '/');
-        pathSegments = normalizedPath.split('/');
+            // Get the root folder name
+            final rootName = pathLib.basename(rootPath);
 
-        // Remove empty segments that might occur at the start
-        pathSegments =
-            pathSegments.where((segment) => segment.isNotEmpty).toList();
+            // Get the relative path from the root
+            String relativePath = directory.substring(rootPath.length);
+            // Normalize path separators and remove leading separator
+            relativePath = relativePath.replaceAll('\\', '/');
+            if (relativePath.startsWith('/')) {
+              relativePath = relativePath.substring(1);
+            }
 
-        // Add the track to the folder structure
-        _addToStructure(_folderStructure, pathSegments, track);
+            // Split into path segments
+            List<String> pathSegments =
+                relativePath.isEmpty ? [] : relativePath.split('/');
+
+            // Make sure the root exists in our structure (in case it was just added)
+            if (!_folderStructure.containsKey(rootName)) {
+              _folderStructure[rootName] = <String, dynamic>{
+                "rootPath": rootPath,
+              };
+            }
+
+            // Add to the structure under the root folder
+            _addToStructure(
+              _folderStructure[rootName] as Map<String, dynamic>,
+              pathSegments,
+              track,
+            );
+            break;
+          }
+        }
+
+        // If not in any root folder, add to "Imported Files"
+        if (!foundRoot) {
+          (_folderStructure["Imported Files"]["tracks"] as List<dynamic>).add(
+            track,
+          );
+        }
       }
     }
   }
@@ -78,10 +132,10 @@ class _FolderTreeViewState extends State<FolderTreeView> {
   ) {
     if (pathSegments.isEmpty) {
       // We're at the leaf node, add the track
-      if (!structure.containsKey('tracks')) {
-        structure['tracks'] = [];
+      if (!structure.containsKey("tracks")) {
+        structure["tracks"] = <dynamic>[];
       }
-      structure['tracks'].add(track);
+      (structure["tracks"] as List<dynamic>).add(track);
     } else {
       // We're still traversing directories
       final segment = pathSegments.first;
@@ -98,9 +152,32 @@ class _FolderTreeViewState extends State<FolderTreeView> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-      child: _buildTreeView(_folderStructure, []),
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Show counts at the top
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 8.0,
+              ),
+              child: Text(
+                "${widget.tracks.length} audio files | ${widget.rootFolders.length} root folders",
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+            ),
+            const Divider(),
+            // Build the tree view
+            _buildTreeView(_folderStructure, []),
+          ],
+        ),
+      ),
     );
   }
 
@@ -113,15 +190,36 @@ class _FolderTreeViewState extends State<FolderTreeView> {
 
     // First add folders (non-track entries)
     final folderEntries =
-        structure.entries.where((entry) => entry.key != 'tracks').toList()
-          ..sort(
-            (a, b) => a.key.compareTo(b.key),
-          ); // Sort folders alphabetically
+        structure.entries
+            .where((entry) => entry.key != "tracks" && entry.key != "rootPath")
+            .toList()
+          ..sort((a, b) {
+            // Special folders come first
+            if (a.key == "Web Links") return -1;
+            if (b.key == "Web Links") return 1;
+            if (a.key == "Imported Files") return -1;
+            if (b.key == "Imported Files") return 1;
+            // Then sort alphabetically
+            return a.key.compareTo(b.key);
+          });
 
     for (final entry in folderEntries) {
       final newPath = List<String>.from(currentPath)..add(entry.key);
       final folderPath = newPath.join('/');
       final isExpanded = _expandedFolders.contains(folderPath);
+      final isSpecialFolder =
+          entry.key == "Web Links" || entry.key == "Imported Files";
+      final isRootFolder = currentPath.isEmpty;
+
+      // Count tracks in this folder
+      final trackCount = _countTracksInFolder(
+        entry.value as Map<String, dynamic>,
+      );
+
+      // Skip empty folders (except special folders and root folders)
+      if (trackCount == 0 && !isSpecialFolder && !isRootFolder) {
+        continue;
+      }
 
       children.add(
         Column(
@@ -137,45 +235,95 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                   }
                 });
               },
-              child: Padding(
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(4),
+                  color:
+                      isRootFolder
+                          ? Theme.of(context).primaryColor.withOpacity(0.1)
+                          : null,
+                ),
                 padding: EdgeInsets.only(
                   left: 16.0 * currentPath.length,
                   top: 8.0,
                   bottom: 8.0,
+                  right: 8.0,
                 ),
                 child: Row(
                   children: [
+                    // Use different icons for different folder types
                     Icon(
                       isExpanded ? Icons.folder_open : Icons.folder,
-                      color: Colors.amber,
+                      color:
+                          isSpecialFolder
+                              ? Colors.blueGrey
+                              : isRootFolder
+                              ? Colors.amber.shade700
+                              : Colors.amber,
+                      size: isRootFolder ? 22 : 20,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         entry.key,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontWeight:
+                              isRootFolder || isSpecialFolder
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                          fontSize: isRootFolder ? 15 : 14,
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    // Optional: Add a count of tracks in this folder
-                    Text(
-                      _countTracksInFolder(entry.value).toString(),
-                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                    // Show track count badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color:
+                            isRootFolder
+                                ? Theme.of(
+                                  context,
+                                ).primaryColor.withOpacity(0.2)
+                                : Colors.grey.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        trackCount.toString(),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color:
+                              isRootFolder
+                                  ? Theme.of(context).primaryColor
+                                  : Colors.grey[800],
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
-            if (isExpanded) _buildTreeView(entry.value, newPath),
+            if (isExpanded)
+              Padding(
+                padding: const EdgeInsets.only(left: 4.0),
+                child: _buildTreeView(
+                  entry.value as Map<String, dynamic>,
+                  newPath,
+                ),
+              ),
           ],
         ),
       );
     }
 
     // Then add tracks at this level
-    if (structure.containsKey('tracks')) {
-      final dynamicList = structure['tracks'] as List<dynamic>;
+    if (structure.containsKey("tracks")) {
+      final dynamicList = structure["tracks"] as List<dynamic>;
       final tracks = dynamicList.map((item) => item as Track).toList();
+
       // Sort tracks alphabetically by title
       tracks.sort((a, b) => a.title.compareTo(b.title));
 
@@ -192,10 +340,15 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                 left: 16.0 * (currentPath.length + 1),
                 top: 8.0,
                 bottom: 8.0,
+                right: 8.0,
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.music_note, size: 18),
+                  Icon(
+                    track.isUrl ? Icons.link : Icons.music_note,
+                    size: 18,
+                    color: track.isUrl ? Colors.blue : Colors.grey[700],
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
@@ -211,7 +364,8 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                                     : FontWeight.normal,
                           ),
                         ),
-                        if (track.artist.isNotEmpty)
+                        if (track.artist.isNotEmpty &&
+                            track.artist != 'Unknown')
                           Text(
                             track.artist,
                             style: TextStyle(
@@ -223,6 +377,21 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                       ],
                     ),
                   ),
+                  // Track rating (if any)
+                  if (track.rating > 0)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: List.generate(
+                        5,
+                        (index) => Icon(
+                          index < track.rating ? Icons.star : Icons.star_border,
+                          size: 14,
+                          color: Colors.amber,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(width: 4),
+                  // Delete button
                   IconButton(
                     icon: const Icon(Icons.delete_outline, size: 18),
                     onPressed:
@@ -250,14 +419,16 @@ class _FolderTreeViewState extends State<FolderTreeView> {
     int count = 0;
 
     // Count direct tracks in this folder
-    if (folder.containsKey('tracks')) {
-      count += (folder['tracks'] as List).length;
+    if (folder.containsKey("tracks")) {
+      count += (folder["tracks"] as List).length;
     }
 
     // Count tracks in subfolders
     for (final entry in folder.entries) {
-      if (entry.key != 'tracks' && entry.value is Map) {
-        count += _countTracksInFolder(entry.value);
+      if (entry.key != "tracks" &&
+          entry.key != "rootPath" &&
+          entry.value is Map) {
+        count += _countTracksInFolder(entry.value as Map<String, dynamic>);
       }
     }
 

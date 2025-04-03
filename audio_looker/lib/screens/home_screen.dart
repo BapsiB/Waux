@@ -205,6 +205,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // Handle dropped files
+  // Update _handleDroppedFiles method to add dropped folders as roots
   Future<void> _handleDroppedFiles(List<DropItem> paths) async {
     debugPrint("Paths dropped: ${paths.length} items");
     if (paths.isEmpty) {
@@ -235,6 +236,8 @@ class _HomeScreenState extends State<HomeScreen>
 
         // For desktop platforms
         if (await FileSystemEntity.isDirectory(path)) {
+          // Add folder as a root folder
+          context.read<CollectionBloc>().add(AddRootFolder(path));
           foldersToProcess.add(path);
         } else if (await FileSystemEntity.isFile(path)) {
           final extension = pathLib
@@ -253,7 +256,7 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
 
-    // Process individual files first
+    // Process individual files
     if (filesToAdd.isNotEmpty) {
       debugPrint("Adding ${filesToAdd.length} dropped files");
       context.read<CollectionBloc>().add(AddTracksFromPaths(filesToAdd));
@@ -271,9 +274,48 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
 
-    // Then process folders one by one
+    // Process folders
     for (final folderPath in foldersToProcess) {
       await _processDirectory(folderPath);
+
+      // Show notification that folder was added as root
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Added '${pathLib.basename(folderPath)}' as a root folder",
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _pickAndAddFolder() async {
+    try {
+      final result = await FilePicker.platform.getDirectoryPath();
+
+      if (result != null) {
+        // First, add this folder as a root folder
+        context.read<CollectionBloc>().add(AddRootFolder(result));
+
+        // Then process files in the folder as before
+        await _processDirectory(result);
+
+        // Show confirmation to the user
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "Added '${pathLib.basename(result)}' as a root folder",
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print("Error picking folder: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error selecting folder: ${e.toString()}")),
+      );
     }
   }
 
@@ -304,21 +346,6 @@ class _HomeScreenState extends State<HomeScreen>
       print(stackTrace);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error selecting file: ${e.toString()}")),
-      );
-    }
-  }
-
-  Future<void> _pickAndAddFolder() async {
-    try {
-      final result = await FilePicker.platform.getDirectoryPath();
-
-      if (result != null) {
-        await _processDirectory(result);
-      }
-    } catch (e) {
-      print("Error picking folder: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error selecting folder: ${e.toString()}")),
       );
     }
   }
@@ -496,6 +523,9 @@ class _HomeScreenState extends State<HomeScreen>
                                       ? _buildListView(state.tracks)
                                       : FolderTreeView(
                                         tracks: state.tracks,
+                                        rootFolders:
+                                            state
+                                                .rootFolders, // Pass root folders from state
                                         selectedTrack: _selectedTrack,
                                         onTrackSelected: (track) {
                                           setState(() {

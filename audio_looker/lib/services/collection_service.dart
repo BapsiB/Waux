@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
-// import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'package:audio_looker/services/audio_service.dart';
 
@@ -134,6 +134,12 @@ class CollectionService {
   Stream<bool> get loadingStream => _loadingController.stream;
   bool _isLoading = false;
 
+  // Key for storing root folders in SharedPreferences
+  static const String _rootFoldersKey = 'root_folders';
+
+  // Store root folders
+  List<String> _rootFolders = [];
+
   CollectionService() {
     _audioService.initialize();
   }
@@ -147,6 +153,61 @@ class CollectionService {
 
   Future<void> initialize() async {
     _database = await _initDatabase();
+
+    // Load root folders
+    await _loadRootFolders();
+  }
+
+  // New method to add a root folder
+  Future<void> addRootFolder(String folderPath) async {
+    // Normalize path separators for consistency
+    final normalizedPath = folderPath.replaceAll('\\', '/');
+
+    // Don't add duplicates
+    if (!_rootFolders.contains(normalizedPath)) {
+      _rootFolders.add(normalizedPath);
+      await _saveRootFolders();
+      print('Added root folder: $normalizedPath');
+    } else {
+      print('Root folder already exists: $normalizedPath');
+    }
+  }
+
+  // New method to remove a root folder
+  Future<void> removeRootFolder(String folderPath) async {
+    final normalizedPath = folderPath.replaceAll('\\', '/');
+    if (_rootFolders.remove(normalizedPath)) {
+      await _saveRootFolders();
+      print('Removed root folder: $normalizedPath');
+    }
+  }
+
+  // New method to get all root folders
+  List<String> getRootFolders() {
+    return List<String>.from(_rootFolders);
+  }
+
+  // Save root folders to persistent storage
+  Future<void> _saveRootFolders() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_rootFoldersKey, _rootFolders);
+      print('Saved ${_rootFolders.length} root folders');
+    } catch (e) {
+      print('Error saving root folders: $e');
+    }
+  }
+
+  // Load root folders from persistent storage
+  Future<void> _loadRootFolders() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _rootFolders = prefs.getStringList(_rootFoldersKey) ?? [];
+      print('Loaded ${_rootFolders.length} root folders');
+    } catch (e) {
+      print('Error loading root folders: $e');
+      _rootFolders = [];
+    }
   }
 
   Future<Database> _initDatabase() async {

@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:just_audio/just_audio.dart' hide PlayerState;
 import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
-import 'package:audio_looker/services/audio_service.dart';
 import 'package:audio_looker/widgets/waveform_painter.dart';
 
 class AudioPlayerWidget extends StatefulWidget {

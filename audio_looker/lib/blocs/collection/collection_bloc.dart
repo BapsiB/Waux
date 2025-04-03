@@ -110,6 +110,29 @@ class ImportCollectionFromFile extends CollectionEvent {
   List<Object?> get props => [path];
 }
 
+class AddRootFolder extends CollectionEvent {
+  final String folderPath;
+
+  const AddRootFolder(this.folderPath);
+
+  @override
+  List<Object> get props => [folderPath];
+}
+
+class RemoveRootFolder extends CollectionEvent {
+  final String folderPath;
+
+  const RemoveRootFolder(this.folderPath);
+
+  @override
+  List<Object> get props => [folderPath];
+}
+
+class LoadRootFolders extends CollectionEvent {
+  @override
+  List<Object> get props => [];
+}
+
 class ExportCollectionToFile extends CollectionEvent {
   final String path;
 
@@ -141,11 +164,16 @@ class CollectionLoading extends CollectionState {
 class CollectionLoaded extends CollectionState {
   final List<Track> tracks;
   final String? searchQuery;
+  final List<String> rootFolders; // New property
 
-  const CollectionLoaded({required this.tracks, this.searchQuery});
+  const CollectionLoaded({
+    required this.tracks,
+    this.searchQuery,
+    this.rootFolders = const [], // Default to empty list
+  });
 
   @override
-  List<Object?> get props => [tracks, searchQuery];
+  List<Object?> get props => [tracks, searchQuery, rootFolders];
 }
 
 class CollectionError extends CollectionState {
@@ -181,6 +209,9 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     on<ImportCollectionFromFile>(_onImportCollectionFromFile);
     on<ExportCollectionToFile>(_onExportCollectionToFile);
     on<AddTracksFromPaths>(_onAddTracksFromPaths);
+    on<AddRootFolder>(_onAddRootFolder);
+    on<RemoveRootFolder>(_onRemoveRootFolder);
+    on<LoadRootFolders>(_onLoadRootFolders);
 
     // Listen to loading state changes from service
     _collectionService.loadingStream.listen((isLoading) {
@@ -207,20 +238,6 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       await _audioService.dispose();
     }
     return super.close();
-  }
-
-  Future<void> _onLoadCollection(
-    LoadCollection event,
-    Emitter<CollectionState> emit,
-  ) async {
-    emit(CollectionLoading());
-
-    try {
-      final tracks = await _collectionService.getAllTracks();
-      emit(CollectionLoaded(tracks: tracks));
-    } catch (e) {
-      emit(CollectionError(e.toString()));
-    }
   }
 
   // Replace your _onAddTracksFromPaths method
@@ -451,54 +468,115 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     }
   }
 
-  Future<void> _processWaveformForTrack(int trackId, String filePath) async {
-    try {
-      // Use a completer to handle timeout
-      final completer = Completer<void>();
+  // Handler for adding a root folder
+  Future<void> _onAddRootFolder(
+    AddRootFolder event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentState = state as CollectionLoaded;
 
-      // Set timeout
-      Timer(const Duration(seconds: 60), () {
-        if (!completer.isCompleted) {
-          print('Waveform extraction timed out for $filePath');
-          completer.complete();
-        }
-      });
+      try {
+        await _collectionService.addRootFolder(event.folderPath);
+        final rootFolders = _collectionService.getRootFolders();
 
-      // Load the audio file in AudioService
-      await _audioService.loadAudio(filePath, isUrl: false);
-
-      // Listen for waveform data
-      List<double>? waveformData;
-      final subscription = _audioService.waveformStream.listen(
-        (data) {
-          if (!completer.isCompleted) {
-            waveformData = data;
-            completer.complete();
-          }
-        },
-        onError: (e) {
-          if (!completer.isCompleted) {
-            print('Error from waveform stream: $e');
-            completer.complete();
-          }
-        },
-      );
-
-      // Wait for completion (either data received or timeout)
-      await completer.future;
-      await subscription.cancel();
-
-      // Update track with waveform data if we got it
-      if (waveformData != null) {
-        final track = await _collectionService.getTrack(trackId);
-        if (track != null) {
-          final updatedTrack = track.copyWith(waveformData: waveformData);
-          await _collectionService.updateTrack(updatedTrack);
-          print('Updated waveform data for track $trackId');
-        }
+        // Update the state with the new root folders
+        emit(
+          CollectionLoaded(
+            tracks: currentState.tracks,
+            searchQuery: currentState.searchQuery,
+            rootFolders: rootFolders,
+          ),
+        );
+      } catch (e) {
+        print('Error adding root folder: $e');
+        emit(
+          CollectionError(
+            'Failed to add root folder: ${e.toString()}',
+            tracks: currentState.tracks,
+          ),
+        );
       }
+    }
+  }
+
+  // Handler for removing a root folder
+  Future<void> _onRemoveRootFolder(
+    RemoveRootFolder event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentState = state as CollectionLoaded;
+
+      try {
+        await _collectionService.removeRootFolder(event.folderPath);
+        final rootFolders = _collectionService.getRootFolders();
+
+        // Update the state with the new root folders
+        emit(
+          CollectionLoaded(
+            tracks: currentState.tracks,
+            searchQuery: currentState.searchQuery,
+            rootFolders: rootFolders,
+          ),
+        );
+      } catch (e) {
+        print('Error removing root folder: $e');
+        emit(
+          CollectionError(
+            'Failed to remove root folder: ${e.toString()}',
+            tracks: currentState.tracks,
+          ),
+        );
+      }
+    }
+  }
+
+  // Handler for loading root folders
+  Future<void> _onLoadRootFolders(
+    LoadRootFolders event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentState = state as CollectionLoaded;
+
+      try {
+        final rootFolders = _collectionService.getRootFolders();
+
+        // Update the state with the loaded root folders
+        emit(
+          CollectionLoaded(
+            tracks: currentState.tracks,
+            searchQuery: currentState.searchQuery,
+            rootFolders: rootFolders,
+          ),
+        );
+      } catch (e) {
+        print('Error loading root folders: $e');
+        emit(
+          CollectionError(
+            'Failed to load root folders: ${e.toString()}',
+            tracks: currentState.tracks,
+          ),
+        );
+      }
+    }
+  }
+
+  // Modify the _onLoadCollection method to also load root folders
+  Future<void> _onLoadCollection(
+    LoadCollection event,
+    Emitter<CollectionState> emit,
+  ) async {
+    emit(CollectionLoading());
+
+    try {
+      final tracks = await _collectionService.getAllTracks();
+      final rootFolders = _collectionService.getRootFolders();
+
+      emit(CollectionLoaded(tracks: tracks, rootFolders: rootFolders));
     } catch (e) {
-      print('Error processing waveform for track $trackId: $e');
+      emit(CollectionError('Failed to load collection: ${e.toString()}'));
     }
   }
 
