@@ -1,5 +1,3 @@
-// Update your home_screen.dart file with the following changes
-
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -9,8 +7,12 @@ import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/widgets/audio_player_widget.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:audio_looker/widgets/track_list_item.dart';
-import 'package:desktop_drop/desktop_drop.dart'; // New import for drag & drop
-import 'package:path/path.dart' as pathLib; // New import for path operations
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:path/path.dart' as pathLib;
+import 'package:audio_looker/widgets/folder_tree_view.dart'; // Import the new widget
+
+// Define view mode enum
+enum ViewMode { list, tree }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -25,6 +27,9 @@ class _HomeScreenState extends State<HomeScreen>
   final TextEditingController _urlController = TextEditingController();
   Track? _selectedTrack;
   bool _isPlayerMinimized = false;
+
+  // Add view mode state
+  ViewMode _viewMode = ViewMode.list;
 
   // New variables for drag and drop
   bool _isDragging = false;
@@ -93,6 +98,13 @@ class _HomeScreenState extends State<HomeScreen>
       } else {
         _animationController.reverse();
       }
+    });
+  }
+
+  // New method to toggle between view modes
+  void _toggleViewMode() {
+    setState(() {
+      _viewMode = _viewMode == ViewMode.list ? ViewMode.tree : ViewMode.list;
     });
   }
 
@@ -269,7 +281,7 @@ class _HomeScreenState extends State<HomeScreen>
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.audio,
-        allowMultiple: true, // Changed to allow multiple files
+        allowMultiple: true,
         allowedExtensions: _supportedExtensions,
       );
 
@@ -350,6 +362,15 @@ class _HomeScreenState extends State<HomeScreen>
       appBar: AppBar(
         title: const Text('Audio Looker'),
         actions: [
+          // Add view toggle button
+          IconButton(
+            icon: Icon(_viewMode == ViewMode.list ? Icons.folder : Icons.list),
+            onPressed: _toggleViewMode,
+            tooltip:
+                _viewMode == ViewMode.list
+                    ? 'Switch to folder view'
+                    : 'Switch to list view',
+          ),
           IconButton(
             icon: const Icon(Icons.link),
             onPressed: _showAddUrlDialog,
@@ -468,42 +489,34 @@ class _HomeScreenState extends State<HomeScreen>
 
                         return Column(
                           children: [
-                            // Tracks list
+                            // Tracks list or tree view based on current mode
                             Expanded(
-                              child: ListView.builder(
-                                itemCount: state.tracks.length,
-                                itemBuilder: (context, index) {
-                                  final track = state.tracks[index];
-                                  final isSelected =
-                                      _selectedTrack?.id == track.id;
-
-                                  return TrackListItem(
-                                    track: track,
-                                    isSelected: isSelected,
-                                    onTap: () {
-                                      setState(() {
-                                        _selectedTrack = track;
-                                        // Expand player if it's minimized
-                                        if (_isPlayerMinimized) {
-                                          _togglePlayerSize();
-                                        }
-                                      });
-                                    },
-                                    onDelete: () {
-                                      if (track.id != null) {
-                                        context.read<CollectionBloc>().add(
-                                          RemoveTrack(track.id!),
-                                        );
-                                        if (_selectedTrack?.id == track.id) {
+                              child:
+                                  _viewMode == ViewMode.list
+                                      ? _buildListView(state.tracks)
+                                      : FolderTreeView(
+                                        tracks: state.tracks,
+                                        selectedTrack: _selectedTrack,
+                                        onTrackSelected: (track) {
                                           setState(() {
-                                            _selectedTrack = null;
+                                            _selectedTrack = track;
+                                            // Expand player if it's minimized
+                                            if (_isPlayerMinimized) {
+                                              _togglePlayerSize();
+                                            }
                                           });
-                                        }
-                                      }
-                                    },
-                                  );
-                                },
-                              ),
+                                        },
+                                        onTrackDeleted: (trackId) {
+                                          context.read<CollectionBloc>().add(
+                                            RemoveTrack(trackId),
+                                          );
+                                          if (_selectedTrack?.id == trackId) {
+                                            setState(() {
+                                              _selectedTrack = null;
+                                            });
+                                          }
+                                        },
+                                      ),
                             ),
 
                             // Animated audio player
@@ -684,6 +697,41 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ],
       ),
+    );
+  }
+
+  // New method to build the list view
+  Widget _buildListView(List<Track> tracks) {
+    return ListView.builder(
+      itemCount: tracks.length,
+      itemBuilder: (context, index) {
+        final track = tracks[index];
+        final isSelected = _selectedTrack?.id == track.id;
+
+        return TrackListItem(
+          track: track,
+          isSelected: isSelected,
+          onTap: () {
+            setState(() {
+              _selectedTrack = track;
+              // Expand player if it's minimized
+              if (_isPlayerMinimized) {
+                _togglePlayerSize();
+              }
+            });
+          },
+          onDelete: () {
+            if (track.id != null) {
+              context.read<CollectionBloc>().add(RemoveTrack(track.id!));
+              if (_selectedTrack?.id == track.id) {
+                setState(() {
+                  _selectedTrack = null;
+                });
+              }
+            }
+          },
+        );
+      },
     );
   }
 
