@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:audio_looker/blocs/collection/collection_bloc.dart';
 import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/widgets/audio_player_widget.dart';
+import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:audio_looker/widgets/track_list_item.dart';
 import 'package:desktop_drop/desktop_drop.dart';
@@ -33,7 +34,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   // New variables for drag and drop
   bool _isDragging = false;
-  List<String> _supportedExtensions = [
+  final List<String> _supportedExtensions = [
     'mp3',
     'wav',
     'ogg',
@@ -109,13 +110,16 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // Process a single file by adding it to the collection
+  // NOTE: This method is less used now, as _pickAndAddAudioFile uses batch processing.
+  // Kept for potential future use or if needed by drag-and-drop for single files.
   Future<void> _processFile(String filePath) async {
     final extension = pathLib
         .extension(filePath)
         .toLowerCase()
         .replaceAll('.', '');
     if (_supportedExtensions.contains(extension)) {
-      context.read<CollectionBloc>().add(AddTrackFromPath(filePath));
+      // Use AddTracksFromPaths even for a single file for consistency
+      context.read<CollectionBloc>().add(AddTracksFromPaths([filePath]));
       return;
     }
   }
@@ -170,7 +174,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  // Add this helper method to find audio files recursively
+  // Helper method to find audio files recursively
   Future<void> _findAudioFilesRecursively(
     Directory dir,
     List<String> audioFilePaths,
@@ -205,7 +209,6 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // Handle dropped files
-  // Update _handleDroppedFiles method to add dropped folders as roots
   Future<void> _handleDroppedFiles(List<DropItem> paths) async {
     debugPrint("Paths dropped: ${paths.length} items");
     if (paths.isEmpty) {
@@ -256,10 +259,12 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
 
-    // Process individual files
+    // Process individual files using the batch method
     if (filesToAdd.isNotEmpty) {
-      debugPrint("Adding ${filesToAdd.length} dropped files");
-      context.read<CollectionBloc>().add(AddTracksFromPaths(filesToAdd));
+      debugPrint("Adding ${filesToAdd.length} dropped files using batch");
+      context.read<CollectionBloc>().add(
+        AddTracksFromPaths(filesToAdd),
+      ); // Use batch add
 
       if (filesToAdd.length == 1) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -319,36 +324,66 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
+  // --- MODIFIED: Use AddTracksFromPaths for consistency ---
   Future<void> _pickAndAddAudioFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.audio,
-        allowMultiple: true,
+        allowMultiple: true, // Allow selecting multiple files
         allowedExtensions: _supportedExtensions,
       );
 
       if (result != null && result.files.isNotEmpty) {
+        // Collect all valid file paths
+        List<String> filePathsToAdd = [];
         for (final file in result.files) {
           if (file.path != null) {
             print("Selected file path: ${file.path}");
-            context.read<CollectionBloc>().add(AddTrackFromPath(file.path!));
+            filePathsToAdd.add(file.path!);
           } else if (file.bytes != null) {
             // Handle in-memory file if path isn't available
             final tempDir = await getTemporaryDirectory();
             final tempFile = File('${tempDir.path}/${file.name}');
             await tempFile.writeAsBytes(file.bytes!);
-            context.read<CollectionBloc>().add(AddTrackFromPath(tempFile.path));
+            print("Created temporary file: ${tempFile.path}");
+            filePathsToAdd.add(tempFile.path);
+          }
+        }
+
+        // Dispatch a single event with all collected paths
+        if (filePathsToAdd.isNotEmpty) {
+          print(
+            "Dispatching AddTracksFromPaths with ${filePathsToAdd.length} files",
+          );
+          context.read<CollectionBloc>().add(
+            AddTracksFromPaths(filePathsToAdd),
+          );
+
+          // Show feedback
+          if (filePathsToAdd.length == 1) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  "Adding file: ${pathLib.basename(filePathsToAdd[0])}",
+                ),
+              ),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text("Adding ${filePathsToAdd.length} files")),
+            );
           }
         }
       }
     } catch (e, stackTrace) {
-      print("Error picking file: $e");
+      print("Error picking file(s): $e");
       print(stackTrace);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error selecting file: ${e.toString()}")),
+        SnackBar(content: Text("Error selecting file(s): ${e.toString()}")),
       );
     }
   }
+  // --- END MODIFICATION ---
 
   void _showAddUrlDialog() {
     showDialog(
@@ -410,8 +445,9 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           IconButton(
             icon: const Icon(Icons.add),
-            onPressed: _pickAndAddAudioFile,
-            tooltip: 'Add audio file',
+            onPressed:
+                _pickAndAddAudioFile, // This now uses the modified function
+            tooltip: 'Add audio file(s)',
           ),
         ],
       ),
@@ -458,74 +494,111 @@ class _HomeScreenState extends State<HomeScreen>
               child: Stack(
                 children: [
                   // Collection content
-                  BlocBuilder<CollectionBloc, CollectionState>(
+                  BlocConsumer<CollectionBloc, CollectionState>(
+                    // Use BlocConsumer to listen for loading state changes
+                    listener: (context, state) {
+                      // Optional: Show snackbars or other feedback based on state changes
+                      // if (state is CollectionLoaded) { ... }
+                      // if (state is CollectionError) { ... }
+                    },
                     builder: (context, state) {
-                      if (state is CollectionInitial ||
-                          state is CollectionLoading) {
+                      List<Track> tracks = [];
+                      List<String> rootFolders = [];
+                      String? searchQuery;
+                      bool isLoading = false;
+
+                      // Determine state and extract data
+                      if (state is CollectionLoading) {
+                        isLoading = true;
+                        tracks =
+                            state.currentTracks ??
+                            []; // Show previous tracks if available
+                        // Need to get root folders and search query from a previous loaded state if possible
+                        // This part might need refinement depending on how you want loading to look
+                      } else if (state is CollectionLoaded) {
+                        isLoading = false;
+                        tracks = state.tracks;
+                        rootFolders = state.rootFolders;
+                        searchQuery = state.searchQuery;
+                      } else if (state is CollectionError) {
+                        // Show error message, potentially keep previous tracks visible
+                        tracks = state.tracks ?? [];
+                        return Center(child: Text('Error: ${state.message}'));
+                      } else if (state is CollectionInitial) {
+                        isLoading = true; // Treat initial as loading
+                      }
+
+                      // --- Build UI based on extracted state ---
+
+                      if (isLoading && tracks.isEmpty) {
+                        // Show main loading indicator only if truly loading initially
                         return const Center(
                           child: CircularProgressIndicator(color: Colors.brown),
                         );
-                      } else if (state is CollectionError) {
-                        return Center(child: Text('Error: ${state.message}'));
-                      } else if (state is CollectionLoaded) {
-                        final tracks = state.tracks;
+                      }
 
-                        if (tracks.isEmpty) {
-                          return Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.music_note,
-                                  size: 64,
-                                  color: Colors.grey,
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  state.searchQuery != null
-                                      ? 'No tracks found for "${state.searchQuery}"'
-                                      : 'Your collection is empty',
-                                  style: const TextStyle(fontSize: 16),
-                                ),
-                                const SizedBox(height: 24),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    ElevatedButton.icon(
-                                      icon: const Icon(Icons.add),
-                                      label: const Text('Add Files'),
-                                      onPressed: _pickAndAddAudioFile,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    ElevatedButton.icon(
-                                      icon: const Icon(Icons.folder),
-                                      label: const Text('Add Folder'),
-                                      onPressed: _pickAndAddFolder,
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                const Text(
-                                  'Or drag and drop files and folders here',
-                                  style: TextStyle(color: Colors.grey),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
+                      if (!isLoading && tracks.isEmpty) {
+                        // Show empty state message
+                        return Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.music_note,
+                                size: 64,
+                                color: Colors.grey,
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                searchQuery != null
+                                    ? 'No tracks found for "$searchQuery"'
+                                    : 'Your collection is empty',
+                                style: const TextStyle(fontSize: 16),
+                              ),
+                              const SizedBox(height: 24),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  ElevatedButton.icon(
+                                    icon: const Icon(Icons.add),
+                                    label: const Text('Add Files'),
+                                    onPressed: _pickAndAddAudioFile,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  ElevatedButton.icon(
+                                    icon: const Icon(Icons.folder),
+                                    label: const Text('Add Folder'),
+                                    onPressed: _pickAndAddFolder,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Or drag and drop files and folders here',
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
 
-                        return Column(
-                          children: [
-                            // Tracks list or tree view based on current mode
-                            Expanded(
+                      // Show list/tree view and player
+                      return Column(
+                        children: [
+                          // Tracks list or tree view based on current mode
+                          Expanded(
+                            child: Opacity(
+                              // Dim the view slightly if loading in background
+                              opacity: isLoading ? 0.6 : 1.0,
                               child:
                                   _viewMode == ViewMode.list
-                                      ? _buildListView(state.tracks)
+                                      ? _buildListView(
+                                        tracks,
+                                      ) // Pass current tracks
                                       : FolderTreeView(
-                                        tracks: state.tracks,
+                                        tracks: tracks, // Pass current tracks
                                         rootFolders:
-                                            state
-                                                .rootFolders, // Pass root folders from state
+                                            rootFolders, // Pass current root folders
                                         selectedTrack: _selectedTrack,
                                         onTrackSelected: (track) {
                                           setState(() {
@@ -548,148 +621,116 @@ class _HomeScreenState extends State<HomeScreen>
                                         },
                                       ),
                             ),
+                          ),
 
-                            // Animated audio player
-                            if (_selectedTrack != null)
-                              AnimatedContainer(
-                                duration: const Duration(milliseconds: 300),
-                                height: _playerHeightAnimation.value,
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).cardColor,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, -2),
-                                    ),
-                                  ],
-                                ),
-                                child: Column(
-                                  children: [
-                                    // Toggle button for player size
-                                    Container(
-                                      height: 36,
-                                      color: Theme.of(
-                                        context,
-                                      ).primaryColor.withOpacity(0.1),
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          IconButton(
-                                            icon: Icon(
-                                              _isPlayerMinimized
-                                                  ? Icons.keyboard_arrow_up
-                                                  : Icons.keyboard_arrow_down,
-                                            ),
-                                            onPressed: _togglePlayerSize,
-                                            tooltip:
-                                                _isPlayerMinimized
-                                                    ? 'Expand player'
-                                                    : 'Minimize player',
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-
-                                    Expanded(
-                                      child: Stack(
-                                        children: [
-                                          // Full player (always present, animated opacity)
-                                          AnimatedOpacity(
-                                            opacity:
-                                                _isPlayerMinimized ? 0.0 : 1.0,
-                                            duration: const Duration(
-                                              milliseconds: 200,
-                                            ),
-                                            child: AudioPlayerWidget(
-                                              key: ValueKey(
-                                                _selectedTrack!.path,
-                                              ),
-                                              trackId: _selectedTrack!.id!,
-                                              title: _selectedTrack!.title,
-                                              artist: _selectedTrack!.artist,
-                                              audioSource: _selectedTrack!.path,
-                                              isUrl: _selectedTrack!.isUrl,
-                                              rating: _selectedTrack!.rating,
-                                              notes: _selectedTrack!.comment,
-                                              generalTags:
-                                                  _selectedTrack!.generalTags,
-                                              onRatingChanged: (rating) {
-                                                if (_selectedTrack?.id !=
-                                                    null) {
-                                                  context
-                                                      .read<CollectionBloc>()
-                                                      .add(
-                                                        UpdateTrackRating(
-                                                          _selectedTrack!.id!,
-                                                          rating,
-                                                        ),
-                                                      );
-                                                }
-                                              },
-                                              onNotesChanged: (notes) {
-                                                if (_selectedTrack?.id !=
-                                                    null) {
-                                                  context
-                                                      .read<CollectionBloc>()
-                                                      .add(
-                                                        UpdateTrackComment(
-                                                          _selectedTrack!.id!,
-                                                          notes,
-                                                        ),
-                                                      );
-                                                }
-                                              },
-                                              // onAddGeneralTag: (tag) {
-                                              //   if (_selectedTrack?.id !=
-                                              //       null) {
-                                              //     context
-                                              //         .read<CollectionBloc>()
-                                              //         .add(
-                                              //           AddTrackGeneralTag(
-                                              //             _selectedTrack!.id!,
-                                              //             tag,
-                                              //           ),
-                                              //         );
-                                              //   }
-                                              // },
-                                              // onRemoveGeneralTag: (tag) {
-                                              //   if (_selectedTrack?.id !=
-                                              //       null) {
-                                              //     context
-                                              //         .read<CollectionBloc>()
-                                              //         .add(
-                                              //           RemoveTrackGeneralTag(
-                                              //             _selectedTrack!.id!,
-                                              //             tag,
-                                              //           ),
-                                              //         );
-                                              //   }
-                                              // },
-                                            ),
-                                          ),
-
-                                          // Minimized player (shown with animated opacity when minimized)
-                                          AnimatedOpacity(
-                                            opacity:
-                                                _isPlayerMinimized ? 1.0 : 0.0,
-                                            duration: const Duration(
-                                              milliseconds: 200,
-                                            ),
-                                            child: _buildMinimizedPlayer(),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                          // Animated audio player
+                          if (_selectedTrack != null)
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 300),
+                              height: _playerHeightAnimation.value,
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).cardColor,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.2),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, -2),
+                                  ),
+                                ],
                               ),
-                          ],
-                        );
-                      }
+                              child: Column(
+                                children: [
+                                  // Toggle button for player size
+                                  Container(
+                                    height: 36,
+                                    color: Theme.of(
+                                      context,
+                                    ).primaryColor.withOpacity(0.1),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        IconButton(
+                                          icon: Icon(
+                                            _isPlayerMinimized
+                                                ? Icons.keyboard_arrow_up
+                                                : Icons.keyboard_arrow_down,
+                                          ),
+                                          onPressed: _togglePlayerSize,
+                                          tooltip:
+                                              _isPlayerMinimized
+                                                  ? 'Expand player'
+                                                  : 'Minimize player',
+                                        ),
+                                      ],
+                                    ),
+                                  ),
 
-                      return const Center(child: Text('Something went wrong'));
+                                  Expanded(
+                                    child: Stack(
+                                      children: [
+                                        // Full player (always present, animated opacity)
+                                        AnimatedOpacity(
+                                          opacity:
+                                              _isPlayerMinimized ? 0.0 : 1.0,
+                                          duration: const Duration(
+                                            milliseconds: 200,
+                                          ),
+                                          child: AudioPlayerWidget(
+                                            key: ValueKey(_selectedTrack!.path),
+                                            trackId: _selectedTrack!.id!,
+                                            title: _selectedTrack!.title,
+                                            artist: _selectedTrack!.artist,
+                                            audioSource: _selectedTrack!.path,
+                                            isUrl: _selectedTrack!.isUrl,
+                                            rating: _selectedTrack!.rating,
+                                            notes: _selectedTrack!.comment,
+                                            generalTags:
+                                                _selectedTrack!.generalTags,
+                                            onRatingChanged: (rating) {
+                                              if (_selectedTrack?.id != null) {
+                                                context
+                                                    .read<CollectionBloc>()
+                                                    .add(
+                                                      UpdateTrackRating(
+                                                        _selectedTrack!.id!,
+                                                        rating,
+                                                      ),
+                                                    );
+                                              }
+                                            },
+                                            onNotesChanged: (notes) {
+                                              if (_selectedTrack?.id != null) {
+                                                context
+                                                    .read<CollectionBloc>()
+                                                    .add(
+                                                      UpdateTrackComment(
+                                                        _selectedTrack!.id!,
+                                                        notes,
+                                                      ),
+                                                    );
+                                              }
+                                            },
+                                          ),
+                                        ),
+
+                                        // Minimized player (shown with animated opacity when minimized)
+                                        AnimatedOpacity(
+                                          opacity:
+                                              _isPlayerMinimized ? 1.0 : 0.0,
+                                          duration: const Duration(
+                                            milliseconds: 200,
+                                          ),
+                                          child: _buildMinimizedPlayer(),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      );
                     },
                   ),
 
@@ -739,6 +780,40 @@ class _HomeScreenState extends State<HomeScreen>
                         ),
                       ),
                     ),
+
+                  // Loading Indicator Overlay (shows when loading in background)
+                  BlocBuilder<CollectionBloc, CollectionState>(
+                    builder: (context, state) {
+                      if (state is CollectionLoading) {
+                        return Positioned.fill(
+                          child: Container(
+                            color: Colors.black.withOpacity(
+                              0.3,
+                            ), // Semi-transparent overlay
+                            child: const Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  CircularProgressIndicator(
+                                    color: Colors.white,
+                                  ),
+                                  SizedBox(height: 16),
+                                  Text(
+                                    'Processing audio...',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink(); // Return empty widget when not loading
+                    },
+                  ),
                 ],
               ),
             ),
@@ -748,7 +823,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // New method to build the list view
+  // Method to build the list view
   Widget _buildListView(List<Track> tracks) {
     return ListView.builder(
       itemCount: tracks.length,
@@ -785,6 +860,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   // Minimized player view
   Widget _buildMinimizedPlayer() {
+    // Ensure _selectedTrack is not null before building
+    if (_selectedTrack == null) {
+      return const SizedBox.shrink(); // Return empty if no track selected
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Row(
@@ -813,27 +892,40 @@ class _HomeScreenState extends State<HomeScreen>
               ],
             ),
           ),
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.skip_previous),
-                onPressed: () {
-                  // Add functionality to play previous track
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.play_arrow),
-                onPressed: () {
-                  // Add functionality to play/pause
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.skip_next),
-                onPressed: () {
-                  // Add functionality to play next track
-                },
-              ),
-            ],
+          // Add basic playback controls to the minimized player
+          BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
+            builder: (context, playerState) {
+              bool isPlaying = false;
+              if (playerState is AudioPlayerLoaded) {
+                isPlaying = playerState.isPlaying;
+              }
+              return Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.skip_previous),
+                    onPressed: () {
+                      // TODO: Add functionality to play previous track
+                    },
+                  ),
+                  IconButton(
+                    icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
+                    onPressed: () {
+                      if (isPlaying) {
+                        context.read<AudioPlayerBloc>().add(PauseAudio());
+                      } else {
+                        context.read<AudioPlayerBloc>().add(PlayAudio());
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.skip_next),
+                    onPressed: () {
+                      // TODO: Add functionality to play next track
+                    },
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),
