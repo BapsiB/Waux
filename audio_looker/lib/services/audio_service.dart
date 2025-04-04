@@ -7,6 +7,7 @@ import 'package:just_audio/just_audio.dart' hide PlayerState;
 import 'package:just_audio/just_audio.dart' as just_audio show PlayerState;
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
+import 'dart:convert'; // For JSON encoding/decoding
 
 class AudioTag {
   final double position;
@@ -36,12 +37,91 @@ class AudioService {
   List<double>? _waveformData;
   List<double>? get waveformData => _waveformData;
 
+  // Cache for waveform data
+  final Map<String, List<double>> _waveformCache = {};
+
   // Tags
   final Map<String, List<AudioTag>> _audioTags = {};
 
   // Event controller for waveform data
   final _waveformController = StreamController<List<double>>.broadcast();
   Stream<List<double>> get waveformStream => _waveformController.stream;
+
+  // Cache file operations
+  Future<String> get _cacheDirectory async {
+    final dir = await getApplicationDocumentsDirectory();
+    final cacheDir = Directory('${dir.path}/waveform_cache');
+    if (!await cacheDir.exists()) {
+      await cacheDir.create(recursive: true);
+    }
+    return cacheDir.path;
+  }
+
+  String _getCacheKey(String source) {
+    // Create a unique key based on the file path or URL
+    return source.replaceAll(RegExp(r'[^\w\s\-\.]'), '_');
+  }
+
+  Future<String> _getCacheFilePath(String source) async {
+    final cacheDir = await _cacheDirectory;
+    final cacheKey = _getCacheKey(source);
+    return '$cacheDir/$cacheKey.json';
+  }
+
+  Future<bool> _saveWaveformToCache(
+    String source,
+    List<double> waveformData,
+  ) async {
+    try {
+      final cacheFilePath = await _getCacheFilePath(source);
+      final file = File(cacheFilePath);
+
+      // Encode waveform data as JSON
+      final jsonData = jsonEncode(waveformData);
+      await file.writeAsString(jsonData);
+
+      // Also save in memory cache
+      _waveformCache[source] = waveformData;
+
+      print('✅ AudioService: Saved waveform to cache: $cacheFilePath');
+      return true;
+    } catch (e) {
+      print('❌ AudioService: Error saving waveform to cache: $e');
+      return false;
+    }
+  }
+
+  // PUBLIC method to load waveform from cache
+  Future<List<double>?> loadWaveformFromCache(String source) async {
+    // First check memory cache
+    if (_waveformCache.containsKey(source)) {
+      print('✅ AudioService: Loaded waveform from memory cache');
+      return _waveformCache[source];
+    }
+
+    try {
+      final cacheFilePath = await _getCacheFilePath(source);
+      final file = File(cacheFilePath);
+
+      if (await file.exists()) {
+        final jsonData = await file.readAsString();
+        final List<dynamic> decodedData = jsonDecode(jsonData);
+        final waveformData = decodedData.map((item) => item as double).toList();
+
+        // Save to memory cache for faster access next time
+        _waveformCache[source] = waveformData;
+
+        print(
+          '✅ AudioService: Loaded waveform from file cache: $cacheFilePath',
+        );
+        return waveformData;
+      }
+    } catch (e) {
+      print('❌ AudioService: Error loading waveform from cache: $e');
+    }
+
+    return null; // Cache miss
+  }
 
   Future<void> initialize() async {
     try {
@@ -59,33 +139,48 @@ class AudioService {
         '🔍 AudioService: Starting to load audio from: $source, isUrl: $isUrl',
       );
 
+      // Step 1: Try to set up the audio player
       if (isUrl) {
-        // For network URLs
         try {
           print('🔍 AudioService: Setting URL in player');
           await _audioPlayer.setUrl(source);
         } catch (e) {
           print('❌ AudioService: Error setting URL: $e');
-          // Continue with waveform extraction even if playback fails
         }
-
-        print('🔍 AudioService: Extracting waveform from URL');
-        await _extractWaveformFromUrl(source);
-        print('✅ AudioService: Completed URL waveform extraction');
       } else {
-        // For local files
         try {
           print('🔍 AudioService: Setting file path in player: $source');
           await _audioPlayer.setFilePath(source);
           print('✅ AudioService: Successfully set file path in player');
         } catch (e) {
           print('❌ AudioService: Error setting file path: $e');
-          // Continue with waveform extraction even if playback fails
+        }
+      }
+
+      // Step 2: Try to load waveform from cache
+      print('🔍 AudioService: Checking for cached waveform data');
+      final cachedWaveform = await loadWaveformFromCache(source);
+
+      if (cachedWaveform != null) {
+        // Use cached waveform
+        _waveformData = cachedWaveform;
+        _waveformController.add(_waveformData!);
+        print('✅ AudioService: Using cached waveform data');
+      } else {
+        // No cached data, need to extract
+        print(
+          '🔍 AudioService: No cached waveform found, extracting new waveform',
+        );
+        if (isUrl) {
+          await _extractWaveformFromUrl(source);
+        } else {
+          await _extractWaveformFromFile(source);
         }
 
-        print('🔍 AudioService: Extracting waveform from file');
-        await _extractWaveformFromFile(source);
-        print('✅ AudioService: Completed file waveform extraction');
+        // Save the newly extracted waveform to cache
+        if (_waveformData != null && _waveformData!.isNotEmpty) {
+          await _saveWaveformToCache(source, _waveformData!);
+        }
       }
 
       print('✅ AudioService: Successfully completed loadAudio');
@@ -313,6 +408,37 @@ class AudioService {
 
   List<AudioTag> getTagsForAudio(String audioSource) {
     return _audioTags[audioSource] ?? [];
+  }
+
+  // Clear specific cache entry
+  Future<void> clearCacheForSource(String source) async {
+    try {
+      final cacheFilePath = await _getCacheFilePath(source);
+      final file = File(cacheFilePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      _waveformCache.remove(source);
+      print('✅ AudioService: Cleared cache for: $source');
+    } catch (e) {
+      print('❌ AudioService: Error clearing cache: $e');
+    }
+  }
+
+  // Clear all cache
+  Future<void> clearAllCache() async {
+    try {
+      final cacheDir = await _cacheDirectory;
+      final directory = Directory(cacheDir);
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+        await directory.create();
+      }
+      _waveformCache.clear();
+      print('✅ AudioService: Cleared all waveform cache');
+    } catch (e) {
+      print('❌ AudioService: Error clearing all cache: $e');
+    }
   }
 
   Future<void> dispose() async {

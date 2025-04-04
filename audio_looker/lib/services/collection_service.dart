@@ -140,6 +140,9 @@ class CollectionService {
   // Store root folders
   List<String> _rootFolders = [];
 
+  // Cache to track which files we've already checked for waveforms
+  final Set<String> _checkedWaveforms = {};
+
   CollectionService() {
     _audioService.initialize();
   }
@@ -311,6 +314,19 @@ class CollectionService {
     return null;
   }
 
+  Future<Track?> getTrackByPath(String path) async {
+    final List<Map<String, dynamic>> maps = await _database!.query(
+      tableMusic,
+      where: '$columnPath = ?',
+      whereArgs: [path],
+    );
+
+    if (maps.isNotEmpty) {
+      return Track.fromJson(maps.first);
+    }
+    return null;
+  }
+
   Future<void> addTagToTrack(int trackId, double position, String label) async {
     final track = await getTrack(trackId);
     if (track != null) {
@@ -390,17 +406,41 @@ class CollectionService {
     }
   }
 
-  Future<Track> addLocalFile(String file) async {
+  // New method to check if waveform data already exists
+  Future<bool> _hasWaveformData(String path) async {
+    final track = await getTrackByPath(path);
+    return track?.waveformData != null && track!.waveformData!.isNotEmpty;
+  }
+
+  // New method to load waveform data from AudioService with caching
+  Future<List<double>?> _loadWaveformData(String source, bool isUrl) async {
+    // Skip waveform extraction if we've already checked this file and found waveform data
+    if (_checkedWaveforms.contains(source)) {
+      print(
+        '🔍 CollectionService: Skipping waveform extraction for already checked source: $source',
+      );
+      return null;
+    }
+
     try {
-      setLoading(true);
+      print(
+        '🔍 CollectionService: Checking for cached waveform in AudioService',
+      );
 
-      // In a real app, you'd extract metadata from the audio file
-      // For simplicity, we'll just use the filename
-      final filename = basename(file);
-      final title = basenameWithoutExtension(file);
+      // First try to get from cache without loading the audio
+      // Use the public method instead of the private one
+      final cachedWaveform = await _audioService.loadWaveformFromCache(source);
+      if (cachedWaveform != null) {
+        print('✅ CollectionService: Using cached waveform from AudioService');
+        _checkedWaveforms.add(source);
+        return cachedWaveform;
+      }
 
-      // Extract waveform data
-      await _audioService.loadAudio(file, isUrl: false);
+      // We need to extract the waveform
+      print(
+        '🔍 CollectionService: No cached waveform found, extracting new waveform',
+      );
+      await _audioService.loadAudio(source, isUrl: isUrl);
 
       // Wait for waveform data to be generated
       List<double>? waveformData;
@@ -409,12 +449,76 @@ class CollectionService {
         break;
       }
 
+      // Mark as checked
+      _checkedWaveforms.add(source);
+
+      print('✅ CollectionService: Waveform extraction complete');
+      return waveformData;
+    } catch (e) {
+      print('❌ CollectionService: Error loading waveform data: $e');
+      return null;
+    }
+  }
+
+  // Updated method for adding local file with optimized waveform loading
+  Future<Track> addLocalFile(String filePath) async {
+    try {
+      setLoading(true);
+
+      // Check if track already exists in database
+      final existingTrack = await getTrackByPath(filePath);
+      if (existingTrack != null) {
+        print('Track already exists in database: ${existingTrack.title}');
+
+        // If track exists but has no waveform data, we'll try to add it
+        if (existingTrack.waveformData == null ||
+            existingTrack.waveformData!.isEmpty) {
+          print('Existing track has no waveform data, trying to extract it');
+          final waveformData = await _loadWaveformData(filePath, false);
+
+          if (waveformData != null) {
+            final updatedTrack = existingTrack.copyWith(
+              waveformData: waveformData,
+            );
+            await updateTrack(updatedTrack);
+            setLoading(false);
+            return updatedTrack;
+          }
+        }
+
+        setLoading(false);
+        return existingTrack;
+      }
+
+      // In a real app, you'd extract metadata from the audio file
+      // For simplicity, we'll just use the filename
+      final filename = basename(filePath);
+      final title = basenameWithoutExtension(filePath);
+
+      // First check if there's waveform data in database
+      print('🔍 CollectionService: Checking for waveform in database');
+      final hasWaveform = await _hasWaveformData(filePath);
+
+      List<double>? waveformData;
+
+      if (!hasWaveform) {
+        // No waveform in database, try to load/extract it
+        print(
+          '🔍 CollectionService: No waveform in database, checking cache or extracting',
+        );
+        waveformData = await _loadWaveformData(filePath, false);
+      } else {
+        print(
+          '✅ CollectionService: Found waveform in database, skipping extraction',
+        );
+      }
+
       // Create the track with waveform data
       final track = Track(
         title: title,
         artist: 'Unknown',
         album: 'Unknown',
-        path: file,
+        path: filePath,
         isUrl: false,
         duration: 0, // This would be extracted from the file
         waveformData: waveformData,
@@ -433,18 +537,54 @@ class CollectionService {
     }
   }
 
+  // Updated method for adding URL with optimized waveform loading
   Future<Track> addUrl(String url) async {
     try {
       setLoading(true);
 
-      // Extract waveform data
-      await _audioService.loadAudio(url, isUrl: true);
+      // Check if URL already exists in database
+      final existingTrack = await getTrackByPath(url);
+      if (existingTrack != null) {
+        print('URL already exists in database: ${existingTrack.title}');
 
-      // Wait for waveform data to be generated
+        // If track exists but has no waveform data, we'll try to add it
+        if (existingTrack.waveformData == null ||
+            existingTrack.waveformData!.isEmpty) {
+          print(
+            'Existing URL track has no waveform data, trying to extract it',
+          );
+          final waveformData = await _loadWaveformData(url, true);
+
+          if (waveformData != null) {
+            final updatedTrack = existingTrack.copyWith(
+              waveformData: waveformData,
+            );
+            await updateTrack(updatedTrack);
+            setLoading(false);
+            return updatedTrack;
+          }
+        }
+
+        setLoading(false);
+        return existingTrack;
+      }
+
+      // First check if there's waveform data in database
+      print('🔍 CollectionService: Checking for waveform in database for URL');
+      final hasWaveform = await _hasWaveformData(url);
+
       List<double>? waveformData;
-      await for (var data in _audioService.waveformStream.take(1)) {
-        waveformData = data;
-        break;
+
+      if (!hasWaveform) {
+        // No waveform in database, try to load/extract it
+        print(
+          '🔍 CollectionService: No waveform in database for URL, checking cache or extracting',
+        );
+        waveformData = await _loadWaveformData(url, true);
+      } else {
+        print(
+          '✅ CollectionService: Found waveform in database for URL, skipping extraction',
+        );
       }
 
       // For URLs, we might need to fetch some metadata
@@ -471,6 +611,81 @@ class CollectionService {
     } catch (e) {
       setLoading(false);
       print('Error adding URL: $e');
+      rethrow;
+    }
+  }
+
+  // New method to update or create waveform for track
+  Future<bool> updateWaveformForTrack(int trackId) async {
+    try {
+      setLoading(true);
+      final track = await getTrack(trackId);
+
+      if (track == null) {
+        setLoading(false);
+        return false;
+      }
+
+      // Clear existing AudioService cache for this track
+      await _audioService.clearCacheForSource(track.path);
+
+      // Remove from checked files set to force reload
+      _checkedWaveforms.remove(track.path);
+
+      // Force reload waveform
+      final waveformData = await _loadWaveformData(track.path, track.isUrl);
+
+      if (waveformData != null) {
+        final updatedTrack = track.copyWith(waveformData: waveformData);
+        await updateTrack(updatedTrack);
+        setLoading(false);
+        return true;
+      }
+
+      setLoading(false);
+      return false;
+    } catch (e) {
+      setLoading(false);
+      print('Error updating waveform: $e');
+      return false;
+    }
+  }
+
+  // Check if track needs waveform loading
+  Future<bool> needsWaveformLoading(Track track) async {
+    // If track has no waveform data, we need to load it
+    if (track.waveformData == null || track.waveformData!.isEmpty) {
+      // Check if it's in AudioService cache first
+      final cachedWaveform = await _audioService.loadWaveformFromCache(
+        track.path,
+      );
+      return cachedWaveform == null;
+    }
+    return false;
+  }
+
+  // Add multiple files with batch optimization
+  Future<List<Track>> addMultipleFiles(List<String> filePaths) async {
+    try {
+      setLoading(true);
+      final List<Track> addedTracks = [];
+
+      // Process all files
+      for (final filePath in filePaths) {
+        try {
+          final track = await addLocalFile(filePath);
+          addedTracks.add(track);
+        } catch (e) {
+          print('Error adding file $filePath: $e');
+          // Continue with next file
+        }
+      }
+
+      setLoading(false);
+      return addedTracks;
+    } catch (e) {
+      setLoading(false);
+      print('Error adding multiple files: $e');
       rethrow;
     }
   }

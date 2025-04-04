@@ -723,8 +723,8 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     Emitter<CollectionState> emit,
   ) async {
     if (state is CollectionLoaded) {
-      final currentTracks = (state as CollectionLoaded).tracks;
-      emit(CollectionLoading(currentTracks: currentTracks));
+      final currentState = state as CollectionLoaded;
+      emit(CollectionLoading(currentTracks: currentState.tracks));
 
       try {
         final tracks =
@@ -732,14 +732,18 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
                 ? await _collectionService.getAllTracks()
                 : await _collectionService.searchTracks(event.query);
 
+        // Get the current root folders
+        final rootFolders = _collectionService.getRootFolders();
+
         emit(
           CollectionLoaded(
             tracks: tracks,
             searchQuery: event.query.isEmpty ? null : event.query,
+            rootFolders: rootFolders, // Preserve root folders
           ),
         );
       } catch (e) {
-        emit(CollectionError(e.toString(), tracks: currentTracks));
+        emit(CollectionError(e.toString(), tracks: currentState.tracks));
       }
     }
   }
