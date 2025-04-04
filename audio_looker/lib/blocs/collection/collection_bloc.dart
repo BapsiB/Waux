@@ -948,23 +948,27 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     Emitter<CollectionState> emit,
   ) async {
     if (state is CollectionLoaded) {
-      final currentTracks = (state as CollectionLoaded).tracks;
+      // Get the *entire* current state
+      final currentState = state as CollectionLoaded; // <--- Get current state
       try {
         await _collectionService.updateRating(event.trackId, event.rating);
 
-        // Update the track in the current state
+        // Update the track in the current track list
         final updatedTracks =
-            currentTracks.map((track) {
+            currentState.tracks.map((track) {
+              // <--- Use currentState.tracks
               if (track.id == event.trackId) {
                 return track.copyWith(rating: event.rating);
               }
               return track;
             }).toList();
 
-        emit(CollectionLoaded(tracks: updatedTracks));
+        // *** Use copyWith to emit the new state ***
+        emit(currentState.copyWith(tracks: updatedTracks)); // <--- Use copyWith
       } catch (e) {
         print('Error updating rating: $e');
-        emit(CollectionError(e.toString(), tracks: currentTracks));
+        // Emit error state, preserving the original state's tracks
+        emit(CollectionError(e.toString(), tracks: currentState.tracks));
       }
     }
   }
