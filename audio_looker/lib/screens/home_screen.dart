@@ -18,7 +18,7 @@ import 'package:audio_looker/widgets/track_table_row.dart'; // Import the new ro
 enum ViewMode { list, tree } // 'list' now means table view
 
 // --- Sorting State ---
-enum SortColumn { preview, title, artist, album, rating }
+enum SortColumn { preview, title, artist, album, rating, tags }
 
 enum SortDirection { ascending, descending }
 
@@ -312,6 +312,8 @@ class _HomeScreenState extends State<HomeScreen>
           comparison = a.rating.compareTo(b.rating);
           break;
         case SortColumn.preview: // No standard sort for preview
+          break;
+        default:
           break;
       }
       // Apply secondary sort by title if primary comparison is equal
@@ -1085,15 +1087,27 @@ class _HomeScreenState extends State<HomeScreen>
       ).splashColor.withOpacity(0.5), // Subtle background for header row
       child: Row(
         children: [
+          // Fixed width columns
           buildHeaderCell('Preview', SortColumn.preview, width: 150),
-          Expanded(flex: 3, child: buildHeaderCell('Title', SortColumn.title)),
+
+          // Flexible columns - Adjusted flex values
           Expanded(
-            flex: 2,
+            flex: 4,
+            child: buildHeaderCell('Title', SortColumn.title),
+          ), // Increased Title flex
+          Expanded(
+            flex: 3,
             child: buildHeaderCell('Artist', SortColumn.artist),
-          ),
-          Expanded(flex: 2, child: buildHeaderCell('Album', SortColumn.album)),
+          ), // Increased Artist flex
+          Expanded(
+            flex: 3,
+            child: buildHeaderCell('Album', SortColumn.album),
+          ), // Increased Album flex
           buildHeaderCell('Rating', SortColumn.rating, width: 100),
-          // TODO: Add Tags header later
+          Expanded(
+            flex: 3,
+            child: buildHeaderCell('Tags', SortColumn.tags),
+          ), // Increased Tags flex
         ],
       ),
     );

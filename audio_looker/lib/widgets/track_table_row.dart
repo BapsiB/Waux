@@ -20,12 +20,16 @@ class WaveformPreviewCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Determine colors based on selection
-    final Color waveColor = isSelected
-        ? Theme.of(context).colorScheme.onPrimary // Color on selected background
-        : Theme.of(context).colorScheme.primary; // Default color
-    final Color inactiveColor = isSelected
-        ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
-        : Colors.grey.shade300; // Lighter grey for inactive
+    final Color waveColor =
+        isSelected
+            ? Theme.of(context)
+                .colorScheme
+                .onPrimary // Color on selected background
+            : Theme.of(context).colorScheme.primary; // Default color
+    final Color inactiveColor =
+        isSelected
+            ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
+            : Colors.grey.shade300; // Lighter grey for inactive
 
     return Row(
       children: [
@@ -33,7 +37,10 @@ class WaveformPreviewCell extends StatelessWidget {
         IconButton(
           icon: Icon(
             Icons.play_circle_outline,
-            color: isSelected ? Theme.of(context).colorScheme.onPrimary : Theme.of(context).colorScheme.primary,
+            color:
+                isSelected
+                    ? Theme.of(context).colorScheme.onPrimary
+                    : Theme.of(context).colorScheme.primary,
             size: 20,
           ),
           padding: EdgeInsets.zero,
@@ -44,30 +51,31 @@ class WaveformPreviewCell extends StatelessWidget {
         const SizedBox(width: 8),
         // Waveform Preview
         Expanded(
-          child: Container(
+          child: SizedBox(
+            // Use SizedBox instead of Container if only for height/width
             height: 24, // Keep it compact
-            child: (track.waveformData != null && track.waveformData!.isNotEmpty)
-                ? CustomPaint(
-                    size: Size.infinite,
-                    painter: WaveformPainter(
-                      waveformData: track.waveformData!,
-                      activeColor: waveColor,
-                      inactiveColor: inactiveColor,
-                      playbackProgress: 0, // No progress shown in preview
-                      // Optional: simplify painter further for performance if needed
+            child:
+                (track.waveformData != null && track.waveformData!.isNotEmpty)
+                    ? CustomPaint(
+                      size: Size.infinite,
+                      painter: WaveformPainter(
+                        waveformData: track.waveformData!,
+                        activeColor: waveColor,
+                        inactiveColor: inactiveColor,
+                        playbackProgress: 0, // No progress shown in preview
+                      ),
+                    )
+                    : Container(
+                      // Placeholder if no waveform
+                      color: inactiveColor.withOpacity(0.5),
+                      height: 1, // Thin line as placeholder
                     ),
-                  )
-                : Container( // Placeholder if no waveform
-                    color: inactiveColor.withOpacity(0.5),
-                    height: 1,
-                  ),
           ),
         ),
       ],
     );
   }
 }
-
 
 // --- Widget representing a single row in the data table ---
 class TrackTableRow extends StatelessWidget {
@@ -91,15 +99,22 @@ class TrackTableRow extends StatelessWidget {
   Widget build(BuildContext context) {
     // Define cell padding for consistency
     const cellPadding = EdgeInsets.symmetric(horizontal: 8.0, vertical: 10.0);
+    final textTheme = Theme.of(context).textTheme;
 
     return InkWell(
       onTap: onTap,
       onSecondaryTap: onSecondaryTap, // Use secondary tap for right-click
       child: Container(
         decoration: BoxDecoration(
-          color: isSelected ? Theme.of(context).colorScheme.primary.withOpacity(0.15) : null,
+          color:
+              isSelected
+                  ? Theme.of(context).colorScheme.primary.withOpacity(0.15)
+                  : null,
           border: Border(
-            bottom: BorderSide(color: Theme.of(context).dividerColor, width: 0.5),
+            bottom: BorderSide(
+              color: Theme.of(context).dividerColor,
+              width: 0.5,
+            ),
           ),
         ),
         child: Row(
@@ -123,7 +138,10 @@ class TrackTableRow extends StatelessWidget {
                 child: Text(
                   track.title,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
+                  style: TextStyle(
+                    fontWeight:
+                        isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
                 ),
               ),
             ),
@@ -136,7 +154,7 @@ class TrackTableRow extends StatelessWidget {
                 child: Text(
                   track.artist,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Theme.of(context).textTheme.bodySmall?.color),
+                  style: TextStyle(color: textTheme.bodySmall?.color),
                 ),
               ),
             ),
@@ -149,7 +167,7 @@ class TrackTableRow extends StatelessWidget {
                 child: Text(
                   track.album,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Theme.of(context).textTheme.bodySmall?.color),
+                  style: TextStyle(color: textTheme.bodySmall?.color),
                 ),
               ),
             ),
@@ -171,8 +189,40 @@ class TrackTableRow extends StatelessWidget {
               ),
             ),
 
-             // --- Column 6: Tags (Flexible Width) ---
-             // TODO: Add Tags column later
+            // --- Column 6: Tags (Flexible Width) ---
+            Expanded(
+              flex: 2, // Adjust flex as needed
+              child: Container(
+                padding: cellPadding,
+                child:
+                    track.generalTags.isEmpty
+                        ? null // Show nothing if no tags
+                        : Wrap(
+                          // Use Wrap to handle multiple tags
+                          spacing: 4.0, // Horizontal space between chips
+                          runSpacing:
+                              2.0, // Vertical space between lines of chips
+                          children:
+                              track.generalTags.map((tag) {
+                                // Basic chip styling, colors can be added later if needed
+                                return Chip(
+                                  label: Text(tag),
+                                  labelStyle: const TextStyle(fontSize: 10),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 0,
+                                  ),
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  backgroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.secondary.withOpacity(0.1),
+                                  side: BorderSide.none,
+                                );
+                              }).toList(),
+                        ),
+              ),
+            ),
           ],
         ),
       ),
