@@ -191,29 +191,29 @@ class CollectionLoaded extends CollectionState {
   final List<Track> tracks;
   final String? searchQuery;
   final List<String> rootFolders;
-  final List<Tag> allTags; // <-- Ensure this exists
+  final List<Tag> allTags; // <--- Make sure this line exists
 
   const CollectionLoaded({
     required this.tracks,
     this.searchQuery,
     this.rootFolders = const [],
-    this.allTags = const [], // <-- Ensure this exists
+    this.allTags = const [], // <--- Initialize with default empty list
   });
 
   @override
-  List<Object?> get props => [tracks, searchQuery, rootFolders, allTags]; // <-- Ensure this exists
+  List<Object?> get props => [tracks, searchQuery, rootFolders, allTags]; // <--- Include in props
 
   CollectionLoaded copyWith({
     List<Track>? tracks,
     String? searchQuery,
     List<String>? rootFolders,
-    List<Tag>? allTags, // <-- Ensure this exists
+    List<Tag>? allTags, // <--- Include in copyWith
   }) {
     return CollectionLoaded(
       tracks: tracks ?? this.tracks,
       searchQuery: searchQuery ?? this.searchQuery,
       rootFolders: rootFolders ?? this.rootFolders,
-      allTags: allTags ?? this.allTags, // <-- Ensure this exists
+      allTags: allTags ?? this.allTags, // <--- Handle in copyWith
     );
   }
 }
@@ -284,32 +284,6 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       await _audioService.dispose();
     }
     return super.close();
-  }
-
-  Future<void> _onLoadAllTags(
-    LoadAllTags event,
-    Emitter<CollectionState> emit,
-  ) async {
-    if (state is CollectionLoaded) {
-      final currentState = state as CollectionLoaded;
-      try {
-        // Assuming _collectionService has a method to get all tags
-        final allTags = await _collectionService.getAllTags();
-        emit(currentState.copyWith(allTags: allTags));
-      } catch (e) {
-        print('Error loading all tags: $e');
-        // Optionally emit an error state or keep the current state
-      }
-    } else {
-      // Handle if called when not in Loaded state (e.g., load initially)
-      try {
-        final allTags = await _collectionService.getAllTags();
-        // If initial state, might need to load tracks too or have a dedicated TagsLoaded state
-        // For simplicity, assuming we only add tags when already loaded
-      } catch (e) {
-        print('Error loading all tags initially: $e');
-      }
-    }
   }
 
   // Handler for Creating a New General Tag
@@ -736,20 +710,68 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     }
   }
 
-  // Modify the _onLoadCollection method to also load root folders
   Future<void> _onLoadCollection(
     LoadCollection event,
     Emitter<CollectionState> emit,
   ) async {
-    emit(CollectionLoading());
+    emit(CollectionLoading()); // Indicate loading
 
     try {
-      final tracks = await _collectionService.getAllTracks();
-      final rootFolders = _collectionService.getRootFolders();
+      // Ensure service is initialized
+      await _collectionService.initialize();
+      print("BLOC: CollectionService initialized.");
 
-      emit(CollectionLoaded(tracks: tracks, rootFolders: rootFolders));
-    } catch (e) {
+      // --- Load ALL initial data together ---
+      final tracks = await _collectionService.getAllTracks();
+      print("BLOC: Loaded ${tracks.length} tracks.");
+
+      final rootFolders = _collectionService.getRootFolders();
+      print("BLOC: Loaded ${rootFolders.length} root folders.");
+
+      // *** ADD THIS: Load tags directly within this handler ***
+      final allTags = await _collectionService.getAllTags();
+      print("BLOC: Loaded ${allTags.length} tags.");
+      // ------
+
+      // Emit loaded state including tracks, rootFolders, and the loaded tags
+      emit(
+        CollectionLoaded(
+          tracks: tracks,
+          rootFolders: rootFolders,
+          allTags: allTags, // <-- Use the tags loaded here
+        ),
+      );
+      print("BLOC: Emitted initial CollectionLoaded state with all data.");
+    } catch (e, stackTrace) {
+      print("BLOC ERROR in _onLoadCollection: $e");
+      print("BLOC StackTrace: $stackTrace");
       emit(CollectionError('Failed to load collection: ${e.toString()}'));
+    }
+  }
+
+  // You can KEEP the _onLoadAllTags handler if you want a way
+  // to *specifically* refresh just the tags later, but it's
+  // not strictly necessary for the initial load if you do it above.
+  Future<void> _onLoadAllTags(
+    LoadAllTags event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentState = state as CollectionLoaded;
+      try {
+        print("BLOC: Refreshing all tags...");
+        final allTags = await _collectionService.getAllTags();
+        print("BLOC: Refreshed ${allTags.length} tags.");
+        // Use copyWith to preserve tracks/rootFolders when refreshing tags
+        emit(currentState.copyWith(allTags: allTags));
+        print("BLOC: Emitted CollectionLoaded with refreshed allTags.");
+      } catch (e) {
+        print('BLOC Error refreshing all tags: $e');
+      }
+    } else {
+      print(
+        "BLOC: State is not CollectionLoaded (${state.runtimeType}) when trying to refresh tags.",
+      );
     }
   }
 

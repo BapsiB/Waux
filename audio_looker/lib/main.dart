@@ -37,7 +37,14 @@ class MyApp extends StatelessWidget {
     return MultiBlocProvider(
       providers: [
         BlocProvider<CollectionBloc>(
-          create: (context) => CollectionBloc(collectionService),
+          create: (context) {
+            final collectionService = CollectionService();
+            // ONLY add LoadCollection initially
+            return CollectionBloc(collectionService)..add(
+              LoadCollection(),
+            ); // <-- LoadCollection now loads everything needed initially
+            // ..add(LoadAllTags());   // <-- REMOVE this line for initial load
+          },
         ),
         BlocProvider<AudioPlayerBloc>(
           create: (context) => AudioPlayerBloc(audioService),
