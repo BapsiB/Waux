@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter/return_code.dart';
 import 'package:just_audio/just_audio.dart' hide PlayerState;
@@ -8,6 +7,7 @@ import 'package:just_audio/just_audio.dart' as just_audio show PlayerState;
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert'; // For JSON encoding/decoding
+import 'package:audio_looker/services/performance_profiler.dart';
 
 class AudioTag {
   final double position;
@@ -72,13 +72,23 @@ class AudioService {
     String source,
     List<double> waveformData,
   ) async {
+    PerformanceProfiler.start('saveWaveformCache:total');
+
     try {
+      PerformanceProfiler.start('saveWaveformCache:getPath');
       final cacheFilePath = await _getCacheFilePath(source);
+      PerformanceProfiler.end('saveWaveformCache:getPath');
+
       final file = File(cacheFilePath);
 
       // Encode waveform data as JSON
+      PerformanceProfiler.start('saveWaveformCache:encode');
       final jsonData = jsonEncode(waveformData);
+      PerformanceProfiler.end('saveWaveformCache:encode');
+
+      PerformanceProfiler.start('saveWaveformCache:writeFile');
       await file.writeAsString(jsonData);
+      PerformanceProfiler.end('saveWaveformCache:writeFile');
 
       // Also save in memory cache
       _waveformCache[source] = waveformData;
@@ -88,39 +98,68 @@ class AudioService {
     } catch (e) {
       print('❌ AudioService: Error saving waveform to cache: $e');
       return false;
+    } finally {
+      final totalTime = PerformanceProfiler.end('saveWaveformCache:total');
+      print(
+        '⏱️ AudioService: Saving waveform to cache took ${totalTime.inMilliseconds}ms',
+      );
     }
   }
 
   // PUBLIC method to load waveform from cache
   Future<List<double>?> loadWaveformFromCache(String source) async {
-    // First check memory cache
-    if (_waveformCache.containsKey(source)) {
-      print('✅ AudioService: Loaded waveform from memory cache');
-      return _waveformCache[source];
-    }
+    PerformanceProfiler.start('loadWaveformCache:total');
 
     try {
-      final cacheFilePath = await _getCacheFilePath(source);
-      final file = File(cacheFilePath);
-
-      if (await file.exists()) {
-        final jsonData = await file.readAsString();
-        final List<dynamic> decodedData = jsonDecode(jsonData);
-        final waveformData = decodedData.map((item) => item as double).toList();
-
-        // Save to memory cache for faster access next time
-        _waveformCache[source] = waveformData;
-
-        print(
-          '✅ AudioService: Loaded waveform from file cache: $cacheFilePath',
-        );
-        return waveformData;
+      // First check memory cache
+      PerformanceProfiler.start('loadWaveformCache:memoryCheck');
+      if (_waveformCache.containsKey(source)) {
+        print('✅ AudioService: Loaded waveform from memory cache');
+        PerformanceProfiler.end('loadWaveformCache:memoryCheck');
+        return _waveformCache[source];
       }
-    } catch (e) {
-      print('❌ AudioService: Error loading waveform from cache: $e');
-    }
+      PerformanceProfiler.end('loadWaveformCache:memoryCheck');
 
-    return null; // Cache miss
+      try {
+        PerformanceProfiler.start('loadWaveformCache:getPath');
+        final cacheFilePath = await _getCacheFilePath(source);
+        PerformanceProfiler.end('loadWaveformCache:getPath');
+
+        PerformanceProfiler.start('loadWaveformCache:checkExists');
+        final file = File(cacheFilePath);
+        final exists = await file.exists();
+        PerformanceProfiler.end('loadWaveformCache:checkExists');
+
+        if (exists) {
+          PerformanceProfiler.start('loadWaveformCache:readFile');
+          final jsonData = await file.readAsString();
+          PerformanceProfiler.end('loadWaveformCache:readFile');
+
+          PerformanceProfiler.start('loadWaveformCache:decode');
+          final List<dynamic> decodedData = jsonDecode(jsonData);
+          final waveformData =
+              decodedData.map((item) => item as double).toList();
+          PerformanceProfiler.end('loadWaveformCache:decode');
+
+          // Save to memory cache for faster access next time
+          _waveformCache[source] = waveformData;
+
+          print(
+            '✅ AudioService: Loaded waveform from file cache: $cacheFilePath',
+          );
+          return waveformData;
+        }
+      } catch (e) {
+        print('❌ AudioService: Error loading waveform from cache: $e');
+      }
+
+      return null; // Cache miss
+    } finally {
+      final totalTime = PerformanceProfiler.end('loadWaveformCache:total');
+      print(
+        '⏱️ AudioService: Loading waveform from cache took ${totalTime.inMilliseconds}ms',
+      );
+    }
   }
 
   Future<void> initialize() async {
@@ -133,13 +172,19 @@ class AudioService {
     }
   }
 
+  // Update your AudioService.loadAudio method with timing measurements
+
   Future<void> loadAudio(String source, {bool isUrl = false}) async {
+    // Start overall timing
+    PerformanceProfiler.start('loadAudio:total');
+
     try {
       print(
         '🔍 AudioService: Starting to load audio from: $source, isUrl: $isUrl',
       );
 
       // Step 1: Try to set up the audio player
+      PerformanceProfiler.start('loadAudio:setPlayer');
       if (isUrl) {
         try {
           print('🔍 AudioService: Setting URL in player');
@@ -156,30 +201,39 @@ class AudioService {
           print('❌ AudioService: Error setting file path: $e');
         }
       }
+      PerformanceProfiler.end('loadAudio:setPlayer');
 
       // Step 2: Try to load waveform from cache
       print('🔍 AudioService: Checking for cached waveform data');
+      PerformanceProfiler.start('loadAudio:checkCache');
       final cachedWaveform = await loadWaveformFromCache(source);
+      PerformanceProfiler.end('loadAudio:checkCache');
 
       if (cachedWaveform != null) {
         // Use cached waveform
+        PerformanceProfiler.start('loadAudio:useCache');
         _waveformData = cachedWaveform;
         _waveformController.add(_waveformData!);
         print('✅ AudioService: Using cached waveform data');
+        PerformanceProfiler.end('loadAudio:useCache');
       } else {
         // No cached data, need to extract
         print(
           '🔍 AudioService: No cached waveform found, extracting new waveform',
         );
+        PerformanceProfiler.start('loadAudio:extractWaveform');
         if (isUrl) {
           await _extractWaveformFromUrl(source);
         } else {
           await _extractWaveformFromFile(source);
         }
+        PerformanceProfiler.end('loadAudio:extractWaveform');
 
         // Save the newly extracted waveform to cache
         if (_waveformData != null && _waveformData!.isNotEmpty) {
+          PerformanceProfiler.start('loadAudio:saveToCache');
           await _saveWaveformToCache(source, _waveformData!);
+          PerformanceProfiler.end('loadAudio:saveToCache');
         }
       }
 
@@ -195,22 +249,39 @@ class AudioService {
         _waveformController.add(_waveformData!);
         print('✅ AudioService: Successfully added random waveform to stream');
       }
+    } finally {
+      // End overall timing
+      final totalTime = PerformanceProfiler.end('loadAudio:total');
+      print('⏱️ AudioService: Total load time: ${totalTime.inMilliseconds}ms');
+
+      // Log detailed breakdown
+      PerformanceProfiler.logAllMeasurements();
     }
   }
 
+  // Add this instrumentation to your _extractWaveformFromFile method
+
   Future<void> _extractWaveformFromFile(String filePath) async {
+    PerformanceProfiler.start('extractWaveform:total');
+
     print('🔍 AudioService: Starting waveform extraction from file: $filePath');
+
+    PerformanceProfiler.start('extractWaveform:getTemp');
     final tempDir = await getTemporaryDirectory();
     final outputFile = '${tempDir.path}/waveform_data.txt';
+    PerformanceProfiler.end('extractWaveform:getTemp');
+
     print('🔍 AudioService: Output file path: $outputFile');
 
     // Use FFmpeg Kit to extract audio data for waveform
     print('🔍 AudioService: Running FFmpeg command');
 
     // Modify the FFmpeg command to add -y flag which forces overwrite
+    PerformanceProfiler.start('extractWaveform:ffmpeg');
     final session = await FFmpegKit.execute(
       '-y -i "$filePath" -ac 1 -filter:a aresample=8000 -map 0:a -c:a pcm_s16le -f data "$outputFile"',
     );
+    PerformanceProfiler.end('extractWaveform:ffmpeg');
 
     final returnCode = await session.getReturnCode();
     print(
@@ -219,7 +290,9 @@ class AudioService {
 
     if (ReturnCode.isSuccess(returnCode)) {
       print('✅ AudioService: FFmpeg succeeded, processing waveform data');
+      PerformanceProfiler.start('extractWaveform:process');
       await _processWaveformData(outputFile);
+      PerformanceProfiler.end('extractWaveform:process');
       print('✅ AudioService: Completed processing waveform data');
     } else {
       print(
@@ -227,20 +300,29 @@ class AudioService {
       );
 
       // Get logs for debugging
+      PerformanceProfiler.start('extractWaveform:getLogs');
       final logs = await session.getLogs();
       for (final log in logs) {
         print('❌ AudioService FFmpeg log: ${log.getMessage()}');
       }
+      PerformanceProfiler.end('extractWaveform:getLogs');
 
       // Use fallback method
       print('🔍 AudioService: Using random waveform fallback');
+      PerformanceProfiler.start('extractWaveform:fallback');
       _generateRandomWaveform();
       if (_waveformData != null) {
         print('🔍 AudioService: Adding random waveform data to stream');
         _waveformController.add(_waveformData!);
         print('✅ AudioService: Successfully added random waveform to stream');
       }
+      PerformanceProfiler.end('extractWaveform:fallback');
     }
+
+    final totalTime = PerformanceProfiler.end('extractWaveform:total');
+    print(
+      '⏱️ AudioService: Waveform extraction took ${totalTime.inMilliseconds}ms',
+    );
   }
 
   Future<void> _extractWaveformFromUrl(String url) async {
@@ -264,11 +346,17 @@ class AudioService {
     }
   }
 
+  // Add this instrumentation to your _processWaveformData method
+
   Future<void> _processWaveformData(String dataFilePath) async {
+    PerformanceProfiler.start('processWaveform:total');
+
     try {
       print(
         '🔍 AudioService: Starting to process waveform data from: $dataFilePath',
       );
+
+      PerformanceProfiler.start('processWaveform:readFile');
       final file = File(dataFilePath);
       if (!await file.exists()) {
         print('❌ AudioService: Waveform data file not found at: $dataFilePath');
@@ -276,11 +364,14 @@ class AudioService {
       }
 
       final bytes = await file.readAsBytes();
+      PerformanceProfiler.end('processWaveform:readFile');
+
       print(
         '🔍 AudioService: Read ${bytes.length} bytes from waveform data file',
       );
 
       // Convert bytes to audio samples (16-bit PCM)
+      PerformanceProfiler.start('processWaveform:convert');
       List<double> samples = [];
       for (int i = 0; i < bytes.length; i += 2) {
         if (i + 1 < bytes.length) {
@@ -292,10 +383,12 @@ class AudioService {
           samples.add(sample / 32768.0);
         }
       }
+      PerformanceProfiler.end('processWaveform:convert');
 
       print('Converted to ${samples.length} audio samples');
 
       // Downsample for display (reduce to ~1000-2000 points for efficiency)
+      PerformanceProfiler.start('processWaveform:downsample');
       const int targetLength = 1500;
       if (samples.length > targetLength) {
         final skipFactor = samples.length ~/ targetLength;
@@ -316,6 +409,7 @@ class AudioService {
         // Convert to amplitude
         _waveformData = samples.map((s) => s.abs()).toList();
       }
+      PerformanceProfiler.end('processWaveform:downsample');
 
       print('Final waveform has ${_waveformData?.length ?? 0} data points');
 
@@ -326,10 +420,13 @@ class AudioService {
       }
 
       // Notify listeners
+      PerformanceProfiler.start('processWaveform:notify');
       _waveformController.add(_waveformData!);
       // Notify listeners
       print('🔍 AudioService: Adding processed waveform data to stream');
       _waveformController.add(_waveformData!);
+      PerformanceProfiler.end('processWaveform:notify');
+
       print('✅ AudioService: Successfully added waveform data to stream');
     } catch (e) {
       print('❌ AudioService: Error processing waveform data: $e');
@@ -338,6 +435,7 @@ class AudioService {
       print(
         '🔍 AudioService: Using random waveform fallback after processing error',
       );
+      PerformanceProfiler.start('processWaveform:fallback');
       _generateRandomWaveform();
 
       // Notify listeners even on error
@@ -346,6 +444,12 @@ class AudioService {
         _waveformController.add(_waveformData!);
         print('✅ AudioService: Successfully added fallback waveform to stream');
       }
+      PerformanceProfiler.end('processWaveform:fallback');
+    } finally {
+      final totalTime = PerformanceProfiler.end('processWaveform:total');
+      print(
+        '⏱️ AudioService: Processing waveform took ${totalTime.inMilliseconds}ms',
+      );
     }
   }
 
