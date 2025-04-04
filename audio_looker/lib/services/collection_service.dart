@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:path/path.dart';
+import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -136,6 +137,8 @@ class CollectionService {
 
   // Key for storing root folders in SharedPreferences
   static const String _rootFoldersKey = 'root_folders';
+
+  static const String _generalTagsKey = 'general_tags_list';
 
   // Store root folders
   List<String> _rootFolders = [];
@@ -287,6 +290,93 @@ class CollectionService {
     return List.generate(maps.length, (i) {
       return Track.fromJson(maps[i]);
     });
+  }
+
+  Future<List<Tag>> getAllTags() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? tagsJsonString = prefs.getString(_generalTagsKey);
+
+      if (tagsJsonString != null) {
+        final List<dynamic> decodedList = jsonDecode(tagsJsonString);
+        return decodedList.map((jsonItem) => Tag.fromJson(jsonItem)).toList();
+      } else {
+        // Return empty list if no tags are saved yet
+        return [];
+      }
+    } catch (e) {
+      print('Error loading general tags: $e');
+      return []; // Return empty list on error
+    }
+  }
+
+  Future<bool> _saveAllTags(List<Tag> tags) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Convert list of Tag objects to list of Maps, then encode to JSON string
+      final List<Map<String, dynamic>> tagsJsonList =
+          tags.map((tag) => tag.toJson()).toList();
+      final String tagsJsonString = jsonEncode(tagsJsonList);
+      return await prefs.setString(_generalTagsKey, tagsJsonString);
+    } catch (e) {
+      print('Error saving general tags: $e');
+      return false;
+    }
+  }
+
+  Future<void> addTag(Tag newTag) async {
+    final currentTags = await getAllTags();
+    // Avoid adding duplicates (case-insensitive check)
+    if (!currentTags.any(
+      (tag) => tag.name.toLowerCase() == newTag.name.toLowerCase(),
+    )) {
+      currentTags.add(newTag);
+      await _saveAllTags(currentTags);
+      print('Added general tag: ${newTag.name}');
+    } else {
+      print('General tag "${newTag.name}" already exists.');
+      // Optionally throw an error or return a status
+    }
+  }
+
+  // Method to remove a tag by its name
+  Future<void> removeTag(String tagName) async {
+    final currentTags = await getAllTags();
+    final originalLength = currentTags.length;
+    currentTags.removeWhere((tag) => tag.name == tagName);
+
+    // Save only if something was actually removed
+    if (currentTags.length < originalLength) {
+      await _saveAllTags(currentTags);
+      print('Removed general tag: $tagName');
+
+      // TODO: Remember to implement logic in the BLoC or here
+      // to remove this tag from all tracks that use it in their 'generalTags' list.
+      // Example (conceptual - might need adjustment):
+      // final allTracks = await getAllTracks();
+      // for (var track in allTracks) {
+      //   if (track.generalTags.contains(tagName)) {
+      //      await removeGeneralTag(track.id!, tagName); // Call existing method
+      //   }
+      // }
+    } else {
+      print('General tag "$tagName" not found for removal.');
+    }
+  }
+
+  Future<void> updateTag(Tag updatedTag) async {
+    final currentTags = await getAllTags();
+    final index = currentTags.indexWhere((tag) => tag.name == updatedTag.name);
+
+    if (index != -1) {
+      currentTags[index] =
+          updatedTag; // Replace the old tag with the updated one
+      await _saveAllTags(currentTags);
+      print('Updated general tag: ${updatedTag.name}');
+    } else {
+      print('General tag "${updatedTag.name}" not found for update.');
+      // Optionally throw an error
+    }
   }
 
   Future<List<Track>> searchTracks(String query) async {
@@ -694,4 +784,19 @@ class CollectionService {
     await _loadingController.close();
     await _audioService.dispose();
   }
+}
+
+class Tag {
+  final String name;
+  final int? colorValue; // Store color as int
+
+  Tag({required this.name, this.colorValue});
+
+  Map<String, dynamic> toJson() => {'name': name, 'colorValue': colorValue};
+
+  factory Tag.fromJson(Map<String, dynamic> json) =>
+      Tag(name: json['name'], colorValue: json['colorValue']);
+
+  // Helper to get Flutter Color object
+  Color? get color => colorValue == null ? null : Color(colorValue!);
 }

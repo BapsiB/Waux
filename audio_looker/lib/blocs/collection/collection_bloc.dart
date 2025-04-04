@@ -16,6 +16,32 @@ class AddTracksFromPaths extends CollectionEvent {
   List<Object> get props => [filePaths];
 }
 
+class CreateGeneralTag extends CollectionEvent {
+  final String tagName;
+  const CreateGeneralTag(this.tagName);
+  @override
+  List<Object> get props => [tagName];
+}
+
+class DeleteGeneralTag extends CollectionEvent {
+  // Ensure these exist too if needed
+  final String tagName;
+  const DeleteGeneralTag(this.tagName);
+  @override
+  List<Object> get props => [tagName];
+}
+
+class SetGeneralTagColor extends CollectionEvent {
+  // Ensure these exist too if needed
+  final String tagName;
+  final int? colorValue;
+  const SetGeneralTagColor(this.tagName, this.colorValue);
+  @override
+  List<Object?> get props => [tagName, colorValue];
+}
+
+class LoadAllTags extends CollectionEvent {}
+
 // Events
 abstract class CollectionEvent extends Equatable {
   const CollectionEvent();
@@ -164,16 +190,32 @@ class CollectionLoading extends CollectionState {
 class CollectionLoaded extends CollectionState {
   final List<Track> tracks;
   final String? searchQuery;
-  final List<String> rootFolders; // New property
+  final List<String> rootFolders;
+  final List<Tag> allTags; // <-- Ensure this exists
 
   const CollectionLoaded({
     required this.tracks,
     this.searchQuery,
-    this.rootFolders = const [], // Default to empty list
+    this.rootFolders = const [],
+    this.allTags = const [], // <-- Ensure this exists
   });
 
   @override
-  List<Object?> get props => [tracks, searchQuery, rootFolders];
+  List<Object?> get props => [tracks, searchQuery, rootFolders, allTags]; // <-- Ensure this exists
+
+  CollectionLoaded copyWith({
+    List<Track>? tracks,
+    String? searchQuery,
+    List<String>? rootFolders,
+    List<Tag>? allTags, // <-- Ensure this exists
+  }) {
+    return CollectionLoaded(
+      tracks: tracks ?? this.tracks,
+      searchQuery: searchQuery ?? this.searchQuery,
+      rootFolders: rootFolders ?? this.rootFolders,
+      allTags: allTags ?? this.allTags, // <-- Ensure this exists
+    );
+  }
 }
 
 class CollectionError extends CollectionState {
@@ -212,6 +254,10 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     on<AddRootFolder>(_onAddRootFolder);
     on<RemoveRootFolder>(_onRemoveRootFolder);
     on<LoadRootFolders>(_onLoadRootFolders);
+    on<LoadAllTags>(_onLoadAllTags);
+    on<CreateGeneralTag>(_onCreateGeneralTag); // <-- Register the handler
+    on<DeleteGeneralTag>(_onDeleteGeneralTag); // <-- Register if needed
+    on<SetGeneralTagColor>(_onSetGeneralTagColor);
 
     // Listen to loading state changes from service
     _collectionService.loadingStream.listen((isLoading) {
@@ -238,6 +284,133 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       await _audioService.dispose();
     }
     return super.close();
+  }
+
+  Future<void> _onLoadAllTags(
+    LoadAllTags event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentState = state as CollectionLoaded;
+      try {
+        // Assuming _collectionService has a method to get all tags
+        final allTags = await _collectionService.getAllTags();
+        emit(currentState.copyWith(allTags: allTags));
+      } catch (e) {
+        print('Error loading all tags: $e');
+        // Optionally emit an error state or keep the current state
+      }
+    } else {
+      // Handle if called when not in Loaded state (e.g., load initially)
+      try {
+        final allTags = await _collectionService.getAllTags();
+        // If initial state, might need to load tracks too or have a dedicated TagsLoaded state
+        // For simplicity, assuming we only add tags when already loaded
+      } catch (e) {
+        print('Error loading all tags initially: $e');
+      }
+    }
+  }
+
+  // Handler for Creating a New General Tag
+  Future<void> _onCreateGeneralTag(
+    CreateGeneralTag event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentState = state as CollectionLoaded;
+      try {
+        // 1. Create the new tag object
+        final newTag = Tag(
+          name: event.tagName.trim(),
+          colorValue: null,
+        ); // Default color
+
+        // 2. Add it using the service (assuming addTag method exists)
+        await _collectionService.addTag(newTag);
+
+        // 3. Refetch all tags from the service to get the updated list
+        final updatedAllTags = await _collectionService.getAllTags();
+
+        // 4. Emit the loaded state with the updated tag list
+        emit(currentState.copyWith(allTags: updatedAllTags));
+      } catch (e) {
+        print('Error creating general tag: $e');
+        // Optionally emit an error state or show a snackbar
+        // emit(CollectionError('Failed to create tag: ${e.toString()}', tracks: currentState.tracks));
+      }
+    }
+    // Else: Handle cases where the state is not CollectionLoaded if necessary
+  }
+
+  // Handler for Deleting a General Tag
+  Future<void> _onDeleteGeneralTag(
+    DeleteGeneralTag event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentState = state as CollectionLoaded;
+      try {
+        // 1. Remove using the service (assuming removeTag method exists)
+        await _collectionService.removeTag(event.tagName);
+
+        // 2. TODO (Important): Remove this tag from ALL tracks that use it
+        // This requires iterating through tracks and calling removeGeneralTag on the service
+        // Or adding a dedicated service method like removeTagFromAllTracks(tagName)
+        print(
+          "TODO: Implement removal of tag '${event.tagName}' from all tracks.",
+        );
+
+        // 3. Refetch all tags from the service
+        final updatedAllTags = await _collectionService.getAllTags();
+
+        // 4. Emit the loaded state with the updated list
+        // (Also need to update the tracks list if you modified them)
+        final updatedTracks =
+            await _collectionService
+                .getAllTracks(); // Refetch tracks if modified
+        emit(
+          currentState.copyWith(allTags: updatedAllTags, tracks: updatedTracks),
+        );
+      } catch (e) {
+        print('Error deleting general tag: $e');
+        // Handle error
+      }
+    }
+  }
+
+  // Handler for Setting Tag Color
+  Future<void> _onSetGeneralTagColor(
+    SetGeneralTagColor event,
+    Emitter<CollectionState> emit,
+  ) async {
+    if (state is CollectionLoaded) {
+      final currentState = state as CollectionLoaded;
+      try {
+        // 1. Find the tag to update
+        final tagToUpdate = currentState.allTags.firstWhere(
+          (t) => t.name == event.tagName,
+        );
+
+        // 2. Create updated tag object
+        final updatedTag = Tag(
+          name: tagToUpdate.name,
+          colorValue: event.colorValue,
+        );
+
+        // 3. Update using the service (assuming updateTag method exists)
+        await _collectionService.updateTag(updatedTag);
+
+        // 4. Refetch all tags
+        final updatedAllTags = await _collectionService.getAllTags();
+
+        // 5. Emit updated state
+        emit(currentState.copyWith(allTags: updatedAllTags));
+      } catch (e) {
+        print('Error setting tag color: $e');
+        // Handle error
+      }
+    }
   }
 
   // Replace your _onAddTracksFromPaths method
@@ -805,27 +978,35 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     Emitter<CollectionState> emit,
   ) async {
     if (state is CollectionLoaded) {
-      final currentTracks = (state as CollectionLoaded).tracks;
+      // Cast the current state to access its properties easily
+      final currentState = state as CollectionLoaded;
       try {
+        // Call the service to update the database
         await _collectionService.addGeneralTag(event.trackId, event.tag);
 
-        // Update the track in the current state
+        // Update the track list *locally* in the state
         final updatedTracks =
-            currentTracks.map((track) {
+            currentState.tracks.map((track) {
               if (track.id == event.trackId) {
+                // Create a new list of tags for the specific track
                 List<String> newTags = List<String>.from(track.generalTags);
                 if (!newTags.contains(event.tag)) {
                   newTags.add(event.tag);
                 }
+                // Return the track with the updated tags list
                 return track.copyWith(generalTags: newTags);
               }
+              // Return other tracks unchanged
               return track;
             }).toList();
 
-        emit(CollectionLoaded(tracks: updatedTracks));
+        // *** Use copyWith to emit the updated state ***
+        // This preserves all other properties (like allTags, rootFolders, etc.)
+        emit(currentState.copyWith(tracks: updatedTracks));
       } catch (e) {
-        print('Error adding general tag: $e');
-        emit(CollectionError(e.toString(), tracks: currentTracks));
+        print('Error adding general tag to track: $e');
+        // Optionally emit an error state, preserving current tracks if possible
+        emit(CollectionError(e.toString(), tracks: currentState.tracks));
       }
     }
   }
@@ -835,25 +1016,33 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     Emitter<CollectionState> emit,
   ) async {
     if (state is CollectionLoaded) {
-      final currentTracks = (state as CollectionLoaded).tracks;
+      // Cast the current state
+      final currentState = state as CollectionLoaded;
       try {
+        // Call the service to update the database
         await _collectionService.removeGeneralTag(event.trackId, event.tag);
 
-        // Update the track in the current state
+        // Update the track list *locally* in the state
         final updatedTracks =
-            currentTracks.map((track) {
+            currentState.tracks.map((track) {
               if (track.id == event.trackId) {
+                // Create a new list of tags, removing the specified one
                 List<String> newTags = List<String>.from(track.generalTags);
                 newTags.remove(event.tag);
+                // Return the track with the updated tags list
                 return track.copyWith(generalTags: newTags);
               }
+              // Return other tracks unchanged
               return track;
             }).toList();
 
-        emit(CollectionLoaded(tracks: updatedTracks));
+        // *** Use copyWith to emit the updated state ***
+        // This preserves all other properties (like allTags, rootFolders, etc.)
+        emit(currentState.copyWith(tracks: updatedTracks));
       } catch (e) {
-        print('Error removing general tag: $e');
-        emit(CollectionError(e.toString(), tracks: currentTracks));
+        print('Error removing general tag from track: $e');
+        // Optionally emit an error state, preserving current tracks if possible
+        emit(CollectionError(e.toString(), tracks: currentState.tracks));
       }
     }
   }

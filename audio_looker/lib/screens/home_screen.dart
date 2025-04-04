@@ -606,6 +606,7 @@ class _HomeScreenState extends State<HomeScreen>
                                               key: ValueKey(
                                                 _selectedTrack!.path,
                                               ),
+                                              trackId: _selectedTrack!.id!,
                                               title: _selectedTrack!.title,
                                               artist: _selectedTrack!.artist,
                                               audioSource: _selectedTrack!.path,
@@ -640,32 +641,32 @@ class _HomeScreenState extends State<HomeScreen>
                                                       );
                                                 }
                                               },
-                                              onAddGeneralTag: (tag) {
-                                                if (_selectedTrack?.id !=
-                                                    null) {
-                                                  context
-                                                      .read<CollectionBloc>()
-                                                      .add(
-                                                        AddTrackGeneralTag(
-                                                          _selectedTrack!.id!,
-                                                          tag,
-                                                        ),
-                                                      );
-                                                }
-                                              },
-                                              onRemoveGeneralTag: (tag) {
-                                                if (_selectedTrack?.id !=
-                                                    null) {
-                                                  context
-                                                      .read<CollectionBloc>()
-                                                      .add(
-                                                        RemoveTrackGeneralTag(
-                                                          _selectedTrack!.id!,
-                                                          tag,
-                                                        ),
-                                                      );
-                                                }
-                                              },
+                                              // onAddGeneralTag: (tag) {
+                                              //   if (_selectedTrack?.id !=
+                                              //       null) {
+                                              //     context
+                                              //         .read<CollectionBloc>()
+                                              //         .add(
+                                              //           AddTrackGeneralTag(
+                                              //             _selectedTrack!.id!,
+                                              //             tag,
+                                              //           ),
+                                              //         );
+                                              //   }
+                                              // },
+                                              // onRemoveGeneralTag: (tag) {
+                                              //   if (_selectedTrack?.id !=
+                                              //       null) {
+                                              //     context
+                                              //         .read<CollectionBloc>()
+                                              //         .add(
+                                              //           RemoveTrackGeneralTag(
+                                              //             _selectedTrack!.id!,
+                                              //             tag,
+                                              //           ),
+                                              //         );
+                                              //   }
+                                              // },
                                             ),
                                           ),
 
