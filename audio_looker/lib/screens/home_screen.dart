@@ -58,7 +58,7 @@ class _HomeScreenState extends State<HomeScreen>
     // Initialize animation controller
     _animationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 200),
     );
 
     // Create animation for player height
@@ -592,77 +592,94 @@ class _HomeScreenState extends State<HomeScreen>
                                       ),
                                     ),
 
-                                    // Audio player content
                                     Expanded(
-                                      child:
-                                          _isPlayerMinimized
-                                              ? _buildMinimizedPlayer()
-                                              : AudioPlayerWidget(
-                                                key: ValueKey(
-                                                  _selectedTrack!.path,
-                                                ),
-                                                title: _selectedTrack!.title,
-                                                artist: _selectedTrack!.artist,
-                                                audioSource:
-                                                    _selectedTrack!.path,
-                                                isUrl: _selectedTrack!.isUrl,
-                                                rating: _selectedTrack!.rating,
-                                                notes: _selectedTrack!.comment,
-                                                generalTags:
-                                                    _selectedTrack!.generalTags,
-                                                onRatingChanged: (rating) {
-                                                  if (_selectedTrack?.id !=
-                                                      null) {
-                                                    context
-                                                        .read<CollectionBloc>()
-                                                        .add(
-                                                          UpdateTrackRating(
-                                                            _selectedTrack!.id!,
-                                                            rating,
-                                                          ),
-                                                        );
-                                                  }
-                                                },
-                                                onNotesChanged: (notes) {
-                                                  if (_selectedTrack?.id !=
-                                                      null) {
-                                                    context
-                                                        .read<CollectionBloc>()
-                                                        .add(
-                                                          UpdateTrackComment(
-                                                            _selectedTrack!.id!,
-                                                            notes,
-                                                          ),
-                                                        );
-                                                  }
-                                                },
-                                                onAddGeneralTag: (tag) {
-                                                  if (_selectedTrack?.id !=
-                                                      null) {
-                                                    context
-                                                        .read<CollectionBloc>()
-                                                        .add(
-                                                          AddTrackGeneralTag(
-                                                            _selectedTrack!.id!,
-                                                            tag,
-                                                          ),
-                                                        );
-                                                  }
-                                                },
-                                                onRemoveGeneralTag: (tag) {
-                                                  if (_selectedTrack?.id !=
-                                                      null) {
-                                                    context
-                                                        .read<CollectionBloc>()
-                                                        .add(
-                                                          RemoveTrackGeneralTag(
-                                                            _selectedTrack!.id!,
-                                                            tag,
-                                                          ),
-                                                        );
-                                                  }
-                                                },
+                                      child: Stack(
+                                        children: [
+                                          // Full player (always present, animated opacity)
+                                          AnimatedOpacity(
+                                            opacity:
+                                                _isPlayerMinimized ? 0.0 : 1.0,
+                                            duration: const Duration(
+                                              milliseconds: 200,
+                                            ),
+                                            child: AudioPlayerWidget(
+                                              key: ValueKey(
+                                                _selectedTrack!.path,
                                               ),
+                                              title: _selectedTrack!.title,
+                                              artist: _selectedTrack!.artist,
+                                              audioSource: _selectedTrack!.path,
+                                              isUrl: _selectedTrack!.isUrl,
+                                              rating: _selectedTrack!.rating,
+                                              notes: _selectedTrack!.comment,
+                                              generalTags:
+                                                  _selectedTrack!.generalTags,
+                                              onRatingChanged: (rating) {
+                                                if (_selectedTrack?.id !=
+                                                    null) {
+                                                  context
+                                                      .read<CollectionBloc>()
+                                                      .add(
+                                                        UpdateTrackRating(
+                                                          _selectedTrack!.id!,
+                                                          rating,
+                                                        ),
+                                                      );
+                                                }
+                                              },
+                                              onNotesChanged: (notes) {
+                                                if (_selectedTrack?.id !=
+                                                    null) {
+                                                  context
+                                                      .read<CollectionBloc>()
+                                                      .add(
+                                                        UpdateTrackComment(
+                                                          _selectedTrack!.id!,
+                                                          notes,
+                                                        ),
+                                                      );
+                                                }
+                                              },
+                                              onAddGeneralTag: (tag) {
+                                                if (_selectedTrack?.id !=
+                                                    null) {
+                                                  context
+                                                      .read<CollectionBloc>()
+                                                      .add(
+                                                        AddTrackGeneralTag(
+                                                          _selectedTrack!.id!,
+                                                          tag,
+                                                        ),
+                                                      );
+                                                }
+                                              },
+                                              onRemoveGeneralTag: (tag) {
+                                                if (_selectedTrack?.id !=
+                                                    null) {
+                                                  context
+                                                      .read<CollectionBloc>()
+                                                      .add(
+                                                        RemoveTrackGeneralTag(
+                                                          _selectedTrack!.id!,
+                                                          tag,
+                                                        ),
+                                                      );
+                                                }
+                                              },
+                                            ),
+                                          ),
+
+                                          // Minimized player (shown with animated opacity when minimized)
+                                          AnimatedOpacity(
+                                            opacity:
+                                                _isPlayerMinimized ? 1.0 : 0.0,
+                                            duration: const Duration(
+                                              milliseconds: 200,
+                                            ),
+                                            child: _buildMinimizedPlayer(),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ],
                                 ),
