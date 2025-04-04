@@ -15,14 +15,11 @@ class AudioPlayerWidget extends StatefulWidget {
   final int rating;
   final String notes;
   final List<String> generalTags;
-  final int trackId; // *** Add trackId ***
+  final int trackId;
 
   // Keep existing callbacks...
   final Function(int)? onRatingChanged;
   final Function(String)? onNotesChanged;
-  // *** Remove these if tag editing is fully handled by popup via CollectionBloc ***
-  // final Function(String)? onAddGeneralTag;
-  // final Function(String)? onRemoveGeneralTag;
 
   const AudioPlayerWidget({
     Key? key,
@@ -30,14 +27,12 @@ class AudioPlayerWidget extends StatefulWidget {
     required this.artist,
     required this.audioSource,
     required this.isUrl,
-    required this.trackId, // *** Make trackId required ***
+    required this.trackId,
     this.rating = 0,
     this.notes = '',
     this.generalTags = const [],
     this.onRatingChanged,
     this.onNotesChanged,
-    // this.onAddGeneralTag,   // Remove
-    // this.onRemoveGeneralTag, // Remove
   }) : super(key: key);
 
   @override
@@ -50,10 +45,20 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   String? _currentTag;
   final TextEditingController _tagController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
-  final TextEditingController _generalTagController = TextEditingController();
   bool _isTaggingMode = false;
   bool _isNoteExpanded = false;
-  // bool _isTagsExpanded = false;
+
+  // --- State for Dragging & Throttling ---
+  bool _isDragging = false;
+  double? _dragProgress;
+  bool _wasPlayingBeforeDrag = false;
+  double _finalDragRatio = 0.0;
+  DateTime? _lastSeekDispatchTime; // Added: Track last seek dispatch time
+  final Duration _seekThrottleInterval = const Duration(
+    milliseconds: 200,
+  ); // Added: ~5 times per second
+  // --- End Dragging State ---
+
   int _currentRating = 0;
 
   @override
@@ -63,38 +68,38 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
-
-    // Initialize with existing values
     _currentRating = widget.rating;
     _notesController.text = widget.notes;
-
-    // Load the audio file
-    context.read<AudioPlayerBloc>().add(
-      LoadAudio(source: widget.audioSource, isUrl: widget.isUrl),
-    );
+    _loadAudio();
   }
 
   @override
   void didUpdateWidget(AudioPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-
-    // Update local state if props changed
     if (oldWidget.rating != widget.rating) {
       _currentRating = widget.rating;
     }
-
     if (oldWidget.notes != widget.notes &&
         _notesController.text != widget.notes) {
       _notesController.text = widget.notes;
     }
-
-    // Check if the audio source has changed
     if (oldWidget.audioSource != widget.audioSource) {
-      // Load the new audio file
-      context.read<AudioPlayerBloc>().add(
-        LoadAudio(source: widget.audioSource, isUrl: widget.isUrl),
-      );
+      _loadAudio();
     }
+  }
+
+  void _loadAudio() {
+    context.read<AudioPlayerBloc>().add(
+      LoadAudio(source: widget.audioSource, isUrl: widget.isUrl),
+    );
+    setState(() {
+      _isDragging = false;
+      _dragProgress = null;
+      _wasPlayingBeforeDrag = false;
+      _currentTag = null;
+      _finalDragRatio = 0.0;
+      _lastSeekDispatchTime = null; // Reset throttle timer on load
+    });
   }
 
   @override
@@ -102,7 +107,6 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     _animationController.dispose();
     _tagController.dispose();
     _notesController.dispose();
-    // _generalTagController.dispose();
     super.dispose();
   }
 
@@ -117,20 +121,20 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     if (_tagController.text.isNotEmpty) {
       final bloc = context.read<AudioPlayerBloc>();
       final state = bloc.state;
-
       if (state is AudioPlayerLoaded) {
-        // Get current position
-        final position =
-            state.position.inMilliseconds / 1000.0; // Convert to seconds
-
+        final positionFraction =
+            state.duration > Duration.zero
+                ? (state.position.inMilliseconds /
+                        state.duration.inMilliseconds)
+                    .clamp(0.0, 1.0)
+                : 0.0;
         bloc.add(
           AddAudioTag(
             source: widget.audioSource,
-            position: position,
+            position: positionFraction,
             label: _tagController.text,
           ),
         );
-
         _tagController.clear();
         setState(() {
           _isTaggingMode = false;
@@ -143,26 +147,18 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     setState(() {
       _currentRating = newRating;
     });
-
-    if (widget.onRatingChanged != null) {
-      widget.onRatingChanged!(newRating);
-    }
+    context.read<CollectionBloc>().add(
+      UpdateTrackRating(widget.trackId, newRating),
+    );
+    widget.onRatingChanged?.call(newRating);
   }
 
   void _handleNotesChanged() {
-    if (widget.onNotesChanged != null) {
-      widget.onNotesChanged!(_notesController.text);
-    }
+    context.read<CollectionBloc>().add(
+      UpdateTrackComment(widget.trackId, _notesController.text),
+    );
+    widget.onNotesChanged?.call(_notesController.text);
   }
-
-  // void _addGeneralTag() {
-  //   if (_generalTagController.text.isNotEmpty) {
-  //     if (widget.onAddGeneralTag != null) {
-  //       widget.onAddGeneralTag!(_generalTagController.text);
-  //     }
-  //     _generalTagController.clear();
-  //   }
-  // }
 
   Widget _buildRatingBar() {
     return Row(
@@ -196,27 +192,22 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: ExpansionTile(
         initiallyExpanded: _isNoteExpanded,
-        onExpansionChanged: (expanded) {
-          setState(() {
-            _isNoteExpanded = expanded;
-          });
-        },
+        onExpansionChanged:
+            (expanded) => setState(() {
+              _isNoteExpanded = expanded;
+            }),
         title: const Text('Notes'),
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _notesController,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    hintText: 'Add notes about this track...',
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (_) => _handleNotesChanged(),
-                ),
-              ],
+            child: TextField(
+              controller: _notesController,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                hintText: 'Add notes...',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) => _handleNotesChanged(),
             ),
           ),
         ],
@@ -225,123 +216,130 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   }
 
   void _openTagEditor(BuildContext buildContext, List<Tag> allAvailableTags) {
-    // Use buildContext to avoid shadowing
-    print('Trying to open tag editor...'); // Keep this for debugging
     final collectionState = buildContext.read<CollectionBloc>().state;
-    print(
-      'Current Collection State: ${collectionState.runtimeType}',
-    ); // Keep for debugging
-
     if (collectionState is CollectionLoaded) {
       List<String> currentTrackTags = [];
-      Track? currentTrack; // Use nullable Track
-
       try {
-        currentTrack = collectionState.tracks.firstWhere(
+        final currentTrack = collectionState.tracks.firstWhere(
           (t) => t.id == widget.trackId,
         );
         currentTrackTags = currentTrack.generalTags;
       } catch (e) {
-        // Handle case where the track might not be in the list (should ideally not happen if selected)
-        print(
-          'Error: Could not find track with ID ${widget.trackId} in CollectionLoaded state.',
-        );
+        print('Error finding track ${widget.trackId} for tag editor: $e');
         ScaffoldMessenger.of(buildContext).showSnackBar(
-          const SnackBar(content: Text('Error: Could not find track data.')),
+          const SnackBar(content: Text('Could not load track tags.')),
         );
-        return; // Don't proceed if track not found
+        return;
       }
-
-      // *** ADD THIS BACK ***
       showDialog(
-        context: buildContext, // Use the context passed into the function
-        builder: (BuildContext dialogContext) {
-          // Provide the CollectionBloc to the popup if not already available via context
-          return BlocProvider.value(
-            value: BlocProvider.of<CollectionBloc>(
-              buildContext,
-            ), // Use the context from the widget tree
-            child: TagEditorPopup(
-              trackId: widget.trackId,
-              currentTrackTags: currentTrackTags, // Pass the current tags
+        context: buildContext,
+        builder:
+            (BuildContext dialogContext) => BlocProvider.value(
+              value: BlocProvider.of<CollectionBloc>(buildContext),
+              child: TagEditorPopup(
+                trackId: widget.trackId,
+                currentTrackTags: currentTrackTags,
+              ),
             ),
-          );
-        },
       );
-      // *** END OF ADDED CODE ***
     } else {
-      // Handle case where collection isn't loaded
-      print('Collection state is NOT Loaded, cannot open editor.');
       ScaffoldMessenger.of(buildContext).showSnackBar(
-        const SnackBar(
-          content: Text('Tags are still loading or failed to load.'),
-        ),
+        const SnackBar(content: Text('Tags are still loading...')),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Use BlocBuilder for CollectionBloc to get allTags for Chip colors
-    // This assumes CollectionBloc is provided higher up in your widget tree
     return BlocBuilder<CollectionBloc, CollectionState>(
       builder: (context, collectionState) {
-        // Get all defined tags for color lookup (if CollectionBloc is loaded)
-        final allTagsMap =
-            <String, Tag>{}; // Assuming Tag model exists from CollectionService
+        final allTagsMap = <String, Tag>{};
         if (collectionState is CollectionLoaded) {
           for (var tag in collectionState.allTags) {
             allTagsMap[tag.name] = tag;
           }
         }
 
-        // Use BlocBuilder for AudioPlayerBloc to get player state
         return BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
           builder: (context, playerState) {
-            // Handle Initial, Loading, and Error states first
-            if (playerState is AudioPlayerInitial) {
+            if (playerState is AudioPlayerInitial ||
+                playerState is AudioPlayerLoading) {
               return const Center(
-                child: CircularProgressIndicator(color: Colors.teal),
-              );
-            } else if (playerState is AudioPlayerLoading) {
-              return const Center(
-                child: CircularProgressIndicator(color: Colors.yellow),
+                child: Padding(
+                  padding: EdgeInsets.all(32.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 16),
+                      Text("Loading audio..."),
+                    ],
+                  ),
+                ),
               );
             } else if (playerState is AudioPlayerError) {
               return Center(
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
-                  child: Text('Error loading audio: ${playerState.message}'),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.error_outline, color: Colors.red, size: 48),
+                      SizedBox(height: 16),
+                      Text('Error loading audio: ${playerState.message}'),
+                      SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        icon: Icon(Icons.refresh),
+                        label: Text("Retry"),
+                        onPressed: _loadAudio,
+                      ),
+                    ],
+                  ),
                 ),
               );
-            }
-            // Handle the Loaded state where we have player data
-            else if (playerState is AudioPlayerLoaded) {
+            } else if (playerState is AudioPlayerLoaded) {
               final isPlaying = playerState.isPlaying;
               final duration = playerState.duration;
               final position = playerState.position;
               final waveformData = playerState.waveformData;
-              // Filter time-based tags based on duration (example logic)
-              final tags =
-                  playerState.tags
-                      .where(
-                        (tag) =>
-                            tag.position >= 0 &&
-                            tag.position <= duration.inMilliseconds / 1000.0,
-                      )
-                      .toList();
+              final timeTags = playerState.tags;
 
-              // Update animation controller based on play state
-              if (isPlaying) {
+              if (isPlaying)
                 _animationController.forward();
-              } else {
+              else
                 _animationController.reverse();
+
+              List<String> currentGeneralTags = [];
+              if (collectionState is CollectionLoaded) {
+                try {
+                  final currentTrack = collectionState.tracks.firstWhere(
+                    (t) => t.id == widget.trackId,
+                    orElse:
+                        () =>
+                            widget.generalTags.isNotEmpty
+                                ? Track(
+                                  id: widget.trackId,
+                                  title: '',
+                                  artist: '',
+                                  album: '',
+                                  path: '',
+                                  isUrl: false,
+                                  duration: 0,
+                                  generalTags: widget.generalTags,
+                                )
+                                : throw Exception("Track not found"),
+                  );
+                  currentGeneralTags = currentTrack.generalTags;
+                } catch (e) {
+                  print(
+                    "Warning: Track ${widget.trackId} not found in CollectionBloc state, using widget.generalTags as fallback.",
+                  );
+                  currentGeneralTags = widget.generalTags;
+                }
+              } else {
+                currentGeneralTags = widget.generalTags;
               }
 
-              // Get the current track's general tags from the widget property
-              final currentGeneralTags = widget.generalTags;
-
-              // Main widget layout
               return SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -350,20 +348,16 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                     Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Row(
-                        // Use Row for side-by-side layout
-                        crossAxisAlignment:
-                            CrossAxisAlignment.start, // Align items to the top
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Left side: Title, Artist, Rating
                           Expanded(
-                            // Takes available horizontal space
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
                                   widget.title,
                                   style: Theme.of(context).textTheme.titleLarge,
-                                  maxLines: 2, // Allow wrapping slightly
+                                  maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                                 const SizedBox(height: 4),
@@ -375,33 +369,23 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                                   overflow: TextOverflow.ellipsis,
                                 ),
                                 const SizedBox(height: 8),
-                                _buildRatingBar(), // Assumes this helper exists
+                                _buildRatingBar(),
                               ],
                             ),
                           ),
-                          const SizedBox(
-                            width: 8,
-                          ), // Spacer between left and right
-                          // Right side: Tags and Add Button
+                          const SizedBox(width: 8),
                           Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment
-                                    .end, // Align items to the right
-                            mainAxisSize:
-                                MainAxisSize.min, // Take minimum vertical space
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               if (currentGeneralTags.isNotEmpty)
                                 SizedBox(
-                                  // Constrain the width for tags
                                   width:
-                                      MediaQuery.of(context).size.width *
-                                      0.35, // Adjust width as needed
+                                      MediaQuery.of(context).size.width * 0.35,
                                   child: Wrap(
                                     spacing: 4.0,
                                     runSpacing: 4.0,
-                                    alignment:
-                                        WrapAlignment
-                                            .end, // Align chips to the end (right)
+                                    alignment: WrapAlignment.end,
                                     children:
                                         currentGeneralTags.map((tag) {
                                           final tagData = allTagsMap[tag];
@@ -410,8 +394,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                                               radius: 8,
                                               backgroundColor:
                                                   tagData?.color ??
-                                                  Colors
-                                                      .grey[600], // Use lookup color
+                                                  Colors.grey[600],
                                             ),
                                             label: Text(tag),
                                             labelStyle: const TextStyle(
@@ -426,34 +409,28 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                                               vertical: 2,
                                             ),
                                             onPressed: () {
-                                              // Use the CollectionState available from the outer BlocBuilder
                                               if (collectionState
-                                                  is CollectionLoaded) {
+                                                  is CollectionLoaded)
                                                 _openTagEditor(
                                                   context,
                                                   collectionState.allTags,
                                                 );
-                                              }
                                             },
                                           );
                                         }).toList(),
                                   ),
                                 ),
-                              const SizedBox(
-                                height: 4,
-                              ), // Space between tags and button
+                              const SizedBox(height: 4),
                               IconButton(
                                 icon: const Icon(Icons.add_circle_outline),
                                 tooltip: 'Edit Tags',
                                 onPressed: () {
-                                  // Use the CollectionState available from the outer BlocBuilder
-                                  if (collectionState is CollectionLoaded) {
+                                  if (collectionState is CollectionLoaded)
                                     _openTagEditor(
                                       context,
                                       collectionState.allTags,
                                     );
-                                  } else {
-                                    // Optional: Show a message if tags aren't loaded yet
+                                  else
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text(
@@ -461,7 +438,6 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                                         ),
                                       ),
                                     );
-                                  }
                                 },
                               ),
                             ],
@@ -472,7 +448,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
 
                     // --- Waveform Display Section ---
                     Container(
-                      height: 200, // Example height
+                      height: 120,
                       margin: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: BoxDecoration(
                         color: Colors.grey[900],
@@ -481,21 +457,18 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
                         child: Stack(
+                          alignment: Alignment.center,
                           children: [
-                            // Waveform visualization using CustomPaint and WaveformPainter
-                            if (waveformData != null && waveformData.isNotEmpty)
-                              GestureDetector(
-                                // Seek on tap
-                                onTapDown: (details) {
-                                  // Calculation to seek based on tap position
+                            // --- GestureDetector for Dragging and Tapping ---
+                            GestureDetector(
+                              onTapDown: (details) {
+                                if (duration > Duration.zero) {
                                   final RenderBox box =
                                       context.findRenderObject() as RenderBox;
                                   final localPosition = box.globalToLocal(
                                     details.globalPosition,
                                   );
-                                  // Adjust for the container's horizontal margin if necessary
                                   final containerWidth = box.size.width;
-                                  // Ensure seek position is within bounds
                                   final seekRatio = (localPosition.dx /
                                           containerWidth)
                                       .clamp(0.0, 1.0);
@@ -503,66 +476,129 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                                   context.read<AudioPlayerBloc>().add(
                                     SeekAudio(position: seekPosition),
                                   );
-                                },
+                                }
+                              },
+                              onHorizontalDragStart: (details) {
+                                if (duration > Duration.zero) {
+                                  setState(() {
+                                    _isDragging = true;
+                                    _wasPlayingBeforeDrag = isPlaying;
+                                    _lastSeekDispatchTime =
+                                        null; // Reset timer on new drag
+                                    final RenderBox box =
+                                        context.findRenderObject() as RenderBox;
+                                    final localPosition = box.globalToLocal(
+                                      details.globalPosition,
+                                    );
+                                    final containerWidth = box.size.width;
+                                    _finalDragRatio = (localPosition.dx /
+                                            containerWidth)
+                                        .clamp(0.0, 1.0);
+                                    _dragProgress = _finalDragRatio;
+                                  });
+                                }
+                              },
+                              onHorizontalDragUpdate: (details) {
+                                if (_isDragging && duration > Duration.zero) {
+                                  final RenderBox box =
+                                      context.findRenderObject() as RenderBox;
+                                  final localPosition = box.globalToLocal(
+                                    details.globalPosition,
+                                  );
+                                  final containerWidth = box.size.width;
+                                  final seekRatio = (localPosition.dx /
+                                          containerWidth)
+                                      .clamp(0.0, 1.0);
+                                  _finalDragRatio =
+                                      seekRatio; // Always update final ratio
+
+                                  // --- Throttle Seek Dispatch ---
+                                  final now = DateTime.now();
+                                  bool shouldDispatch =
+                                      _lastSeekDispatchTime == null ||
+                                      now.difference(_lastSeekDispatchTime!) >
+                                          _seekThrottleInterval;
+
+                                  if (shouldDispatch) {
+                                    final seekPosition = duration * seekRatio;
+                                    context.read<AudioPlayerBloc>().add(
+                                      SeekAudio(position: seekPosition),
+                                    );
+                                    _lastSeekDispatchTime =
+                                        now; // Update timestamp
+                                    print(
+                                      "Throttled Seek Dispatched: ${seekPosition.inMilliseconds}ms",
+                                    );
+                                  }
+                                  // --- End Throttle ---
+
+                                  // Always update visual progress smoothly
+                                  setState(() {
+                                    _dragProgress = seekRatio;
+                                  });
+                                }
+                              },
+                              onHorizontalDragEnd: (details) {
+                                if (_isDragging) {
+                                  // Dispatch final seek event unconditionally
+                                  if (duration > Duration.zero) {
+                                    final finalSeekPosition =
+                                        duration * _finalDragRatio;
+                                    context.read<AudioPlayerBloc>().add(
+                                      SeekAudio(position: finalSeekPosition),
+                                    );
+                                    print(
+                                      "Final Seek Dispatched on DragEnd: ${finalSeekPosition.inMilliseconds}ms (Ratio: $_finalDragRatio)",
+                                    );
+                                  }
+                                  setState(() {
+                                    _isDragging = false;
+                                    _dragProgress = null;
+                                    _lastSeekDispatchTime = null; // Reset timer
+                                  });
+                                }
+                              },
+                              child: Container(
+                                width: double.infinity,
+                                height: double.infinity,
+                                color: Colors.transparent,
                                 child: CustomPaint(
                                   size: Size.infinite,
                                   painter: WaveformPainter(
-                                    // Your custom painter
-                                    waveformData: waveformData,
+                                    waveformData: waveformData ?? [],
                                     activeColor: Theme.of(context).primaryColor,
                                     inactiveColor: Colors.grey[700]!,
                                     playbackProgress:
-                                        duration.inMilliseconds > 0
-                                            ? position.inMilliseconds /
-                                                duration.inMilliseconds
+                                        duration > Duration.zero
+                                            ? (position.inMilliseconds /
+                                                    duration.inMilliseconds)
+                                                .clamp(0.0, 1.0)
                                             : 0.0,
+                                    dragProgress: _dragProgress,
+                                    tags: timeTags,
                                   ),
-                                ),
-                              )
-                            else // Show loading indicator if waveform data isn't ready
-                              const Center(
-                                child: CircularProgressIndicator(
-                                  color: Colors.pink,
                                 ),
                               ),
-
-                            // Overlay time-based tag markers on the waveform
-                            if (waveformData != null)
-                              for (var tag in tags)
-                                // Position calculation needs accurate duration and container width
-                                if (duration.inMilliseconds > 0)
-                                  Positioned(
-                                    left:
-                                        (tag.position /
-                                                (duration.inMilliseconds /
-                                                    1000.0)) *
-                                            MediaQuery.of(context).size.width -
-                                        16, // Approximate calculation needs refinement
-                                    top: 0,
-                                    bottom: 0,
-                                    child: GestureDetector(
-                                      onTap: () {
-                                        setState(() {
-                                          _currentTag = tag.label;
-                                        });
-                                      }, // Display tag label on tap
-                                      child: Container(
-                                        width: 2,
-                                        color: Colors.redAccent,
-                                      ), // Simple marker line
-                                    ),
-                                  ),
-
-                            // Display current selected time-based tag info (optional)
+                            ),
+                            if (waveformData == null || waveformData.isEmpty)
+                              const Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.0,
+                                  color: Colors.white54,
+                                ),
+                              ),
                             if (_currentTag != null)
                               Positioned(
                                 bottom: 10,
                                 left: 10,
                                 right: 10,
                                 child: Container(
-                                  padding: const EdgeInsets.all(8),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: Colors.black87,
+                                    color: Colors.black.withOpacity(0.7),
                                     borderRadius: BorderRadius.circular(8),
                                   ),
                                   child: Row(
@@ -574,19 +610,20 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                                           style: const TextStyle(
                                             color: Colors.white,
                                           ),
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.close,
-                                          size: 16,
-                                          color: Colors.white,
-                                        ),
-                                        onPressed: () {
+                                      InkWell(
+                                        onTap: () {
                                           setState(() {
                                             _currentTag = null;
                                           });
                                         },
+                                        child: const Icon(
+                                          Icons.close,
+                                          size: 16,
+                                          color: Colors.white70,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -606,12 +643,8 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            _formatDuration(position),
-                          ), // Assumes helper exists
-                          Text(
-                            _formatDuration(duration),
-                          ), // Assumes helper exists
+                          Text(_formatDuration(position)),
+                          Text(_formatDuration(duration)),
                         ],
                       ),
                     ),
@@ -621,10 +654,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         IconButton(
-                          icon: const Icon(
-                            Icons.replay_10,
-                          ), // Example: Rewind 10s
+                          icon: const Icon(Icons.replay_10),
                           iconSize: 32,
+                          tooltip: 'Rewind 10 seconds',
                           onPressed: () {
                             final newPos =
                                 position - const Duration(seconds: 10);
@@ -640,25 +672,23 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                         ),
                         const SizedBox(width: 16),
                         FloatingActionButton(
+                          tooltip: isPlaying ? 'Pause' : 'Play',
                           onPressed: () {
-                            if (isPlaying) {
+                            if (isPlaying)
                               context.read<AudioPlayerBloc>().add(PauseAudio());
-                            } else {
+                            else
                               context.read<AudioPlayerBloc>().add(PlayAudio());
-                            }
                           },
                           child: AnimatedIcon(
-                            // Animated play/pause icon
                             icon: AnimatedIcons.play_pause,
                             progress: _animationController,
                           ),
                         ),
                         const SizedBox(width: 16),
                         IconButton(
-                          icon: const Icon(
-                            Icons.forward_10,
-                          ), // Example: Forward 10s
+                          icon: const Icon(Icons.forward_10),
                           iconSize: 32,
+                          tooltip: 'Forward 10 seconds',
                           onPressed: () {
                             final newPos =
                                 position + const Duration(seconds: 10);
@@ -671,73 +701,75 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16), // Spacer
+                    const SizedBox(height: 16),
+
                     // --- Time-based Tagging Controls ---
-                    if (!_isTaggingMode) // Show button if not in tagging mode
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.bookmark_add_outlined),
-                          label: const Text('Add Time Tag'),
-                          onPressed: () {
-                            setState(() {
-                              _isTaggingMode = true;
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            minimumSize: const Size(double.infinity, 48),
-                          ),
-                        ),
-                      )
-                    else // Show text field and buttons if in tagging mode
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller:
-                                    _tagController, // Assumes controller exists
-                                decoration: const InputDecoration(
-                                  hintText: 'Enter time tag name',
-                                  border: OutlineInputBorder(),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      child:
+                          _isTaggingMode
+                              ? Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _tagController,
+                                      decoration: const InputDecoration(
+                                        hintText: 'Enter time tag name',
+                                        border: OutlineInputBorder(),
+                                        isDense: true,
+                                      ),
+                                      autofocus: true,
+                                      onSubmitted:
+                                          (_) => _addTagAtCurrentPosition(),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.check_circle,
+                                      color: Colors.green,
+                                    ),
+                                    tooltip: 'Save Tag',
+                                    onPressed: _addTagAtCurrentPosition,
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.cancel,
+                                      color: Colors.red,
+                                    ),
+                                    tooltip: 'Cancel Tag',
+                                    onPressed: () {
+                                      setState(() {
+                                        _isTaggingMode = false;
+                                        _tagController.clear();
+                                      });
+                                    },
+                                  ),
+                                ],
+                              )
+                              : ElevatedButton.icon(
+                                icon: const Icon(Icons.bookmark_add_outlined),
+                                label: const Text(
+                                  'Add Time Tag at Current Position',
                                 ),
-                                autofocus: true,
-                                onSubmitted:
-                                    (_) =>
-                                        _addTagAtCurrentPosition(), // Assumes helper exists
+                                onPressed: () {
+                                  setState(() {
+                                    _isTaggingMode = true;
+                                  });
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  minimumSize: const Size(double.infinity, 48),
+                                ),
                               ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.check),
-                              onPressed: _addTagAtCurrentPosition,
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.close),
-                              onPressed: () {
-                                setState(() {
-                                  _isTaggingMode = false;
-                                  _tagController.clear();
-                                });
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
+                    ),
 
                     // --- Notes Section ---
-                    _buildNotesSection(), // Assumes this helper builds the notes ExpansionTile
-                    // --- REMOVED General Tags Section ---
-                    // The old _buildTagsSection() is intentionally removed here.
+                    _buildNotesSection(),
 
-                    // Bottom padding for scroll leeway
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 24), // Bottom padding
                   ],
                 ),
               );
             }
-
-            // Fallback for any unexpected state (should ideally not happen)
             return const Center(child: Text('Unknown player state'));
           },
         );
