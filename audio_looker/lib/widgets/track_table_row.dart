@@ -5,31 +5,26 @@ import 'package:audio_looker/widgets/waveform_painter.dart';
 import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart'; // Needed for play button
 
 // --- Widget for the first cell (Waveform + Play Button) ---
+// lib/widgets/track_table_row.dart (Relevant part)
+
+// --- Widget for the first cell (Waveform + Play Button) ---
 class WaveformPreviewCell extends StatelessWidget {
   final Track track;
-  final bool isSelected;
+  final bool
+  isSelected; // Keep for potential future styling based on row selection
   final VoidCallback onPlayPreview; // Callback to handle play action
 
   const WaveformPreviewCell({
     Key? key,
     required this.track,
     required this.isSelected,
-    required this.onPlayPreview,
+    required this.onPlayPreview, // Ensure this is required
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    // Determine colors based on selection
-    final Color waveColor =
-        isSelected
-            ? Theme.of(context)
-                .colorScheme
-                .onPrimary // Color on selected background
-            : Theme.of(context).colorScheme.primary; // Default color
-    final Color inactiveColor =
-        isSelected
-            ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
-            : Colors.grey.shade300; // Lighter grey for inactive
+    final Color waveColor = Colors.grey.shade300; // Simplified color
+    final Color inactiveColor = Colors.grey.shade800; // Simplified color
 
     return Row(
       children: [
@@ -37,38 +32,41 @@ class WaveformPreviewCell extends StatelessWidget {
         IconButton(
           icon: Icon(
             Icons.play_circle_outline,
-            color:
-                isSelected
-                    ? Theme.of(context).colorScheme.onPrimary
-                    : Theme.of(context).colorScheme.primary,
+            color: Theme.of(context).colorScheme.primary, // Use theme color
             size: 20,
           ),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
           tooltip: 'Preview ${track.title}',
+          // *** Ensure onPressed calls the callback ***
           onPressed: onPlayPreview,
         ),
         const SizedBox(width: 8),
-        // Waveform Preview
+        // Waveform Preview (rest of the code remains the same)
         Expanded(
           child: SizedBox(
-            // Use SizedBox instead of Container if only for height/width
-            height: 24, // Keep it compact
+            height: 24,
             child:
                 (track.waveformData != null && track.waveformData!.isNotEmpty)
                     ? CustomPaint(
                       size: Size.infinite,
                       painter: WaveformPainter(
                         waveformData: track.waveformData!,
-                        activeColor: waveColor,
-                        inactiveColor: inactiveColor,
-                        playbackProgress: 0, // No progress shown in preview
+                        // Use less prominent colors for preview
+                        activeColor: Theme.of(
+                          context,
+                        ).colorScheme.primary.withOpacity(0.6),
+                        inactiveColor: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.2),
+                        playbackProgress: 0,
                       ),
                     )
                     : Container(
-                      // Placeholder if no waveform
-                      color: inactiveColor.withOpacity(0.5),
-                      height: 1, // Thin line as placeholder
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.1),
+                      height: 1,
                     ),
           ),
         ),
@@ -76,6 +74,9 @@ class WaveformPreviewCell extends StatelessWidget {
     );
   }
 }
+
+// The TrackTableRow widget itself can likely be removed if not used elsewhere,
+// as TrackDataSource now builds the cells directly.
 
 // --- Widget representing a single row in the data table ---
 class TrackTableRow extends StatelessWidget {

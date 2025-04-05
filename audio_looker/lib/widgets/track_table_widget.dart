@@ -17,7 +17,9 @@ typedef SelectionChangeCallback =
     });
 typedef ContextMenuCallback =
     void Function(BuildContext context, Offset tapPosition, Track track);
-typedef PlayPreviewCallback = void Function(Track track);
+// Reuse typedefs from TrackDataSource
+// typedef PlayPreviewCallback = void Function(Track track);
+// typedef RatingChangeCallback = void Function(int trackId, int newRating);
 typedef SortCallback =
     void Function(String columnName, DataGridSortDirection direction);
 
@@ -27,6 +29,7 @@ class TrackTableWidget extends StatefulWidget {
   final SelectionChangeCallback onSelectionChanged;
   final ContextMenuCallback onShowContextMenu;
   final PlayPreviewCallback onPlayPreview;
+  final RatingChangeCallback onRatingChanged; // *** Add this callback ***
   final SortCallback onSort;
   final String initialSortColumnName;
   final DataGridSortDirection initialSortDirection;
@@ -38,6 +41,7 @@ class TrackTableWidget extends StatefulWidget {
     required this.onSelectionChanged,
     required this.onShowContextMenu,
     required this.onPlayPreview,
+    required this.onRatingChanged, // *** Add to constructor ***
     required this.onSort,
     required this.initialSortColumnName,
     required this.initialSortDirection,
@@ -60,14 +64,20 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
 
   // Define initial widths for fixed columns
   final double _initialPreviewWidth = 250;
-  final double _initialRatingWidth = 100;
+  final double _initialRatingWidth =
+      100; // Make rating slightly wider for buttons
   // Define a default width for text columns AFTER freezing the layout
   final double _defaultTextColumnWidth = 150;
 
   @override
   void initState() {
     super.initState();
-    _trackDataSource = TrackDataSource(trackData: widget.tracks);
+    // *** Pass callbacks to DataSource ***
+    _trackDataSource = TrackDataSource(
+      trackData: widget.tracks,
+      onPlayPreview: widget.onPlayPreview,
+      onRatingChanged: widget.onRatingChanged,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         FocusScope.of(context).requestFocus(_focusNode);
@@ -89,9 +99,10 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   void _initializeColumns({required bool useFill}) {
     final textTheme = Theme.of(context).textTheme;
     // Determine mode and width based on the flag
-    final flexibleMode = ColumnWidthMode.fill;
-    // Assign width only if not using fill
-    final flexibleWidth = double.nan;
+    // Use 'fill' initially, switch to 'none' after first resize
+    final flexibleMode = useFill ? ColumnWidthMode.fill : ColumnWidthMode.none;
+    // Assign width only if not using fill (i.e., after freezing)
+    final flexibleWidth = useFill ? double.nan : _defaultTextColumnWidth;
 
     _gridColumns = <GridColumn>[
       GridColumn(
@@ -105,7 +116,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         // Preview column - Always Fixed Width
         columnName: 'preview',
         width: _initialPreviewWidth,
-        columnWidthMode: ColumnWidthMode.none,
+        columnWidthMode: ColumnWidthMode.none, // Always fixed
         allowSorting: false,
         label: Container(
           alignment: Alignment.centerLeft,
@@ -149,8 +160,8 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       GridColumn(
         // Rating column - Always Fixed Width
         columnName: 'rating',
-        width: _initialRatingWidth,
-        columnWidthMode: flexibleMode,
+        width: _initialRatingWidth, // Use the adjusted width
+        columnWidthMode: ColumnWidthMode.none, // Always fixed
         label: Container(
           alignment: Alignment.centerLeft,
           padding: const EdgeInsets.symmetric(horizontal: 8.0),
@@ -178,6 +189,15 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     if (widget.tracks != oldWidget.tracks) {
       _trackDataSource.updateDataGridSource(trackData: widget.tracks);
     }
+    // Update DataSource if callbacks change (less common, but good practice)
+    if (widget.onPlayPreview != oldWidget.onPlayPreview ||
+        widget.onRatingChanged != oldWidget.onRatingChanged) {
+      _trackDataSource = TrackDataSource(
+        trackData: widget.tracks,
+        onPlayPreview: widget.onPlayPreview,
+        onRatingChanged: widget.onRatingChanged,
+      );
+    }
   }
 
   @override
@@ -187,6 +207,8 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   }
 
   // --- Selection Handling ---
+  // SfDataGrid's onSelectionChanged handles row selection state internally
+  // We just need to report the changes back to the parent (HomeScreen)
   void _handleGridSelectionChange(
     List<DataGridRow> addedRows,
     List<DataGridRow> removedRows,
@@ -218,8 +240,13 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         );
       }
     }
-    if (mounted) {
-      FocusScope.of(context).requestFocus(_focusNode);
+    // Refocus after selection change if needed
+    if (mounted && (addedRows.isNotEmpty || removedRows.isNotEmpty)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          FocusScope.of(context).requestFocus(_focusNode);
+        }
+      });
     }
   }
 
@@ -232,175 +259,183 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     final colorScheme = Theme.of(context).colorScheme;
     _trackDataSource.updateDataGridSource(trackData: widget.tracks);
 
+    // Update DataGridController selection when external selection changes
+    final controller = DataGridController(
+      selectedRows:
+          _trackDataSource.rows.where((row) {
+            final idCell = row.getCells().firstWhere(
+              (c) => c.columnName == 'id',
+              orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
+            );
+            return idCell.value != null &&
+                widget.selectedTrackIds.contains(idCell.value as int);
+          }).toList(),
+    );
+
     return Focus(
       focusNode: _focusNode,
       child: SfDataGridTheme(
         data: SfDataGridThemeData(
           selectionColor: colorScheme.primary.withOpacity(0.2),
+          // Optional: Customize header style
+          headerColor: colorScheme.surfaceVariant.withOpacity(0.5),
+          headerHoverColor: colorScheme.primary.withOpacity(0.1),
         ),
         child: SfDataGrid(
           key: _sfDataGridKey,
           source: _trackDataSource,
           gridLinesVisibility: GridLinesVisibility.horizontal,
-          headerGridLinesVisibility: GridLinesVisibility.horizontal,
-          // --- Column Resizing ---
+          headerGridLinesVisibility: GridLinesVisibility.both,
+          headerRowHeight: 30,
+          rowHeight: 40, // Adjust row height if needed for buttons
           allowColumnsResizing: true,
           columnResizeMode: ColumnResizeMode.onResize,
-          onColumnResizeStart: (ColumnResizeStartDetails details) {
-            debugPrint('Resize Start: ${details.column.columnName}');
-            return true;
-          },
+          // --- *** CORRECTED onColumnResizeUpdate *** ---
           onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
             setState(() {
               final index = _gridColumns.indexWhere(
                 (col) => col.columnName == details.column.columnName,
               );
               if (index != -1) {
-                double newWidth = max(30.0, details.width);
-                // Update the resized column
+                // Ensure minimum width, allow user to resize
+                double newWidth = max(50.0, details.width);
+
+                // Update the specific column being resized
                 _gridColumns[index] = GridColumn(
                   columnName: details.column.columnName,
                   label: _gridColumns[index].label,
                   width: newWidth,
                   visible: _gridColumns[index].visible,
-                  columnWidthMode: ColumnWidthMode.fill, // Explicit width now
+                  // Freeze to 'none' once resized
+                  columnWidthMode: ColumnWidthMode.none,
                   allowSorting: _gridColumns[index].allowSorting,
-                  allowEditing: _gridColumns[index].allowEditing,
-                  allowFiltering: _gridColumns[index].allowFiltering,
+                  allowEditing:
+                      _gridColumns[index].allowEditing, // Keep other properties
+                  allowFiltering:
+                      _gridColumns[index]
+                          .allowFiltering, // Keep other properties
                 );
 
-                // FIX: Freeze layout on first resize interaction
-                // if (!_isLayoutFrozen) {
-                //   debugPrint('Freezing layout...');
-                //   // Iterate through all columns to freeze any remaining 'fill' columns
-                //   for (int i = 0; i < _gridColumns.length; i++) {
-                //     // Skip the column currently being resized (already handled)
-                //     // and columns that are already 'none' or fixed
-                //     if (i != index &&
-                //         _gridColumns[i].columnWidthMode ==
-                //             ColumnWidthMode.fill) {
-                //       debugPrint(
-                //         'Freezing column: ${_gridColumns[i].columnName}',
-                //       );
-                //       // Replace with 'none' mode and a default width
-                //       // Getting the *actual* current width of these 'fill' columns
-                //       // before freezing is complex, so we use a default.
-                //       _gridColumns[i] = GridColumn(
-                //         columnName: _gridColumns[i].columnName,
-                //         label: _gridColumns[i].label,
-                //         width: _defaultTextColumnWidth, // Assign default width
-                //         visible: _gridColumns[i].visible,
-                //         columnWidthMode: ColumnWidthMode.none, // Freeze mode
-                //         allowSorting: _gridColumns[i].allowSorting,
-                //         allowEditing: _gridColumns[i].allowEditing,
-                //         allowFiltering: _gridColumns[i].allowFiltering,
-                //       );
-                //     }
-                //   }
-                //   _isLayoutFrozen = true; // Freeze only once
-                // }
+                // Freeze layout on first resize interaction
+                if (!_isLayoutFrozen) {
+                  _isLayoutFrozen = true;
+                  // Freeze other 'fill' columns to 'none' with default widths
+                  for (int i = 0; i < _gridColumns.length; i++) {
+                    // Check if it's a different column AND it's still 'fill'
+                    if (i != index &&
+                        _gridColumns[i].columnWidthMode ==
+                            ColumnWidthMode.fill) {
+                      _gridColumns[i] = GridColumn(
+                        columnName: _gridColumns[i].columnName,
+                        label: _gridColumns[i].label,
+                        // Assign default width when freezing
+                        width: _defaultTextColumnWidth,
+                        visible: _gridColumns[i].visible,
+                        // Freeze mode
+                        columnWidthMode: ColumnWidthMode.none,
+                        allowSorting: _gridColumns[i].allowSorting,
+                        allowEditing:
+                            _gridColumns[i]
+                                .allowEditing, // Keep other properties
+                        allowFiltering:
+                            _gridColumns[i]
+                                .allowFiltering, // Keep other properties
+                      );
+                    }
+                    // Ensure already fixed columns (like preview, rating) remain 'none'
+                    else if (i != index &&
+                        _gridColumns[i].columnWidthMode !=
+                            ColumnWidthMode.fill &&
+                        _gridColumns[i].columnWidthMode !=
+                            ColumnWidthMode.none) {
+                      // This condition might be redundant if initial setup only uses 'fill' or 'none'
+                      // But it ensures explicitly fixed columns stay fixed.
+                      if (_gridColumns[i].width != double.nan &&
+                          _gridColumns[i].columnWidthMode !=
+                              ColumnWidthMode.none) {
+                        _gridColumns[i] = GridColumn(
+                          columnName: _gridColumns[i].columnName,
+                          label: _gridColumns[i].label,
+                          width: _gridColumns[i].width, // Keep existing width
+                          visible: _gridColumns[i].visible,
+                          columnWidthMode:
+                              ColumnWidthMode.none, // Ensure mode is none
+                          allowSorting: _gridColumns[i].allowSorting,
+                          allowEditing:
+                              _gridColumns[i]
+                                  .allowEditing, // Keep other properties
+                          allowFiltering:
+                              _gridColumns[i]
+                                  .allowFiltering, // Keep other properties
+                        );
+                      }
+                    }
+                  }
+                }
               }
             });
-            debugPrint(
-              'Resize Update: ${details.column.columnName} -> ${details.width}',
-            );
             return true;
           },
-          onColumnResizeEnd: (ColumnResizeEndDetails details) {
-            debugPrint(
-              'Resize End: ${details.column.columnName} -> ${details.width}',
-            );
-            // No need to call setState here if already done in onColumnResizeUpdate
-            // setState(() {});
-          },
-          // --- Sorting ---
+          // --- *** END CORRECTION *** ---
           allowSorting: true,
+          // Apply initial sorting state
+          // sortedColumns: [
+          //   SortColumnDetails(
+          //     name: widget.initialSortColumnName,
+          //     sortDirection: widget.initialSortDirection,
+          //   ),
+          // ],
           onColumnSortChanged: (
             SortColumnDetails? newSortColumn,
             SortColumnDetails? oldSortColumn,
           ) {
             if (newSortColumn != null) {
               widget.onSort(newSortColumn.name, newSortColumn.sortDirection);
+            } else {
+              // Optional: Handle case where sorting is removed (e.g., revert to default)
+              widget.onSort(
+                'title',
+                DataGridSortDirection.ascending,
+              ); // Example default
             }
           },
-          // --- Selection ---
           selectionMode: SelectionMode.multiple,
           navigationMode: GridNavigationMode.row,
           onSelectionChanged: _handleGridSelectionChange,
-          controller: DataGridController(
-            selectedRows:
-                _trackDataSource.rows.where((row) {
-                  final idCell = row.getCells().firstWhere(
-                    (c) => c.columnName == 'id',
-                  );
-                  return idCell.value != null &&
-                      widget.selectedTrackIds.contains(idCell.value as int);
-                }).toList(),
-          ),
-
-          // --- Columns Definition ---
-          columns: _gridColumns, // Use the state variable
-          // --- Context Menu ---
+          controller: controller, // Use the updated controller
+          columns: _gridColumns,
           // onCellSecondaryTap: (DataGridCellSecondaryTapDetails details) {
-          //   int rowIndex = details.rowColumnIndex.rowIndex - 1;
+          //   int rowIndex =
+          //       details.rowColumnIndex.rowIndex - 1; // Adjust for header row
           //   if (rowIndex >= 0 && rowIndex < _trackDataSource.rows.length) {
           //     final dataRow = _trackDataSource.rows[rowIndex];
-          //     final trackCell = dataRow.getCells().firstWhere(
-          //       (cell) => cell.columnName == 'preview',
-          //       orElse:
-          //           () => DataGridCell<Track?>(
-          //             columnName: 'preview',
-          //             value: null,
-          //           ),
+          //     // Find track using hidden 'id' cell
+          //     final idCell = dataRow.getCells().firstWhere(
+          //       (cell) => cell.columnName == 'id',
+          //       orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
           //     );
-          //     final Track? track = trackCell.value as Track?;
+          //     final int trackId = idCell.value as int? ?? -1;
 
-          //     if (track != null && track.id != null) {
-          //       final RenderBox cellRenderBox =
-          //           context.findRenderObject() as RenderBox;
-          //       final Offset globalPosition = cellRenderBox.localToGlobal(
-          //         details.localPosition,
-          //       );
-          //       widget.onShowContextMenu(context, globalPosition, track);
+          //     if (trackId != -1) {
+          //       // Find the track object from the original list (widget.tracks)
+          //       try {
+          //         final track = widget.tracks.firstWhere(
+          //           (t) => t.id == trackId,
+          //         );
+          //         // Get global position for the context menu
+          //         final RenderBox cellRenderBox =
+          //             context.findRenderObject() as RenderBox;
+          //         final Offset globalPosition = cellRenderBox.localToGlobal(
+          //           details.localPosition,
+          //         );
+          //         widget.onShowContextMenu(context, globalPosition, track);
+          //       } catch (e) {
+          //         debugPrint("Error finding track for context menu: $e");
+          //       }
           //     }
           //   }
           // },
-          // --- Cell Taps (for Play Preview) ---
-          onCellTap: (DataGridCellTapDetails details) {
-            int rowIndex = details.rowColumnIndex.rowIndex - 1;
-            int cellIndex = details.rowColumnIndex.columnIndex;
-            if (rowIndex >= 0 && cellIndex == 1) {
-              // Preview column is index 1
-              final trackCell = _trackDataSource.rows[rowIndex]
-                  .getCells()
-                  .firstWhere(
-                    (cell) => cell.columnName == 'preview',
-                    orElse:
-                        () => DataGridCell<Track?>(
-                          columnName: 'preview',
-                          value: null,
-                        ),
-                  );
-              final Track? track = trackCell.value as Track?;
-              if (track != null) {
-                widget.onPlayPreview(track);
-              }
-            } else if (rowIndex >= 0) {
-              final idCell = _trackDataSource.rows[rowIndex]
-                  .getCells()
-                  .firstWhere((c) => c.columnName == 'id');
-              if (idCell.value != null && idCell.value != -1) {
-                final keyState = HardwareKeyboard.instance;
-                widget.onSelectionChanged(
-                  idCell.value as int,
-                  !widget.selectedTrackIds.contains(idCell.value),
-                  isShiftPressed: keyState.isShiftPressed,
-                  isCtrlPressed:
-                      keyState.isControlPressed || keyState.isMetaPressed,
-                );
-              }
-            }
-          },
+          // *** REMOVED onCellTap ***
         ),
       ),
     );

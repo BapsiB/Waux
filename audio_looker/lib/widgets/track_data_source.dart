@@ -1,18 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:audio_looker/services/collection_service.dart'; // Your Track model
-import 'package:audio_looker/widgets/track_table_row.dart'
-    show WaveformPreviewCell; // Reuse the cell widget
+import 'package:audio_looker/widgets/track_table_row.dart';
+import 'package:audio_looker/widgets/rating_cell_widget.dart'; // Reuse the cell widget
+
+// Add these typedefs for clarity
+typedef PlayPreviewCallback = void Function(Track track);
+typedef RatingChangeCallback = void Function(int trackId, int newRating);
 
 class TrackDataSource extends DataGridSource {
   /// Creates the track data source class with required details.
-  TrackDataSource({required List<Track> trackData}) {
+  TrackDataSource({
+    required List<Track> trackData,
+    required this.onPlayPreview, // Add callback
+    required this.onRatingChanged, // Add callback
+  }) {
     _trackData = trackData;
     _updateDataGridRows(); // Initial population
   }
 
   List<DataGridRow> _dataGridRows = [];
   List<Track> _trackData = [];
+  final PlayPreviewCallback onPlayPreview; // Store callback
+  final RatingChangeCallback onRatingChanged; // Store callback
 
   // Method to update the underlying data and refresh the grid rows
   // The list passed here should already be sorted by the caller (HomeScreen)
@@ -41,7 +51,8 @@ class TrackDataSource extends DataGridSource {
               DataGridCell<String>(columnName: 'title', value: track.title),
               DataGridCell<String>(columnName: 'artist', value: track.artist),
               DataGridCell<String>(columnName: 'album', value: track.album),
-              DataGridCell<int>(columnName: 'rating', value: track.rating),
+              // Store the track itself for the rating cell to access ID and rating
+              DataGridCell<Track>(columnName: 'rating', value: track),
               DataGridCell<List<String>>(
                 columnName: 'tags',
                 value: track.generalTags,
@@ -79,10 +90,12 @@ class TrackDataSource extends DataGridSource {
     }
 
     // Selection state is handled visually by SfDataGrid based on controller/callbacks
-    final bool isSelected =
-        false; // Not needed directly here for building cells
+    // We don't need the isSelected flag here for building interactive cells
+    // final bool isSelected = false;
 
     return DataGridRowAdapter(
+      // Use a transparent color to let SfDataGrid handle selection highlight
+      // color: Colors.transparent, // Let SfDataGrid handle selection color
       cells:
           row.getCells().map<Widget>((dataGridCell) {
             // Build cell widgets based on column name
@@ -90,6 +103,9 @@ class TrackDataSource extends DataGridSource {
               case 'id':
                 return const SizedBox.shrink();
               case 'preview':
+                // Make sure the track from the cell value is not null
+                final Track? cellTrack = dataGridCell.value as Track?;
+                if (cellTrack == null) return const SizedBox.shrink();
                 return Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 4.0,
@@ -97,25 +113,13 @@ class TrackDataSource extends DataGridSource {
                   ),
                   alignment: Alignment.centerLeft,
                   child: WaveformPreviewCell(
-                    track: dataGridCell.value as Track,
-                    isSelected: isSelected,
-                    onPlayPreview: () {
-                      /* Play handled by HomeScreen via onCellTap */
-                    },
+                    track: cellTrack,
+                    isSelected: false, // isSelected handled by SfDataGrid
+                    // *** Pass the callback ***
+                    onPlayPreview: () => onPlayPreview(cellTrack),
                   ),
                 );
               case 'title':
-                return Container(
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8.0,
-                    vertical: 4.0,
-                  ),
-                  child: Text(
-                    dataGridCell.value.toString(),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                );
               case 'artist':
               case 'album':
                 return Container(
@@ -130,27 +134,22 @@ class TrackDataSource extends DataGridSource {
                   ),
                 );
               case 'rating':
+                // Make sure the track from the cell value is not null
+                final Track? ratingTrack = dataGridCell.value as Track?;
+                if (ratingTrack == null || ratingTrack.id == null)
+                  return const SizedBox.shrink();
+
+                // *** Use the new RatingCellWidget ***
                 return Container(
                   alignment: Alignment.centerLeft,
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8.0,
+                    horizontal: 8.0, // Adjust padding if needed
                     vertical: 4.0,
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: List.generate(
-                      5,
-                      (i) => Icon(
-                        i < (dataGridCell.value as int)
-                            ? Icons.star
-                            : Icons.star_border,
-                        size: 14,
-                        color:
-                            i < (dataGridCell.value as int)
-                                ? Colors.amber.shade600
-                                : Colors.grey.shade500,
-                      ),
-                    ),
+                  child: RatingCellWidget(
+                    trackId: ratingTrack.id!,
+                    currentRating: ratingTrack.rating,
+                    onRatingChanged: onRatingChanged, // Pass the callback down
                   ),
                 );
               case 'tags':
@@ -206,10 +205,4 @@ class TrackDataSource extends DataGridSource {
           }).toList(),
     );
   }
-
-  // --- Sorting ---
-  // REMOVED performSorting override. Sorting is handled before updating the source.
-
-  // --- Selection ---
-  // Selection state is managed by HomeScreen via callbacks and controller.
 }

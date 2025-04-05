@@ -807,13 +807,18 @@ class _HomeScreenState extends State<HomeScreen>
                                   _viewMode == ViewMode.list
                                       // --- Instantiate TrackTableWidget ---
                                       ? TrackTableWidget(
-                                        // Pass the potentially sorted list
-                                        tracks: displayedTracks,
+                                        key: const ValueKey(
+                                          'track-table',
+                                        ), // Add key for stability
+                                        tracks:
+                                            displayedTracks, // Pass potentially sorted list
                                         selectedTrackIds: _selectedTrackIds,
                                         onSelectionChanged:
                                             _handleSelectionChanged,
                                         onShowContextMenu: _showContextMenu,
                                         onPlayPreview: _playPreview,
+                                        // *** Pass the new rating handler ***
+                                        onRatingChanged: _handleRatingChanged,
                                         onSort: _handleSortChanged,
                                         initialSortColumnName: _sortColumnName,
                                         initialSortDirection: _sortDirectionSf,
@@ -1057,6 +1062,11 @@ class _HomeScreenState extends State<HomeScreen>
         ],
       ),
     );
+  }
+
+  void _handleRatingChanged(int trackId, int newRating) {
+    print("Rating changed in table: Track $trackId -> $newRating stars");
+    context.read<CollectionBloc>().add(UpdateTrackRating(trackId, newRating));
   }
 
   // Minimized player view
