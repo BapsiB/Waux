@@ -143,22 +143,26 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
                 // This track is loaded and has duration, so we can seek
                 // Need RenderBox to calculate position, get it from context
                 final RenderBox? box = context.findRenderObject() as RenderBox?;
-                if (box != null) {
+                if (box != null && box.hasSize) {
+                  // Ensure box has size
                   final localPosition = box.globalToLocal(
                     details.globalPosition,
                   );
                   final containerWidth = box.size.width;
                   if (containerWidth > 0) {
-                    final seekRatio = (localPosition.dx / containerWidth).clamp(
-                      0.0,
-                      1.0,
-                    );
+                    final seekRatio = ((localPosition.dx - 30) /
+                            (containerWidth - 30))
+                        .clamp(0.0, 1.0);
                     final seekPosition = currentState.duration * seekRatio;
                     print(
                       'Waveform seek request: ${seekPosition.inMilliseconds}ms (Ratio: $seekRatio)',
                     );
                     bloc.add(SeekAudio(position: seekPosition));
                   }
+                } else {
+                  print(
+                    "Waveform seek failed: RenderBox not found or has no size.",
+                  );
                 }
               } else {
                 // Track not loaded or no duration, treat as play request
@@ -180,11 +184,12 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
                 });
               }
             },
-            child: Container(
-              color: Colors.transparent, // Make it hittable
+            // *** Remove intermediate Container ***
+            child: SizedBox(
+              // Use SizedBox to constrain height if needed
               height: 24,
               child: CustomPaint(
-                size: Size.infinite,
+                size: Size.infinite, // Allow painter to fill the SizedBox
                 painter: WaveformPainter(
                   waveformData: widget.track.waveformData ?? [],
                   activeColor: Theme.of(
