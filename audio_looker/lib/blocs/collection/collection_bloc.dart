@@ -180,40 +180,51 @@ class CollectionInitial extends CollectionState {}
 
 class CollectionLoading extends CollectionState {
   final List<Track>? currentTracks; // Keep current tracks while loading
+  final List<String>? currentRootFolders; // <<< Ensure this line exists
+  final List<Tag>? currentAllTags; // <<< Ensure this line exists
 
-  const CollectionLoading({this.currentTracks});
+  const CollectionLoading({
+    this.currentTracks,
+    this.currentRootFolders, // <<< Ensure this parameter exists
+    this.currentAllTags, // <<< Ensure this parameter exists
+  });
 
   @override
-  List<Object?> get props => [currentTracks];
+  // Include the new fields in props
+  List<Object?> get props => [
+    currentTracks,
+    currentRootFolders,
+    currentAllTags,
+  ]; // <<< Ensure they are in props
 }
 
 class CollectionLoaded extends CollectionState {
   final List<Track> tracks;
   final String? searchQuery;
   final List<String> rootFolders;
-  final List<Tag> allTags; // <--- Make sure this line exists
+  final List<Tag> allTags;
 
   const CollectionLoaded({
     required this.tracks,
     this.searchQuery,
     this.rootFolders = const [],
-    this.allTags = const [], // <--- Initialize with default empty list
+    this.allTags = const [],
   });
 
   @override
-  List<Object?> get props => [tracks, searchQuery, rootFolders, allTags]; // <--- Include in props
+  List<Object?> get props => [tracks, searchQuery, rootFolders, allTags];
 
   CollectionLoaded copyWith({
     List<Track>? tracks,
     String? searchQuery,
     List<String>? rootFolders,
-    List<Tag>? allTags, // <--- Include in copyWith
+    List<Tag>? allTags,
   }) {
     return CollectionLoaded(
       tracks: tracks ?? this.tracks,
       searchQuery: searchQuery ?? this.searchQuery,
       rootFolders: rootFolders ?? this.rootFolders,
-      allTags: allTags ?? this.allTags, // <--- Handle in copyWith
+      allTags: allTags ?? this.allTags,
     );
   }
 }
@@ -895,21 +906,97 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     }
   }
 
+  // Inside CollectionBloc class
+
   Future<void> _onRemoveTrack(
     RemoveTrack event,
     Emitter<CollectionState> emit,
   ) async {
-    if (state is CollectionLoaded) {
-      final currentTracks = (state as CollectionLoaded).tracks;
-      emit(CollectionLoading(currentTracks: currentTracks));
+    // Capture the state *before* starting the delete operation
+    final currentState = state;
+    List<Track> tracksBeforeDelete = [];
+    List<String> rootsBeforeDelete = [];
+    List<Tag> tagsBeforeDelete = [];
+    String? searchQueryBeforeDelete;
 
-      try {
-        await _collectionService.deleteTrack(event.trackId);
-        final tracks = await _collectionService.getAllTracks();
-        emit(CollectionLoaded(tracks: tracks));
-      } catch (e) {
-        emit(CollectionError(e.toString(), tracks: currentTracks));
-      }
+    if (currentState is CollectionLoaded) {
+      tracksBeforeDelete = currentState.tracks;
+      rootsBeforeDelete = currentState.rootFolders; // Capture roots
+      tagsBeforeDelete = currentState.allTags; // Capture tags
+      searchQueryBeforeDelete =
+          currentState.searchQuery; // Capture search query
+
+      // Emit loading state, preserving the current data for UI consistency
+      emit(
+        CollectionLoading(
+          currentTracks: tracksBeforeDelete,
+          currentRootFolders: rootsBeforeDelete,
+          currentAllTags: tagsBeforeDelete,
+        ),
+      );
+      print(
+        "BLOC: Emitted CollectionLoading before removing track ${event.trackId}",
+      );
+    } else if (currentState is CollectionLoading) {
+      // If already loading, capture data from that state if available
+      // This might happen if user clicks delete very quickly multiple times
+      tracksBeforeDelete = currentState.currentTracks ?? [];
+      rootsBeforeDelete = currentState.currentRootFolders ?? [];
+      tagsBeforeDelete = currentState.currentAllTags ?? [];
+      print(
+        "WARN: RemoveTrack event received while already loading. Proceeding with delete.",
+      );
+      // No need to emit loading again
+    } else {
+      // Cannot delete if the collection isn't loaded or in a known loading state
+      print(
+        "WARN: RemoveTrack event received while state was not CollectionLoaded or CollectionLoading (${state.runtimeType}). Ignoring delete.",
+      );
+      // Optionally emit an error or just return
+      // emit(CollectionError("Cannot remove track: Collection not loaded.", tracks: tracksBeforeDelete)); // Example error
+      return; // Exit if state is not suitable
+    }
+
+    try {
+      // Perform the deletion in the service
+      await _collectionService.deleteTrack(event.trackId);
+      print("BLOC: Deleted track ${event.trackId} from service.");
+
+      // --- Refetch ALL relevant data AFTER deletion ---
+      final finalTracks = await _collectionService.getAllTracks();
+      final finalRootFolders =
+          _collectionService.getRootFolders(); // <-- CRITICAL: Refetch roots
+      final finalAllTags =
+          await _collectionService.getAllTags(); // <-- CRITICAL: Refetch tags
+      print(
+        "BLOC: Fetched final state after delete - Tracks: ${finalTracks.length}, Roots: ${finalRootFolders.length}, Tags: ${finalAllTags.length}",
+      );
+
+      // Emit the final loaded state with updated tracks AND the (potentially unchanged but confirmed) roots/tags
+      emit(
+        CollectionLoaded(
+          tracks: finalTracks,
+          rootFolders: finalRootFolders, // Use latest roots
+          allTags: finalAllTags, // Use latest tags
+          searchQuery:
+              searchQueryBeforeDelete, // Preserve search query from before delete
+        ),
+      );
+      print(
+        "BLOC: Emitted final CollectionLoaded state after removing track ${event.trackId}",
+      );
+    } catch (e, stackTrace) {
+      // Add stack trace for debugging
+      print("BLOC ERROR removing track ${event.trackId}: $e");
+      print("Stack Trace: $stackTrace");
+      // Emit error state, preserving state *before* delete attempt
+      emit(
+        CollectionError(
+          "Failed to remove track: ${e.toString()}",
+          tracks:
+              tracksBeforeDelete, // Show tracks from before the failed delete
+        ),
+      );
     }
   }
 

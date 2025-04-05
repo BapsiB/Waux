@@ -826,23 +826,53 @@ class _HomeScreenState extends State<HomeScreen>
                                           });
                                         },
                                         onTrackDeleted: (trackId) {
+                                          // ONLY dispatch the event to the BLoC
                                           context.read<CollectionBloc>().add(
                                             RemoveTrack(trackId),
                                           );
-                                          setState(() {
-                                            if (_selectedTrackIds.contains(
-                                              trackId,
-                                            )) {
-                                              _selectedTrackIds.remove(trackId);
-                                              if (_selectedTrackForPlayer?.id ==
-                                                  trackId)
-                                                _selectedTrackForPlayer = null;
-                                              if (_anchorTrackId == trackId)
-                                                _anchorTrackId = null;
-                                              _updatePlayerSelection();
-                                            }
-                                          });
-                                        },
+                                          // REMOVE the setState call below:
+                                          /*
+                 setState(() {
+                    if (_selectedTrackIds.contains(trackId)) {
+                      _selectedTrackIds.remove(trackId);
+                      if (_selectedTrackForPlayer?.id == trackId) _selectedTrackForPlayer = null;
+                      if (_anchorTrackId == trackId) _anchorTrackId = null;
+                      _updatePlayerSelection();
+                    }
+                  });
+                 */
+                                          // The BlocConsumer will handle the UI rebuild when the BLoC state updates
+                                          // We might still need to clear local selection state (_selectedTrackIds etc.)
+                                          // but let's see if the BLoC update handles the visual removal first.
+                                          // If selection state becomes stale after delete, we can add back
+                                          // ONLY the logic to clear local selection state if needed, maybe in the listener.
+                                          // For now, let's rely purely on BLoC state change for UI refresh.
+
+                                          // Clear local selection state *after* dispatching BLoC event
+                                          // This prevents UI flicker if setState runs before BLoC update
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                                if (mounted &&
+                                                    _selectedTrackIds.contains(
+                                                      trackId,
+                                                    )) {
+                                                  setState(() {
+                                                    _selectedTrackIds.remove(
+                                                      trackId,
+                                                    );
+                                                    if (_selectedTrackForPlayer
+                                                            ?.id ==
+                                                        trackId)
+                                                      _selectedTrackForPlayer =
+                                                          null;
+                                                    if (_anchorTrackId ==
+                                                        trackId)
+                                                      _anchorTrackId = null;
+                                                    _updatePlayerSelection(); // Update player if deleted track was selected
+                                                  });
+                                                }
+                                              });
+                                        }, // --- End of onTrackDeleted ---
                                       ),
                             ),
                           ),
