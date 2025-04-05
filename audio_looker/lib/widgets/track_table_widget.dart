@@ -59,7 +59,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       false; // Flag to track if initial fill layout is frozen
 
   // Define initial widths for fixed columns
-  final double _initialPreviewWidth = 150;
+  final double _initialPreviewWidth = 250;
   final double _initialRatingWidth = 100;
   // Define a default width for text columns AFTER freezing the layout
   final double _defaultTextColumnWidth = 150;
@@ -89,9 +89,9 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   void _initializeColumns({required bool useFill}) {
     final textTheme = Theme.of(context).textTheme;
     // Determine mode and width based on the flag
-    final flexibleMode = useFill ? ColumnWidthMode.fill : ColumnWidthMode.none;
+    final flexibleMode = ColumnWidthMode.fill;
     // Assign width only if not using fill
-    final flexibleWidth = useFill ? double.nan : _defaultTextColumnWidth;
+    final flexibleWidth = double.nan;
 
     _gridColumns = <GridColumn>[
       GridColumn(
@@ -106,6 +106,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         columnName: 'preview',
         width: _initialPreviewWidth,
         columnWidthMode: ColumnWidthMode.none,
+        allowSorting: false,
         label: Container(
           alignment: Alignment.centerLeft,
           padding: const EdgeInsets.symmetric(horizontal: 8.0),
@@ -149,7 +150,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         // Rating column - Always Fixed Width
         columnName: 'rating',
         width: _initialRatingWidth,
-        columnWidthMode: ColumnWidthMode.none,
+        columnWidthMode: flexibleMode,
         label: Container(
           alignment: Alignment.centerLeft,
           padding: const EdgeInsets.symmetric(horizontal: 8.0),
@@ -161,6 +162,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         columnName: 'tags',
         width: flexibleWidth,
         columnWidthMode: flexibleMode,
+        allowSorting: false,
         label: Container(
           alignment: Alignment.centerLeft,
           padding: const EdgeInsets.symmetric(horizontal: 8.0),
@@ -261,42 +263,42 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
                   label: _gridColumns[index].label,
                   width: newWidth,
                   visible: _gridColumns[index].visible,
-                  columnWidthMode: ColumnWidthMode.none, // Explicit width now
+                  columnWidthMode: ColumnWidthMode.fill, // Explicit width now
                   allowSorting: _gridColumns[index].allowSorting,
                   allowEditing: _gridColumns[index].allowEditing,
                   allowFiltering: _gridColumns[index].allowFiltering,
                 );
 
                 // FIX: Freeze layout on first resize interaction
-                if (!_isLayoutFrozen) {
-                  debugPrint('Freezing layout...');
-                  // Iterate through all columns to freeze any remaining 'fill' columns
-                  for (int i = 0; i < _gridColumns.length; i++) {
-                    // Skip the column currently being resized (already handled)
-                    // and columns that are already 'none' or fixed
-                    if (i != index &&
-                        _gridColumns[i].columnWidthMode ==
-                            ColumnWidthMode.fill) {
-                      debugPrint(
-                        'Freezing column: ${_gridColumns[i].columnName}',
-                      );
-                      // Replace with 'none' mode and a default width
-                      // Getting the *actual* current width of these 'fill' columns
-                      // before freezing is complex, so we use a default.
-                      _gridColumns[i] = GridColumn(
-                        columnName: _gridColumns[i].columnName,
-                        label: _gridColumns[i].label,
-                        width: _defaultTextColumnWidth, // Assign default width
-                        visible: _gridColumns[i].visible,
-                        columnWidthMode: ColumnWidthMode.none, // Freeze mode
-                        allowSorting: _gridColumns[i].allowSorting,
-                        allowEditing: _gridColumns[i].allowEditing,
-                        allowFiltering: _gridColumns[i].allowFiltering,
-                      );
-                    }
-                  }
-                  _isLayoutFrozen = true; // Freeze only once
-                }
+                // if (!_isLayoutFrozen) {
+                //   debugPrint('Freezing layout...');
+                //   // Iterate through all columns to freeze any remaining 'fill' columns
+                //   for (int i = 0; i < _gridColumns.length; i++) {
+                //     // Skip the column currently being resized (already handled)
+                //     // and columns that are already 'none' or fixed
+                //     if (i != index &&
+                //         _gridColumns[i].columnWidthMode ==
+                //             ColumnWidthMode.fill) {
+                //       debugPrint(
+                //         'Freezing column: ${_gridColumns[i].columnName}',
+                //       );
+                //       // Replace with 'none' mode and a default width
+                //       // Getting the *actual* current width of these 'fill' columns
+                //       // before freezing is complex, so we use a default.
+                //       _gridColumns[i] = GridColumn(
+                //         columnName: _gridColumns[i].columnName,
+                //         label: _gridColumns[i].label,
+                //         width: _defaultTextColumnWidth, // Assign default width
+                //         visible: _gridColumns[i].visible,
+                //         columnWidthMode: ColumnWidthMode.none, // Freeze mode
+                //         allowSorting: _gridColumns[i].allowSorting,
+                //         allowEditing: _gridColumns[i].allowEditing,
+                //         allowFiltering: _gridColumns[i].allowFiltering,
+                //       );
+                //     }
+                //   }
+                //   _isLayoutFrozen = true; // Freeze only once
+                // }
               }
             });
             debugPrint(
