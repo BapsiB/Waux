@@ -4,28 +4,19 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
-// Import Syncfusion DataGrid (Needed for DataGridSortDirection enum)
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
-// Local imports
 import 'package:audio_looker/blocs/collection/collection_bloc.dart';
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
+import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart'; // Import Bloc
 import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/widgets/audio_player_widget.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:path/path.dart' as pathLib;
 import 'package:audio_looker/widgets/folder_tree_view.dart';
-// Import the new TrackTableWidget
 import 'package:audio_looker/widgets/track_table_widget.dart';
-// Import WaveformPreviewCell if needed elsewhere, otherwise TrackTableWidget handles it
-// import 'package:audio_looker/widgets/track_table_row.dart' show WaveformPreviewCell;
 
 // Define view mode enum
-enum ViewMode { list, tree } // 'list' now means table view
-
-// --- Sorting State (Managed by HomeScreen, passed to TrackTableWidget) ---
-// enum SortColumn { preview, title, artist, album, rating, tags } // Can be removed if defined in track_table_widget.dart
-// enum SortDirection { ascending, descending } // Can be removed
+enum ViewMode { list, tree }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -54,15 +45,11 @@ class _HomeScreenState extends State<HomeScreen>
   late AnimationController _animationController;
   late Animation<double> _playerHeightAnimation;
 
-  // --- Grid/Table State (Managed here as source of truth) ---
-  String _sortColumnName = 'title'; // Default sort column name
-  DataGridSortDirection _sortDirectionSf =
-      DataGridSortDirection.ascending; // Use SfDataGrid enum
-  final Set<int> _selectedTrackIds = {}; // Canonical list of selected IDs
-  int? _anchorTrackId; // Keep for potential advanced selection later
-
-  // Focus node might not be needed here anymore if TrackTableWidget manages its own focus
-  // final FocusNode _focusNode = FocusNode();
+  // --- Grid/Table State ---
+  String _sortColumnName = 'title';
+  DataGridSortDirection _sortDirectionSf = DataGridSortDirection.ascending;
+  final Set<int> _selectedTrackIds = {};
+  int? _anchorTrackId;
 
   @override
   void initState() {
@@ -76,7 +63,6 @@ class _HomeScreenState extends State<HomeScreen>
     _playerHeightAnimation = Tween<double>(begin: 490, end: 100).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     )..addListener(() => setState(() {}));
-    // WidgetsBinding.instance.addPostFrameCallback((_) => FocusScope.of(context).requestFocus(_focusNode)); // Focus managed by table widget now
   }
 
   @override
@@ -84,7 +70,6 @@ class _HomeScreenState extends State<HomeScreen>
     _searchController.dispose();
     _urlController.dispose();
     _animationController.dispose();
-    // _focusNode.dispose(); // Dispose if moved to TrackTableWidget
     super.dispose();
   }
 
@@ -119,11 +104,7 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
-  // --- File/Folder Handling Methods (Implementations unchanged) ---
-  // Future<void> _processFile(String filePath) async {
-  //   context.read<CollectionBloc>().add(AddTracksFromPaths([filePath]));
-  // }
-
+  // --- File/Folder Handling Methods ---
   Future<void> _processDirectory(String dirPath) async {
     debugPrint("Processing directory: $dirPath");
     try {
@@ -165,30 +146,10 @@ class _HomeScreenState extends State<HomeScreen>
     List<String> audioFilePaths,
   ) async {
     try {
-      // Use list LIFO to process current directory files before recursing
       var entities = await dir.list(followLinks: false).toList();
       List<Directory> subDirs = [];
-
       for (final entity in entities) {
         try {
-          // Use FileSystemEntity.type() for async check
-          // var type = await FileSystemEntity.type(entity.path, followLinks: false); // Alternative async check
-
-          // Or use the entity type directly if list() provides typed objects
-          // if (entity is File) {
-          //   // Direct type check (often works, but use static methods if errors persist)
-          //   final extension = pathLib
-          //       .extension(entity.path)
-          //       .toLowerCase()
-          //       .replaceAll('.', '');
-          //   if (_supportedExtensions.contains(extension)) {
-          //     audioFilePaths.add(entity.path);
-          //   }
-          // } else if (entity is Directory) {
-          //   subDirs.add(entity); // Collect subdirectories
-          // }
-
-          // --- USING STATIC METHODS (More Robust) ---
           bool isFile = await FileSystemEntity.isFile(entity.path);
           if (isFile) {
             final extension = pathLib
@@ -201,21 +162,17 @@ class _HomeScreenState extends State<HomeScreen>
           } else {
             bool isDir = await FileSystemEntity.isDirectory(entity.path);
             if (isDir) {
-              subDirs.add(Directory(entity.path)); // Add as Directory object
+              subDirs.add(Directory(entity.path));
             }
           }
-          // --- END USING STATIC METHODS ---
         } catch (e) {
-          // Log errors for specific file access issues (e.g., permissions)
           debugPrint("Error processing entity ${entity.path}: $e");
         }
       }
-      // Recurse into subdirectories *after* processing files in current dir
       for (final subDir in subDirs) {
         await _findAudioFilesRecursively(subDir, audioFilePaths);
       }
     } catch (e) {
-      // Log errors for directory listing issues (e.g., permissions)
       debugPrint("Error listing directory ${dir.path}: $e");
     }
   }
@@ -383,13 +340,12 @@ class _HomeScreenState extends State<HomeScreen>
   }
   // --- End File/Folder Handling ---
 
-  // --- Sorting Logic (State managed here, sorting done before passing list) ---
+  // --- Sorting Logic ---
   List<Track> _getSortedTracks(List<Track> tracks) {
-    List<Track> sortedTracks = List.from(tracks); // Create a copy
+    List<Track> sortedTracks = List.from(tracks);
     sortedTracks.sort((a, b) {
       int comparison = 0;
       switch (_sortColumnName) {
-        // Use the string name from state
         case 'title':
           comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
           break;
@@ -424,20 +380,18 @@ class _HomeScreenState extends State<HomeScreen>
     return sortedTracks;
   }
 
-  // Callback from TrackTableWidget when user clicks a header
   void _handleSortChanged(String columnName, DataGridSortDirection direction) {
     setState(() {
       _sortColumnName = columnName;
       _sortDirectionSf = direction;
       _selectedTrackIds.clear();
       _selectedTrackForPlayer = null;
-      _anchorTrackId = null; // Clear selection on sort
+      _anchorTrackId = null;
     });
-    // The list passed to TrackTableWidget will be re-sorted in the next build cycle
   }
   // --- End Sorting Logic ---
 
-  // --- Selection Logic (Handles callbacks from TrackTableWidget) ---
+  // --- Selection Logic ---
   void _handleSelectionChanged(
     int trackId,
     bool isSelected, {
@@ -445,17 +399,12 @@ class _HomeScreenState extends State<HomeScreen>
     bool isCtrlPressed = false,
   }) {
     setState(() {
-      final List<Track> currentDisplayedTracks =
-          _getCurrentDisplayedTracks(); // Get currently sorted list
-
+      final List<Track> currentDisplayedTracks = _getCurrentDisplayedTracks();
       if (isSelected) {
-        // Row was selected
         if (isCtrlPressed) {
-          // Toggle Add
           _selectedTrackIds.add(trackId);
           _anchorTrackId = trackId;
         } else if (isShiftPressed && _anchorTrackId != null) {
-          // Range Add
           final anchorIndex = currentDisplayedTracks.indexWhere(
             (t) => t.id == _anchorTrackId,
           );
@@ -466,7 +415,7 @@ class _HomeScreenState extends State<HomeScreen>
             final start =
                 anchorIndex < clickedIndex ? anchorIndex : clickedIndex;
             final end = anchorIndex > clickedIndex ? anchorIndex : clickedIndex;
-            _selectedTrackIds.clear(); // Shift replaces selection
+            _selectedTrackIds.clear();
             for (int i = start; i <= end; i++) {
               if (i >= 0 &&
                   i < currentDisplayedTracks.length &&
@@ -474,35 +423,30 @@ class _HomeScreenState extends State<HomeScreen>
                 _selectedTrackIds.add(currentDisplayedTracks[i].id!);
               }
             }
+            _anchorTrackId = trackId;
           } else {
-            // Fallback
             _selectedTrackIds.clear();
             _selectedTrackIds.add(trackId);
             _anchorTrackId = trackId;
           }
         } else {
-          // Simple Select
           _selectedTrackIds.clear();
           _selectedTrackIds.add(trackId);
           _anchorTrackId = trackId;
         }
       } else {
-        // Row was deselected
         if (isCtrlPressed) {
-          // Toggle Remove
           _selectedTrackIds.remove(trackId);
           if (_anchorTrackId == trackId) _anchorTrackId = null;
         } else {
-          // Simple Deselect (remove only this one)
           _selectedTrackIds.remove(trackId);
           if (_anchorTrackId == trackId) _anchorTrackId = null;
         }
       }
-      _updatePlayerSelection(); // Update player based on final selection
+      _updatePlayerSelection();
     });
   }
 
-  // Helper to get the currently displayed (and potentially sorted) track list
   List<Track> _getCurrentDisplayedTracks() {
     final state = context.read<CollectionBloc>().state;
     List<Track> tracks = [];
@@ -511,28 +455,50 @@ class _HomeScreenState extends State<HomeScreen>
     } else if (state is CollectionLoading && state.currentTracks != null) {
       tracks = state.currentTracks!;
     }
-    // Apply sorting if in list mode
     return _viewMode == ViewMode.list ? _getSortedTracks(tracks) : tracks;
   }
 
   void _updatePlayerSelection() {
     if (_selectedTrackIds.length == 1) {
-      _selectedTrackForPlayer = _getTrackById(_selectedTrackIds.first);
-      // Optionally force player to expand when a new single track is selected
-      if (_isPlayerMinimized && _selectedTrackForPlayer != null)
-        _togglePlayerSize();
+      final newSelectedTrack = _getTrackById(_selectedTrackIds.first);
+      if (_selectedTrackForPlayer?.id != newSelectedTrack?.id) {
+        setState(() {
+          _selectedTrackForPlayer = newSelectedTrack;
+          if (_isPlayerMinimized && _selectedTrackForPlayer != null) {
+            _togglePlayerSize();
+          }
+        });
+        if (newSelectedTrack != null) {
+          context.read<AudioPlayerBloc>().add(
+            LoadAudio(
+              source: newSelectedTrack.path,
+              isUrl: newSelectedTrack.isUrl,
+            ),
+          );
+        }
+      }
     } else {
-      _selectedTrackForPlayer = null;
+      if (_selectedTrackForPlayer != null) {
+        setState(() {
+          _selectedTrackForPlayer = null;
+        });
+      }
     }
   }
   // --- End Selection Logic ---
 
-  // --- Context Menu Logic (Triggered by TrackTableWidget callback) ---
+  // --- Context Menu Logic ---
   void _showContextMenu(BuildContext context, Offset tapPosition, Track track) {
     final RenderBox overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
-
-    // Selection state is managed by _handleSelectionChanged via callbacks
+    if (!_selectedTrackIds.contains(track.id)) {
+      setState(() {
+        _selectedTrackIds.clear();
+        _selectedTrackIds.add(track.id!);
+        _anchorTrackId = track.id;
+        _updatePlayerSelection();
+      });
+    }
     showMenu(
       context: context,
       position: RelativeRect.fromRect(
@@ -541,9 +507,12 @@ class _HomeScreenState extends State<HomeScreen>
       ),
       items: <PopupMenuEntry>[
         PopupMenuItem(
-          value: 'play',
+          value: 'play_now',
           enabled: _selectedTrackIds.length == 1,
-          child: ListTile(leading: Icon(Icons.play_arrow), title: Text('Play')),
+          child: ListTile(
+            leading: Icon(Icons.play_arrow),
+            title: Text('Play Now'),
+          ),
         ),
         PopupMenuItem(
           value: 'edit',
@@ -568,11 +537,25 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ],
     ).then((value) {
-      if (value == 'play' && _selectedTrackIds.length == 1) {
+      if (value == 'play_now' && _selectedTrackIds.length == 1) {
         final trackToPlay = _getTrackById(_selectedTrackIds.first);
-        if (trackToPlay != null) _playPreview(trackToPlay);
+        if (trackToPlay != null) {
+          setState(() {
+            _selectedTrackForPlayer = trackToPlay;
+            if (_isPlayerMinimized) _togglePlayerSize();
+          });
+          context.read<AudioPlayerBloc>().add(
+            LoadAudio(source: trackToPlay.path, isUrl: trackToPlay.isUrl),
+          );
+          Future.delayed(const Duration(milliseconds: 100), () {
+            final state = context.read<AudioPlayerBloc>().state;
+            if (state is AudioPlayerLoaded &&
+                state.currentSource == trackToPlay.path) {
+              context.read<AudioPlayerBloc>().add(PlayAudio());
+            }
+          });
+        }
       } else if (value == 'edit' && _selectedTrackIds.length == 1) {
-        // TODO: Implement edit
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Edit action (not implemented)')),
         );
@@ -583,7 +566,6 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Track? _getTrackById(int id) {
-    // Helper to find track in the *current* BLoC state (unsorted)
     final state = context.read<CollectionBloc>().state;
     List<Track> sourceList = [];
     if (state is CollectionLoaded) {
@@ -623,7 +605,6 @@ class _HomeScreenState extends State<HomeScreen>
                 for (final trackId in idsToDelete) {
                   collectionBloc.add(RemoveTrack(trackId));
                 }
-                // Clear selection state after dispatching delete actions
                 setState(() {
                   _selectedTrackIds.clear();
                   _selectedTrackForPlayer = null;
@@ -638,33 +619,18 @@ class _HomeScreenState extends State<HomeScreen>
   }
   // --- End Context Menu Logic ---
 
-  // --- Play Preview Logic (Triggered by TrackTableWidget callback) ---
-  void _playPreview(Track track) {
-    print("Play preview requested for: ${track.title}");
-    // Ensure player state reflects this track
-    if (_selectedTrackForPlayer?.id != track.id ||
-        _selectedTrackIds.length != 1) {
-      setState(() {
-        _selectedTrackIds.clear();
-        _selectedTrackIds.add(track.id!);
-        _anchorTrackId = track.id;
-        _selectedTrackForPlayer = track; // Directly set player track
-      });
-    }
-    // Load and play
-    context.read<AudioPlayerBloc>().add(
-      LoadAudio(source: track.path, isUrl: track.isUrl),
-    );
-    Future.delayed(
-      const Duration(milliseconds: 100),
-      () => context.read<AudioPlayerBloc>().add(PlayAudio()),
-    );
-    if (_isPlayerMinimized) _togglePlayerSize();
+  // --- Rating Handler ---
+  void _handleRatingChanged(int trackId, int newRating) {
+    print("Rating changed in table: Track $trackId -> $newRating stars");
+    context.read<CollectionBloc>().add(UpdateTrackRating(trackId, newRating));
   }
-  // --- End Play Preview Logic ---
+  // --- End rating handler ---
 
   @override
   Widget build(BuildContext context) {
+    // *** Get the AudioPlayerBloc instance here ***
+    final audioPlayerBloc = context.read<AudioPlayerBloc>();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Audio Looker'),
@@ -717,7 +683,6 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
           ),
-
           // Collection content area
           Expanded(
             child: DropTarget(
@@ -730,7 +695,14 @@ class _HomeScreenState extends State<HomeScreen>
                   // --- Main Content: Either Table or Tree View ---
                   BlocConsumer<CollectionBloc, CollectionState>(
                     listener: (context, state) {
-                      /* ... Error listener ... */
+                      if (state is CollectionError) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Error: ${state.message}'),
+                            backgroundColor: Colors.redAccent,
+                          ),
+                        );
+                      }
                     },
                     builder: (context, state) {
                       List<Track> tracks = [];
@@ -738,17 +710,29 @@ class _HomeScreenState extends State<HomeScreen>
                       bool isLoading = false;
                       bool isInitialLoad = false;
 
-                      // Determine state and extract data
                       if (state is CollectionLoading) {
                         isLoading = true;
                         tracks = state.currentTracks ?? [];
+                        final loadedState =
+                            context
+                                .read<CollectionBloc>()
+                                .state; // Read current state safely
+                        if (loadedState is CollectionLoaded) {
+                          rootFolders = loadedState.rootFolders;
+                        }
                       } else if (state is CollectionLoaded) {
                         isLoading = false;
                         tracks = state.tracks;
                         rootFolders = state.rootFolders;
                       } else if (state is CollectionError) {
-                        tracks =
-                            state.tracks ?? []; /* Error handled by listener */
+                        tracks = state.tracks ?? [];
+                        final loadedState =
+                            context
+                                .read<CollectionBloc>()
+                                .state; // Read current state safely
+                        if (loadedState is CollectionLoaded) {
+                          rootFolders = loadedState.rootFolders;
+                        }
                       } else if (state is CollectionInitial) {
                         isLoading = true;
                         isInitialLoad = true;
@@ -756,13 +740,14 @@ class _HomeScreenState extends State<HomeScreen>
 
                       if (isInitialLoad)
                         return const Center(child: CircularProgressIndicator());
-                      // Use helper to get potentially sorted list
+
                       List<Track> displayedTracks =
                           _getCurrentDisplayedTracks();
 
-                      if (!isLoading && displayedTracks.isEmpty) {
-                        // Show empty state (could be due to search)
-                        final searchQuery = _searchController.text;
+                      if (!isLoading &&
+                          displayedTracks.isEmpty &&
+                          _searchController.text.isEmpty &&
+                          rootFolders.isEmpty) {
                         return Center(
                           child: Padding(
                             padding: const EdgeInsets.all(20.0),
@@ -770,29 +755,33 @@ class _HomeScreenState extends State<HomeScreen>
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Icon(
-                                  Icons.music_off_outlined,
+                                  Icons.music_note_outlined,
                                   size: 64,
                                   color: Colors.grey[600],
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
-                                  searchQuery.isNotEmpty
-                                      ? 'No tracks found for "$searchQuery"'
-                                      : 'Collection is empty',
+                                  'Collection is Empty',
                                   style:
-                                      Theme.of(context).textTheme.titleMedium,
+                                      Theme.of(context).textTheme.headlineSmall,
                                   textAlign: TextAlign.center,
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  searchQuery.isEmpty
-                                      ? 'Add files/folders using the buttons above or drag & drop.'
-                                      : '',
-                                  style: Theme.of(context).textTheme.bodySmall,
+                                  'Add files/folders using the buttons above or drag & drop.',
+                                  style: Theme.of(context).textTheme.bodyMedium,
                                   textAlign: TextAlign.center,
                                 ),
                               ],
                             ),
+                          ),
+                        );
+                      } else if (!isLoading &&
+                          displayedTracks.isEmpty &&
+                          _searchController.text.isNotEmpty) {
+                        return Center(
+                          child: Text(
+                            'No tracks found for "${_searchController.text}"',
                           ),
                         );
                       }
@@ -805,38 +794,35 @@ class _HomeScreenState extends State<HomeScreen>
                               opacity: isLoading ? 0.6 : 1.0,
                               child:
                                   _viewMode == ViewMode.list
-                                      // --- Instantiate TrackTableWidget ---
                                       ? TrackTableWidget(
-                                        key: const ValueKey(
-                                          'track-table',
-                                        ), // Add key for stability
-                                        tracks:
-                                            displayedTracks, // Pass potentially sorted list
+                                        key: const ValueKey('track-table'),
+                                        tracks: displayedTracks,
                                         selectedTrackIds: _selectedTrackIds,
+                                        audioPlayerBloc:
+                                            audioPlayerBloc, // *** Pass Bloc down ***
                                         onSelectionChanged:
                                             _handleSelectionChanged,
                                         onShowContextMenu: _showContextMenu,
-                                        onPlayPreview: _playPreview,
-                                        // *** Pass the new rating handler ***
                                         onRatingChanged: _handleRatingChanged,
                                         onSort: _handleSortChanged,
                                         initialSortColumnName: _sortColumnName,
                                         initialSortDirection: _sortDirectionSf,
                                       )
                                       : FolderTreeView(
-                                        // Pass unsorted list to FolderTreeView
-                                        tracks: tracks,
+                                        tracks:
+                                            tracks, // Pass original, unsorted tracks
                                         rootFolders: rootFolders,
                                         selectedTrack: _selectedTrackForPlayer,
                                         onTrackSelected: (track) {
                                           setState(() {
-                                            _selectedTrackForPlayer = track;
                                             _selectedTrackIds.clear();
-                                            if (track.id != null)
+                                            if (track.id != null) {
                                               _selectedTrackIds.add(track.id!);
-                                            _anchorTrackId = track.id;
-                                            if (_isPlayerMinimized)
-                                              _togglePlayerSize();
+                                              _anchorTrackId = track.id;
+                                            } else {
+                                              _anchorTrackId = null;
+                                            }
+                                            _updatePlayerSelection();
                                           });
                                         },
                                         onTrackDeleted: (trackId) {
@@ -853,6 +839,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                 _selectedTrackForPlayer = null;
                                               if (_anchorTrackId == trackId)
                                                 _anchorTrackId = null;
+                                              _updatePlayerSelection();
                                             }
                                           });
                                         },
@@ -877,12 +864,11 @@ class _HomeScreenState extends State<HomeScreen>
                               child: Column(
                                 children: [
                                   Container(
-                                    // Toggle button bar
                                     height: 36,
                                     color: Theme.of(context)
                                         .colorScheme
                                         .surfaceVariant
-                                        .withOpacity(0.5), // Use theme color
+                                        .withOpacity(0.5),
                                     child: Row(
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
@@ -905,72 +891,77 @@ class _HomeScreenState extends State<HomeScreen>
                                   Expanded(
                                     child: Stack(
                                       children: [
-                                        // Full Player
                                         AnimatedOpacity(
                                           opacity:
                                               _isPlayerMinimized ? 0.0 : 1.0,
                                           duration: const Duration(
                                             milliseconds: 200,
                                           ),
-                                          child: AudioPlayerWidget(
-                                            key: ValueKey(
-                                              _selectedTrackForPlayer!.id,
-                                            ), // Ensure player rebuilds on track change
-                                            trackId:
-                                                _selectedTrackForPlayer!.id!,
-                                            title:
-                                                _selectedTrackForPlayer!.title,
-                                            artist:
-                                                _selectedTrackForPlayer!.artist,
-                                            audioSource:
-                                                _selectedTrackForPlayer!.path,
-                                            isUrl:
-                                                _selectedTrackForPlayer!.isUrl,
-                                            rating:
-                                                _selectedTrackForPlayer!.rating,
-                                            notes:
-                                                _selectedTrackForPlayer!
-                                                    .comment,
-                                            generalTags:
-                                                _selectedTrackForPlayer!
-                                                    .generalTags,
-                                            onRatingChanged: (rating) {
-                                              if (_selectedTrackForPlayer?.id !=
-                                                  null)
-                                                context
-                                                    .read<CollectionBloc>()
-                                                    .add(
-                                                      UpdateTrackRating(
+                                          child:
+                                              _selectedTrackForPlayer == null
+                                                  ? const SizedBox.shrink()
+                                                  : AudioPlayerWidget(
+                                                    key: ValueKey(
+                                                      _selectedTrackForPlayer!
+                                                          .id,
+                                                    ),
+                                                    trackId:
+                                                        _selectedTrackForPlayer!
+                                                            .id!,
+                                                    title:
+                                                        _selectedTrackForPlayer!
+                                                            .title,
+                                                    artist:
+                                                        _selectedTrackForPlayer!
+                                                            .artist,
+                                                    audioSource:
+                                                        _selectedTrackForPlayer!
+                                                            .path,
+                                                    isUrl:
+                                                        _selectedTrackForPlayer!
+                                                            .isUrl,
+                                                    rating:
+                                                        _selectedTrackForPlayer!
+                                                            .rating,
+                                                    notes:
+                                                        _selectedTrackForPlayer!
+                                                            .comment,
+                                                    generalTags:
+                                                        _selectedTrackForPlayer!
+                                                            .generalTags,
+                                                    onRatingChanged: (rating) {
+                                                      _handleRatingChanged(
                                                         _selectedTrackForPlayer!
                                                             .id!,
                                                         rating,
-                                                      ),
-                                                    );
-                                            },
-                                            onNotesChanged: (notes) {
-                                              if (_selectedTrackForPlayer?.id !=
-                                                  null)
-                                                context
-                                                    .read<CollectionBloc>()
-                                                    .add(
-                                                      UpdateTrackComment(
-                                                        _selectedTrackForPlayer!
-                                                            .id!,
-                                                        notes,
-                                                      ),
-                                                    );
-                                            },
-                                          ),
+                                                      );
+                                                    },
+                                                    onNotesChanged: (notes) {
+                                                      if (_selectedTrackForPlayer
+                                                              ?.id !=
+                                                          null) {
+                                                        context
+                                                            .read<
+                                                              CollectionBloc
+                                                            >()
+                                                            .add(
+                                                              UpdateTrackComment(
+                                                                _selectedTrackForPlayer!
+                                                                    .id!,
+                                                                notes,
+                                                              ),
+                                                            );
+                                                      }
+                                                    },
+                                                  ),
                                         ),
-                                        // Minimized Player
                                         AnimatedOpacity(
                                           opacity:
                                               _isPlayerMinimized ? 1.0 : 0.0,
                                           duration: const Duration(
                                             milliseconds: 200,
                                           ),
-                                          child:
-                                              _buildMinimizedPlayer(), // Build minimized view
+                                          child: _buildMinimizedPlayer(),
                                         ),
                                       ],
                                     ),
@@ -1008,7 +999,7 @@ class _HomeScreenState extends State<HomeScreen>
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                Icons.file_download_outlined,
+                                Icons.file_download_done_outlined,
                                 size: 48,
                                 color: Theme.of(context).colorScheme.primary,
                               ),
@@ -1028,9 +1019,7 @@ class _HomeScreenState extends State<HomeScreen>
                       if (state is CollectionLoading) {
                         return Positioned.fill(
                           child: Container(
-                            color: Colors.black.withOpacity(
-                              0.4,
-                            ), // Darker overlay
+                            color: Colors.black.withOpacity(0.4),
                             child: const Center(
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
@@ -1064,29 +1053,24 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  void _handleRatingChanged(int trackId, int newRating) {
-    print("Rating changed in table: Track $trackId -> $newRating stars");
-    context.read<CollectionBloc>().add(UpdateTrackRating(trackId, newRating));
-  }
-
   // Minimized player view
   Widget _buildMinimizedPlayer() {
     if (_selectedTrackForPlayer == null) return const SizedBox.shrink();
-    // Provide a basic layout for the minimized player
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      height: double.infinity, // Take full height of its container
+      height: double.infinity,
       child: Row(
         children: [
-          // Album art placeholder or actual image later
           Container(
             width: 40,
             height: 40,
-            color: Colors.grey[700],
-            child: Icon(Icons.music_note, color: Colors.white70),
+            decoration: BoxDecoration(
+              color: Colors.grey[800],
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Icon(Icons.music_note, color: Colors.white70, size: 24),
           ),
           const SizedBox(width: 12),
-          // Track Info
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -1094,56 +1078,81 @@ class _HomeScreenState extends State<HomeScreen>
               children: [
                 Text(
                   _selectedTrackForPlayer!.title,
-                  style: Theme.of(context).textTheme.titleSmall,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                SizedBox(height: 2),
                 Text(
                   _selectedTrackForPlayer!.artist,
-                  style: Theme.of(context).textTheme.bodySmall,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: Colors.grey[400]),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
-          // Basic Controls (Example)
           BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
             builder: (context, playerState) {
               bool isPlaying = false;
-              if (playerState is AudioPlayerLoaded && playerState.isPlaying) {
-                isPlaying = true;
+              bool isCurrentTrackLoaded = false;
+              if (playerState is AudioPlayerLoaded &&
+                  playerState.currentSource == _selectedTrackForPlayer!.path) {
+                isPlaying = playerState.isPlaying;
+                isCurrentTrackLoaded = true;
               }
               return Row(
                 children: [
                   IconButton(
                     icon: Icon(Icons.skip_previous),
-                    onPressed: () {
-                      /* TODO */
-                    },
+                    onPressed: () {},
                     tooltip: 'Previous',
+                    iconSize: 24,
                   ),
                   IconButton(
                     icon: Icon(
                       isPlaying
                           ? Icons.pause_circle_filled
                           : Icons.play_circle_filled,
+                      size: 32,
                     ),
                     onPressed: () {
-                      if (isPlaying) {
-                        context.read<AudioPlayerBloc>().add(PauseAudio());
+                      final bloc = context.read<AudioPlayerBloc>();
+                      if (isCurrentTrackLoaded) {
+                        if (isPlaying) {
+                          bloc.add(PauseAudio());
+                        } else {
+                          bloc.add(PlayAudio());
+                        }
                       } else {
-                        context.read<AudioPlayerBloc>().add(PlayAudio());
+                        bloc.add(
+                          LoadAudio(
+                            source: _selectedTrackForPlayer!.path,
+                            isUrl: _selectedTrackForPlayer!.isUrl,
+                          ),
+                        );
+                        Future.delayed(const Duration(milliseconds: 100), () {
+                          final postDelayState =
+                              context.read<AudioPlayerBloc>().state;
+                          if (postDelayState is AudioPlayerLoaded &&
+                              postDelayState.currentSource ==
+                                  _selectedTrackForPlayer!.path) {
+                            bloc.add(PlayAudio());
+                          }
+                        });
                       }
                     },
                     tooltip: isPlaying ? 'Pause' : 'Play',
                   ),
                   IconButton(
                     icon: Icon(Icons.skip_next),
-                    onPressed: () {
-                      /* TODO */
-                    },
+                    onPressed: () {},
                     tooltip: 'Next',
+                    iconSize: 24,
                   ),
                 ],
               );

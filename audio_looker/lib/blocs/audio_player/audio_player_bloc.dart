@@ -105,6 +105,7 @@ class AudioPlayerInitial extends AudioPlayerState {}
 class AudioPlayerLoading extends AudioPlayerState {}
 
 class AudioPlayerLoaded extends AudioPlayerState {
+  final String? currentSource; // *** ADDED: Track the loaded source ***
   final bool isPlaying;
   final Duration position;
   final Duration duration;
@@ -112,6 +113,7 @@ class AudioPlayerLoaded extends AudioPlayerState {
   final List<AudioTag> tags; // Time-based tags
 
   const AudioPlayerLoaded({
+    this.currentSource, // *** ADDED ***
     required this.isPlaying,
     required this.position,
     required this.duration,
@@ -121,6 +123,7 @@ class AudioPlayerLoaded extends AudioPlayerState {
 
   @override
   List<Object?> get props => [
+    currentSource, // *** ADDED ***
     isPlaying,
     position,
     duration,
@@ -129,6 +132,7 @@ class AudioPlayerLoaded extends AudioPlayerState {
   ];
 
   AudioPlayerLoaded copyWith({
+    String? currentSource, // *** ADDED ***
     bool? isPlaying,
     Duration? position,
     Duration? duration,
@@ -138,6 +142,7 @@ class AudioPlayerLoaded extends AudioPlayerState {
     List<AudioTag>? tags,
   }) {
     return AudioPlayerLoaded(
+      currentSource: currentSource ?? this.currentSource, // *** ADDED ***
       isPlaying: isPlaying ?? this.isPlaying,
       position: position ?? this.position,
       duration: duration ?? this.duration,
@@ -164,7 +169,7 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   StreamSubscription? _stateSubscription;
   StreamSubscription? _durationSubscription;
   StreamSubscription? _waveformSubscription;
-  String? _currentSource; // Keep track of the currently loaded source
+  // String? _currentSource; // Can be removed now, managed in state
   Timer? _loadingTimeout;
 
   AudioPlayerBloc(this._audioService) : super(AudioPlayerInitial()) {
@@ -187,7 +192,7 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     // Reset state before loading new audio
     emit(AudioPlayerLoading());
     await _cancelSubscriptions(); // Cancel previous subs before loading new
-    _currentSource = event.source; // Set current source *before* loading
+    // _currentSource = event.source; // Set current source *before* loading - REMOVED
 
     // Set timeout to prevent infinite loading
     _loadingTimeout?.cancel();
@@ -219,13 +224,16 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
           _audioService.durationStream; // This might be null initially
       final initialWaveform =
           _audioService.waveformData; // Might be null or cached
-      final initialTags = _audioService.getTagsForAudio(_currentSource!);
+
+      // Get tags (requires source)
+      final initialTags = _audioService.getTagsForAudio(event.source);
 
       // Emit an initial loaded state with available data
       // We expect duration and position streams to update this later
       print('🔄 Bloc: Emitting initial loaded state for ${event.source}');
       emit(
         AudioPlayerLoaded(
+          currentSource: event.source, // *** SET currentSource in state ***
           isPlaying: false, // Assume not playing initially
           position: Duration.zero,
           // Wait for duration stream, default to zero
@@ -303,16 +311,14 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   void _onPlayAudio(PlayAudio event, Emitter<AudioPlayerState> emit) {
     if (state is AudioPlayerLoaded) {
       _audioService.play();
-      // Optionally update state immediately to reflect playing=true
-      // emit((state as AudioPlayerLoaded).copyWith(isPlaying: true));
+      // State update will come from the playerStateStream listener
     }
   }
 
   void _onPauseAudio(PauseAudio event, Emitter<AudioPlayerState> emit) {
     if (state is AudioPlayerLoaded) {
       _audioService.pause();
-      // Optionally update state immediately to reflect playing=false
-      // emit((state as AudioPlayerLoaded).copyWith(isPlaying: false));
+      // State update will come from the playerStateStream listener
     }
   }
 
@@ -352,22 +358,24 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   // --- End Modified Seek Handler ---
 
   void _onAddAudioTag(AddAudioTag event, Emitter<AudioPlayerState> emit) {
-    if (state is AudioPlayerLoaded && _currentSource == event.source) {
-      // Ensure position is valid (0.0 to 1.0)
-      final validPosition = event.position.clamp(0.0, 1.0);
-      _audioService.addTag(event.source, validPosition, event.label);
+    if (state is AudioPlayerLoaded) {
+      final currentState = state as AudioPlayerLoaded;
+      // Add tag only if the source matches the currently loaded source
+      if (currentState.currentSource == event.source) {
+        // Ensure position is valid (0.0 to 1.0)
+        final validPosition = event.position.clamp(0.0, 1.0);
+        _audioService.addTag(event.source, validPosition, event.label);
 
-      // Update tags in state
-      final tagsList = _audioService.getTagsForAudio(event.source);
-      emit(
-        (state as AudioPlayerLoaded).copyWith(
-          tags: List<AudioTag>.from(tagsList),
-        ),
-      );
+        // Update tags in state
+        final tagsList = _audioService.getTagsForAudio(event.source);
+        emit(currentState.copyWith(tags: List<AudioTag>.from(tagsList)));
+      } else {
+        print(
+          "Bloc Warning: Cannot add tag. Source mismatch. Current: ${currentState.currentSource}, Requested: ${event.source}",
+        );
+      }
     } else {
-      print(
-        "Bloc Warning: Cannot add tag. Player not loaded or source mismatch.",
-      );
+      print("Bloc Warning: Cannot add tag. Player not loaded.");
     }
   }
 
@@ -388,8 +396,9 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
         newState = newState.copyWith(
           isPlaying: false,
           // Optionally set position to duration on completion, or keep last known position
-          // position: newState.duration
+          position: newState.duration, // Set position to end when completed
         );
+        print("Bloc: Playback completed. Setting position to duration.");
       }
 
       // Only emit if the playing state actually changed or completed
@@ -410,6 +419,7 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
       final currentState = state as AudioPlayerLoaded;
       if ((currentState.position - event.position).abs() >
           const Duration(milliseconds: 50)) {
+        // Adjust threshold if needed
         emit(currentState.copyWith(position: event.position));
       }
     }
