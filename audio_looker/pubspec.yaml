@@ -40,7 +40,8 @@ dependencies:
   desktop_drop: ^0.5.0
   path: ^1.9.1
   flutter_colorpicker: ^1.1.0
-  data_table_2: ^2.5.10
+  syncfusion_flutter_datagrid: ^29.1.35
+  syncfusion_flutter_core: ^29.1.35
 
 dev_dependencies:
   flutter_test:
