@@ -7,22 +7,30 @@ import '../blocs/playlist/playlist_bloc.dart';
 import '../models/playlist.dart';
 
 /// Represents a single item in the playlist drawer.
-/// Handles displaying playlist info, drag targeting, and context menu actions.
 class PlaylistListItem extends StatefulWidget {
   final Playlist playlist;
+  // *** ADD properties for selection state and callback ***
+  final bool isSelected;
+  final ValueChanged<String> onTap;
 
-  const PlaylistListItem({super.key, required this.playlist});
+  const PlaylistListItem({
+    super.key,
+    required this.playlist,
+    required this.isSelected, // Required
+    required this.onTap, // Required
+  });
 
   @override
   State<PlaylistListItem> createState() => _PlaylistListItemState();
 }
 
 class _PlaylistListItemState extends State<PlaylistListItem> {
-  bool _isHovering = false; // Track hover state for visual feedback
-  bool _isDraggingOver = false; // Track drag-over state for visual feedback
+  bool _isHovering = false;
+  bool _isDraggingOver = false;
   final TextEditingController _renameController = TextEditingController();
-  Offset _tapPosition = Offset.zero; // Store tap position for context menu
+  Offset _tapPosition = Offset.zero;
 
+  // ... existing methods (_storePosition, _showContextMenu, _showRenameDialog, _submitRename, _showDeleteConfirmation) ...
   // Store tap position to show context menu nearby
   void _storePosition(TapDownDetails details) {
     _tapPosition = details.globalPosition;
@@ -36,7 +44,6 @@ class _PlaylistListItemState extends State<PlaylistListItem> {
     showMenu(
       context: context,
       position: RelativeRect.fromRect(
-        // Position the menu close to the tap position
         _tapPosition & const Size(40, 40), // Small rectangle at tap pos
         Offset.zero & overlay.size, // Bigger rectangle of the overlay
       ),
@@ -97,7 +104,6 @@ class _PlaylistListItemState extends State<PlaylistListItem> {
       );
       Navigator.of(dialogContext).pop(); // Close the dialog
     } else {
-      // Show error or feedback if name is empty
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Playlist name cannot be empty.')),
       );
@@ -123,8 +129,12 @@ class _PlaylistListItemState extends State<PlaylistListItem> {
               style: TextButton.styleFrom(foregroundColor: Colors.red),
               child: const Text('Delete'),
               onPressed: () {
+                // *** Also deselect if deleting the selected playlist ***
+                // Read the current selected ID from HomeScreen state (might need context access or callback)
+                // For simplicity, PlaylistBloc could handle deselecting, or HomeScreen listens to PlaylistBloc state changes.
+                // Let's assume deselect logic happens in HomeScreen's listener for now.
                 context.read<PlaylistBloc>().add(DeletePlaylist(playlistId));
-                Navigator.of(dialogContext).pop(); // Close the dialog
+                Navigator.of(dialogContext).pop();
                 print("Dispatching DeletePlaylist for ID: $playlistId");
               },
             ),
@@ -144,83 +154,91 @@ class _PlaylistListItemState extends State<PlaylistListItem> {
   Widget build(BuildContext context) {
     // DragTarget accepts data of type String (the track path)
     return DragTarget<String>(
-      // Called when a draggable enters the target area
       onWillAcceptWithDetails: (details) {
-        // You could add logic here to check if the data format is correct
-        // For now, we accept any String (assuming it's a track path)
         setState(() => _isDraggingOver = true);
-        print(
-          "Playlist '${widget.playlist.name}': Draggable entering - ${details.data}",
-        );
-        return true; // Accept the draggable
+        return true;
       },
-      // Called when a draggable leaves the target area
       onLeave: (data) {
         setState(() => _isDraggingOver = false);
-        print("Playlist '${widget.playlist.name}': Draggable leaving");
       },
-      // Called when a draggable is dropped and accepted
       onAcceptWithDetails: (details) {
         final trackPath = details.data;
-        print("Playlist '${widget.playlist.name}': Accepted drop - $trackPath");
         context.read<PlaylistBloc>().add(
           AddTrackToPlaylist(
             playlistId: widget.playlist.id,
             trackPath: trackPath,
           ),
         );
-        setState(() => _isDraggingOver = false); // Reset visual state
+        setState(() => _isDraggingOver = false);
       },
-      // Builds the appearance of the drag target
       builder: (context, candidateData, rejectedData) {
+        // *** Determine background color based on selection, drag, and hover ***
+        Color backgroundColor = Colors.transparent;
+        if (widget.isSelected) {
+          backgroundColor = Theme.of(
+            context,
+          ).colorScheme.primary.withOpacity(0.2);
+        } else if (_isDraggingOver) {
+          backgroundColor = Theme.of(
+            context,
+          ).colorScheme.primaryContainer.withOpacity(0.5);
+        } else if (_isHovering) {
+          backgroundColor = Theme.of(context).hoverColor;
+        }
+
         // Use InkWell for tap feedback and hover effect
         return InkWell(
-          onTap: () {
-            // TODO: Implement selecting playlist to show its tracks
-            print("Tapped on playlist: ${widget.playlist.name}");
-          },
+          // *** Call the onTap callback passed from the parent ***
+          onTapDown:
+              (TapDownDetails details) => widget.onTap(widget.playlist.id),
           onHover: (hovering) => setState(() => _isHovering = hovering),
           // Use GestureDetector to detect right-clicks (secondary tap)
           child: GestureDetector(
-            onTapDown: _storePosition, // Store position for context menu
-            onSecondaryTapDown: _storePosition, // Also store for secondary tap
+            onTapDown: _storePosition,
+            onSecondaryTapDown: _storePosition,
             onSecondaryTap: () => _showContextMenu(context),
             child: Container(
               padding: const EdgeInsets.symmetric(
                 horizontal: 16.0,
                 vertical: 12.0,
               ),
-              // Change background color based on hover and drag-over state
+              // *** Apply the calculated background color ***
               decoration: BoxDecoration(
-                color:
-                    _isDraggingOver
-                        ? Theme.of(context)
-                            .colorScheme
-                            .primaryContainer // Highlight when dragging over
-                        : _isHovering
-                        ? Theme.of(context)
-                            .hoverColor // Highlight on hover
-                        : Colors.transparent, // Default background
+                color: backgroundColor,
                 border: Border(
                   bottom: BorderSide(
                     color: Theme.of(context).dividerColor,
                     width: 0.5,
                   ),
                 ),
+                borderRadius: BorderRadius.circular(
+                  4,
+                ), // Optional: Add rounding
               ),
               child: Row(
                 children: [
                   Icon(
-                    Icons.playlist_play,
+                    // Change icon if selected?
+                    widget.isSelected
+                        ? Icons.playlist_play_rounded
+                        : Icons.playlist_play_outlined,
                     size: 20,
-                    color: Theme.of(context).colorScheme.secondary,
+                    color:
+                        widget.isSelected
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.secondary,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       widget.playlist.name,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyLarge,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        fontWeight:
+                            widget.isSelected
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                      ),
                     ),
                   ),
                   // Optionally show track count

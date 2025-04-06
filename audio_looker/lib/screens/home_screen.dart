@@ -15,6 +15,8 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:path/path.dart' as pathLib;
 import 'package:audio_looker/widgets/folder_tree_view.dart';
 import 'package:audio_looker/widgets/track_table_widget.dart';
+import 'package:audio_looker/models/playlist.dart';
+import 'package:audio_looker/blocs/playlist/playlist_bloc.dart';
 
 // Define view mode enum
 enum ViewMode { list, tree }
@@ -53,6 +55,9 @@ class _HomeScreenState extends State<HomeScreen>
   int? _anchorTrackId;
   bool _isPlaylistPanelVisible = true;
 
+  String? _currentlySelectedPlaylistId;
+  Playlist? _currentlySelectedPlaylist;
+
   @override
   void initState() {
     super.initState();
@@ -90,6 +95,55 @@ class _HomeScreenState extends State<HomeScreen>
   void _togglePlaylistPanel() {
     setState(() {
       _isPlaylistPanelVisible = !_isPlaylistPanelVisible;
+    });
+  }
+
+  void _handlePlaylistSelected(String playlistId) {
+    final playlistState =
+        context.read<PlaylistBloc>().state; // Read PlaylistBloc state
+
+    setState(() {
+      if (_currentlySelectedPlaylistId == playlistId) {
+        // Deselect if the same playlist is tapped again
+        _currentlySelectedPlaylistId = null;
+        _currentlySelectedPlaylist = null;
+        print("Playlist deselected.");
+      } else {
+        // Select the new playlist
+        if (playlistState is PlaylistLoaded) {
+          try {
+            // Find the playlist object from the loaded playlists
+            _currentlySelectedPlaylist = playlistState.playlists.firstWhere(
+              (p) => p.id == playlistId,
+            );
+            _currentlySelectedPlaylistId = playlistId;
+            print("Playlist selected: ${_currentlySelectedPlaylist?.name}");
+          } catch (e) {
+            // Handle case where playlist might not be found (e.g., deleted just before tap)
+            _currentlySelectedPlaylist = null;
+            _currentlySelectedPlaylistId = null;
+            print("Error selecting playlist ID $playlistId: $e");
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Error: Could not select playlist.'),
+              ),
+            );
+          }
+        } else {
+          // Handle case where playlists are not loaded yet
+          _currentlySelectedPlaylist = null;
+          _currentlySelectedPlaylistId = null;
+          print("Cannot select playlist: Playlists not loaded.");
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Playlists are still loading...')),
+          );
+        }
+      }
+      // Optional: Clear track selection when changing playlist view
+      _selectedTrackIds.clear();
+      _selectedTrackForPlayer = null;
+      _anchorTrackId = null;
+      _updatePlayerSelection(); // Assuming this method deselects player if needed
     });
   }
 
@@ -467,14 +521,21 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _updatePlayerSelection() {
-    if (_selectedTrackIds.length == 1) {
+    // This method should handle setting _selectedTrackForPlayer based on _selectedTrackIds
+    // For now, ensure it can handle nulling the player selection
+    if (_selectedTrackIds.isEmpty && _selectedTrackForPlayer != null) {
+      setState(() {
+        _selectedTrackForPlayer = null;
+        // Optionally stop audio player via bloc event
+      });
+    }
+    // Add logic to set _selectedTrackForPlayer if _selectedTrackIds has one item
+    else if (_selectedTrackIds.length == 1) {
       final newSelectedTrack = _getTrackById(_selectedTrackIds.first);
       if (_selectedTrackForPlayer?.id != newSelectedTrack?.id) {
         setState(() {
           _selectedTrackForPlayer = newSelectedTrack;
-          if (_isPlayerMinimized && _selectedTrackForPlayer != null) {
-            _togglePlayerSize();
-          }
+          // ... rest of your existing logic in _updatePlayerSelection ...
         });
         if (newSelectedTrack != null) {
           context.read<AudioPlayerBloc>().add(
@@ -484,12 +545,6 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           );
         }
-      }
-    } else {
-      if (_selectedTrackForPlayer != null) {
-        setState(() {
-          _selectedTrackForPlayer = null;
-        });
       }
     }
   }
@@ -636,474 +691,657 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    // *** Get the AudioPlayerBloc instance here ***
     final audioPlayerBloc = context.read<AudioPlayerBloc>();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Audio Looker'),
-        actions: [
-          IconButton(
-            // Use an icon similar to the screenshot, e.g., Icons.list, Icons.menu_open, Icons.splitscreen
-            icon: Icon(
-              _isPlaylistPanelVisible ? Icons.menu_open : Icons.menu,
-            ), // Example toggle icon
-            tooltip: 'Toggle Playlists Panel',
-            onPressed: _togglePlaylistPanel, // Call the toggle method
-          ),
-          IconButton(
-            icon: Icon(
-              _viewMode == ViewMode.list
-                  ? Icons.account_tree
-                  : Icons.table_rows,
-            ),
-            onPressed: () {
-              // Use inline function or a separate method like _toggleViewMode
-              setState(() {
-                _viewMode =
-                    _viewMode == ViewMode.list ? ViewMode.tree : ViewMode.list;
-                // Clear selection when switching views
-                _selectedTrackIds.clear();
-                _selectedTrackForPlayer = null;
-                _anchorTrackId = null;
-                // Update player selection (likely deselect)
-                _updatePlayerSelection();
-              });
-            },
-            tooltip:
-                _viewMode == ViewMode.list
-                    ? 'Switch to folder view'
-                    : 'Switch to table view',
-          ),
-          SizedBox(width: 8),
-          // --- Removed Import Buttons ---
-          // IconButton(icon: const Icon(Icons.link), ... ),
-          // IconButton(icon: const Icon(Icons.folder), ... ),
-          // IconButton(icon: const Icon(Icons.add), ... ),
-        ],
-      ),
-      drawer: const PlaylistDrawer(),
-      // lib/screens/home_screen.dart (Inside the Scaffold's build method)
-
-      // *** This is the full code for the 'body' property ***
-      body: Row(
-        children: [
-          // --- Playlist Panel (Animated Visibility) ---
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 250), // Animation duration
-            curve: Curves.easeInOut, // Animation curve
-            width:
-                _isPlaylistPanelVisible
-                    ? 250.0
-                    : 0.0, // Animate width based on state
-            decoration: BoxDecoration(
-              // Add border or background if needed
-              border: Border(
-                right: BorderSide(
-                  color:
-                      _isPlaylistPanelVisible
-                          ? Theme.of(context).dividerColor
-                          : Colors.transparent,
-                  width: 1.0,
-                ),
+    // Use a BlocListener to react to PlaylistBloc changes if needed
+    // e.g., to clear selection if the selected playlist is deleted
+    return BlocListener<PlaylistBloc, PlaylistState>(
+      listener: (context, playlistState) {
+        if (playlistState is PlaylistLoaded &&
+            _currentlySelectedPlaylistId != null) {
+          // Check if the selected playlist still exists
+          bool selectedExists = playlistState.playlists.any(
+            (p) => p.id == _currentlySelectedPlaylistId,
+          );
+          if (!selectedExists) {
+            // Playlist was deleted, clear selection
+            setState(() {
+              _currentlySelectedPlaylistId = null;
+              _currentlySelectedPlaylist = null;
+              print("Selected playlist was deleted, clearing selection.");
+            });
+          } else {
+            // Update playlist details if they changed (e.g., name, tracks)
+            try {
+              final updatedPlaylist = playlistState.playlists.firstWhere(
+                (p) => p.id == _currentlySelectedPlaylistId,
+              );
+              // Avoid unnecessary rebuilds if the object is identical
+              if (!identical(_currentlySelectedPlaylist, updatedPlaylist) &&
+                  _currentlySelectedPlaylist != updatedPlaylist) {
+                setState(() {
+                  _currentlySelectedPlaylist = updatedPlaylist;
+                });
+              }
+            } catch (e) {
+              /* ignore if not found */
+            }
+          }
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Audio Looker'),
+          actions: [
+            IconButton(
+              icon: Icon(
+                _isPlaylistPanelVisible ? Icons.menu_open : Icons.menu,
               ),
-              color: Theme.of(context).canvasColor, // Optional background
+              tooltip: 'Toggle Playlists Panel',
+              onPressed: _togglePlaylistPanel,
             ),
-            child: Visibility(
-              // Use Visibility to avoid building when hidden
-              visible: _isPlaylistPanelVisible,
-              maintainState: false, // Don't keep state when hidden
-              child:
-                  const PlaylistDrawer(), // Or your refactored PlaylistPanel widget
+            IconButton(
+              icon: Icon(
+                _viewMode == ViewMode.list
+                    ? Icons.account_tree
+                    : Icons.table_rows,
+              ),
+              onPressed: _toggleViewMode,
+              tooltip:
+                  _viewMode == ViewMode.list
+                      ? 'Switch to folder view'
+                      : 'Switch to table view',
             ),
-            clipBehavior: Clip.hardEdge, // Prevent overflow during animation
-          ),
-
-          // --- Main Content Area ---
-          Expanded(
-            child: Column(
-              // Your existing Column structure for main content
-              children: [
-                // Search bar
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Search collection...',
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      isDense: true,
-                    ),
+            const SizedBox(width: 8),
+          ],
+        ),
+        body: Row(
+          children: [
+            // Playlist Panel
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOut,
+              width: _isPlaylistPanelVisible ? 250.0 : 0.0,
+              decoration: BoxDecoration(
+                border: Border(
+                  right: BorderSide(
+                    color:
+                        _isPlaylistPanelVisible
+                            ? Theme.of(context).dividerColor
+                            : Colors.transparent,
+                    width: 1.0,
                   ),
                 ),
+                color: Theme.of(context).canvasColor,
+              ),
+              clipBehavior: Clip.hardEdge,
+              child: Visibility(
+                visible: _isPlaylistPanelVisible,
+                maintainState: false,
+                child: PlaylistDrawer(
+                  // Or PlaylistPanel
+                  selectedPlaylistId: _currentlySelectedPlaylistId,
+                  onPlaylistSelected: _handlePlaylistSelected,
+                ),
+              ),
+            ),
 
-                // Collection content area (Table or Tree View + Player)
-                Expanded(
-                  child: DropTarget(
-                    onDragDone:
-                        (detail) async =>
-                            await _handleDroppedFiles(detail.files),
-                    onDragEntered:
-                        (detail) => setState(() => _isDragging = true),
-                    onDragExited:
-                        (detail) => setState(() => _isDragging = false),
-                    child: Stack(
-                      // Use Stack for overlays (drag, loading)
-                      children: [
-                        // --- Main Content: Table or Tree View ---
-                        BlocConsumer<CollectionBloc, CollectionState>(
-                          listener: (context, state) {
-                            // ... Your existing listener logic ...
-                            if (state is CollectionError) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Error: ${state.message}'),
-                                  backgroundColor: Colors.redAccent,
+            // --- Main Content Area ---
+            Expanded(
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.stretch, // Stretch header
+                children: [
+                  // Search bar
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        // Filled placeholder
+                        hintText: 'Search collection...',
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+
+                  // Playlist Header (conditionally displayed)
+                  if (_currentlySelectedPlaylist != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16.0,
+                        vertical: 4.0,
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12.0,
+                          vertical: 8.0,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.secondaryContainer.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Playlist: ${_currentlySelectedPlaylist!.name}',
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.titleMedium?.copyWith(
+                                  color:
+                                      Theme.of(
+                                        context,
+                                      ).colorScheme.onSecondaryContainer,
                                 ),
-                              );
-                            }
-                            if (state is CollectionLoaded) {
-                              final currentTrackIds =
-                                  state.tracks.map((t) => t.id).toSet();
-                              bool selectionChanged = false;
-                              _selectedTrackIds.removeWhere((id) {
-                                if (!currentTrackIds.contains(id)) {
-                                  selectionChanged = true;
-                                  if (_anchorTrackId == id)
-                                    _anchorTrackId = null;
-                                  return true;
-                                }
-                                return false;
-                              });
-                              if (selectionChanged) {
-                                WidgetsBinding.instance.addPostFrameCallback((
-                                  _,
-                                ) {
-                                  if (mounted) {
-                                    setState(() {
-                                      _updatePlayerSelection();
-                                    });
-                                  }
-                                });
-                              }
-                            }
-                          },
-                          builder: (context, state) {
-                            // --- Logic to get tracks, folders, loading state ---
-                            List<Track> tracks = [];
-                            List<String> rootFolders = [];
-                            bool isLoading = false;
-                            bool isInitialLoad = false;
-                            List<Tag> allTags = [];
-
-                            if (state is CollectionLoading) {
-                              isLoading = true;
-                              tracks = state.currentTracks ?? [];
-                              rootFolders = state.currentRootFolders ?? [];
-                              allTags = state.currentAllTags ?? [];
-                            } else if (state is CollectionLoaded) {
-                              isLoading = false;
-                              tracks = state.tracks;
-                              rootFolders = state.rootFolders;
-                              allTags = state.allTags;
-                            } else if (state is CollectionError) {
-                              tracks = state.tracks ?? [];
-                              rootFolders = [];
-                              allTags = [];
-                            } else if (state is CollectionInitial) {
-                              isLoading = true;
-                              isInitialLoad = true;
-                            }
-                            // --- End State Logic ---
-
-                            if (isInitialLoad) {
-                              return const Center(
-                                child: CircularProgressIndicator(),
-                              );
-                            }
-
-                            List<Track> displayedTracks =
-                                _viewMode == ViewMode.list
-                                    ? _getSortedTracks(
-                                      tracks,
-                                    ) // Use helper method
-                                    : tracks;
-
-                            // --- Empty State Handling ---
-                            if (!isLoading &&
-                                displayedTracks.isEmpty &&
-                                _searchController.text.isEmpty &&
-                                rootFolders.isEmpty &&
-                                _viewMode == ViewMode.list) {
-                              return Center(
-                                /* ... Your Empty Collection Text ... */
-                              ); //
-                            } else if (!isLoading &&
-                                displayedTracks.isEmpty &&
-                                _searchController.text.isNotEmpty) {
-                              return Center(
-                                child: Text(
-                                  'No tracks found for "${_searchController.text}"',
-                                ),
-                              );
-                            }
-                            // --- End Empty State ---
-
-                            // Build the appropriate view (List or Tree) within a Column with the player
-                            return Column(
-                              children: [
-                                Expanded(
-                                  child: Opacity(
-                                    opacity: isLoading ? 0.6 : 1.0,
-                                    child:
-                                        _viewMode == ViewMode.list
-                                            ? TrackTableWidget(
-                                              key: const ValueKey(
-                                                'track-table',
-                                              ),
-                                              tracks: displayedTracks,
-                                              selectedTrackIds:
-                                                  _selectedTrackIds,
-                                              audioPlayerBloc:
-                                                  audioPlayerBloc, // Pass the bloc
-                                              onSelectionChanged:
-                                                  _handleSelectionChanged,
-                                              onShowContextMenu:
-                                                  _showContextMenu,
-                                              onRatingChanged:
-                                                  _handleRatingChanged,
-                                              onSort: _handleSortChanged,
-                                              initialSortColumnName:
-                                                  _sortColumnName,
-                                              initialSortDirection:
-                                                  _sortDirectionSf,
-                                            )
-                                            : FolderTreeView(
-                                              key: const ValueKey(
-                                                'folder-tree',
-                                              ),
-                                              tracks: tracks,
-                                              rootFolders: rootFolders,
-                                              selectedTrack:
-                                                  _selectedTrackForPlayer,
-                                              onTrackSelected: (track) {
-                                                setState(() {
-                                                  _selectedTrackIds.clear();
-                                                  if (track.id != null) {
-                                                    _selectedTrackIds.add(
-                                                      track.id!,
-                                                    );
-                                                    _anchorTrackId = track.id;
-                                                  } else {
-                                                    _anchorTrackId = null;
-                                                  }
-                                                  _updatePlayerSelection();
-                                                });
-                                              },
-                                              onTrackDeleted: (trackId) {
-                                                context
-                                                    .read<CollectionBloc>()
-                                                    .add(RemoveTrack(trackId));
-                                              },
-                                            ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.clear),
+                              tooltip: 'Show All Tracks',
+                              iconSize: 20,
+                              visualDensity: VisualDensity.compact,
+                              // Pass the current ID to deselect, or null if you prefer
+                              onPressed:
+                                  () => _handlePlaylistSelected(
+                                    _currentlySelectedPlaylistId!,
                                   ),
-                                ),
-                                // --- Audio Player ---
-                                if (_selectedTrackForPlayer != null)
-                                  AnimatedContainer(
-                                    duration: const Duration(milliseconds: 300),
-                                    height: _playerHeightAnimation.value,
-                                    decoration: BoxDecoration(
-                                      color: Theme.of(context).cardColor,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withOpacity(0.2),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, -2),
-                                        ),
-                                      ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                  // Collection content area (Table or Tree View + Player)
+                  Expanded(
+                    child: DropTarget(
+                      onDragDone:
+                          (detail) async =>
+                              await _handleDroppedFiles(detail.files),
+                      onDragEntered:
+                          (detail) => setState(() => _isDragging = true),
+                      onDragExited:
+                          (detail) => setState(() => _isDragging = false),
+                      child: Stack(
+                        children: [
+                          // Main Content: Table or Tree View
+                          BlocConsumer<CollectionBloc, CollectionState>(
+                            listener: (context, state) {
+                              // Filled placeholder (kept existing listener logic)
+                              if (state is CollectionError) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Error: ${state.message}'),
+                                    backgroundColor: Colors.redAccent,
+                                  ),
+                                );
+                              }
+                              if (state is CollectionLoaded) {
+                                final currentTrackIds =
+                                    state.tracks.map((t) => t.id).toSet();
+                                bool selectionChanged = false;
+                                _selectedTrackIds.removeWhere((id) {
+                                  if (!currentTrackIds.contains(id)) {
+                                    selectionChanged = true;
+                                    if (_anchorTrackId == id)
+                                      _anchorTrackId = null;
+                                    return true;
+                                  }
+                                  return false;
+                                });
+                                if (selectionChanged) {
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) {
+                                      setState(() {
+                                        _updatePlayerSelection();
+                                      });
+                                    }
+                                  });
+                                }
+                              }
+                            },
+                            builder: (context, state) {
+                              // Logic to get tracks, folders, loading state
+                              List<Track> allTracks = [];
+                              List<String> rootFolders = [];
+                              bool isLoading = false;
+
+                              if (state is CollectionLoading) {
+                                isLoading = true;
+                                allTracks = state.currentTracks ?? [];
+                                rootFolders = state.currentRootFolders ?? [];
+                              } else if (state is CollectionLoaded) {
+                                isLoading = false;
+                                allTracks = state.tracks;
+                                rootFolders = state.rootFolders;
+                              } else if (state is CollectionError) {
+                                allTracks = state.tracks ?? [];
+                              } else if (state is CollectionInitial) {
+                                isLoading = true;
+                              }
+
+                              if (isLoading && allTracks.isEmpty) {
+                                return const Center(
+                                  child: CircularProgressIndicator(),
+                                );
+                              }
+
+                              // FILTER tracks based on selected playlist
+                              List<Track> tracksToShow;
+                              if (_currentlySelectedPlaylist != null) {
+                                final playlistTrackPaths = Set<String>.from(
+                                  _currentlySelectedPlaylist!.trackPaths,
+                                );
+                                tracksToShow =
+                                    allTracks
+                                        .where(
+                                          (track) => playlistTrackPaths
+                                              .contains(track.path),
+                                        )
+                                        .toList();
+                              } else {
+                                tracksToShow = allTracks; // Show all tracks
+                              }
+
+                              // Apply sorting
+                              List<Track> displayedTracks =
+                                  _viewMode == ViewMode.list
+                                      ? _getSortedTracks(tracksToShow)
+                                      : tracksToShow;
+
+                              // Empty State Handling
+                              if (!isLoading && displayedTracks.isEmpty) {
+                                if (_currentlySelectedPlaylist != null) {
+                                  return Center(
+                                    child: Text(
+                                      'Playlist "${_currentlySelectedPlaylist!.name}" is empty.',
                                     ),
-                                    child: Column(
-                                      children: [
-                                        // Player Minimize/Expand Toggle Bar
-                                        Container(
-                                          height: 36,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .surfaceVariant
-                                              .withOpacity(0.5),
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              IconButton(
-                                                icon: Icon(
-                                                  _isPlayerMinimized
-                                                      ? Icons.keyboard_arrow_up
-                                                      : Icons
-                                                          .keyboard_arrow_down,
-                                                ),
-                                                onPressed:
-                                                    _togglePlayerSize, // Assuming method exists
-                                                tooltip:
-                                                    _isPlayerMinimized
-                                                        ? 'Expand player'
-                                                        : 'Minimize player',
-                                              ),
-                                            ],
+                                  );
+                                } else if (_searchController.text.isNotEmpty) {
+                                  return Center(
+                                    child: Text(
+                                      'No tracks found for "${_searchController.text}"',
+                                    ),
+                                  );
+                                } else if (rootFolders.isEmpty &&
+                                    _viewMode == ViewMode.list) {
+                                  // Filled placeholder: Your original empty collection message
+                                  return Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(20.0),
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.music_note_outlined,
+                                            size: 64,
+                                            color: Colors.grey[600],
                                           ),
-                                        ),
-                                        // Player Content Area (Expanded Player vs Minimized)
-                                        Expanded(
-                                          child: Stack(
-                                            children: [
-                                              // Full AudioPlayerWidget (fades out when minimized)
-                                              AnimatedOpacity(
-                                                opacity:
-                                                    _isPlayerMinimized
-                                                        ? 0.0
-                                                        : 1.0,
-                                                duration: const Duration(
-                                                  milliseconds: 200,
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            'Collection is Empty',
+                                            style:
+                                                Theme.of(
+                                                  context,
+                                                ).textTheme.headlineSmall,
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            'Add files/folders using drag & drop.',
+                                            style:
+                                                Theme.of(
+                                                  context,
+                                                ).textTheme.bodyMedium,
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                } else if (_viewMode == ViewMode.tree &&
+                                    rootFolders.isEmpty) {
+                                  // Handle empty state for tree view if needed
+                                  return const Center(
+                                    child: Text('No root folders added.'),
+                                  );
+                                }
+                              }
+
+                              // Build the appropriate view (List or Tree) within a Column with the player
+                              return Column(
+                                children: [
+                                  Expanded(
+                                    child: Opacity(
+                                      opacity: isLoading ? 0.6 : 1.0,
+                                      child: Container(
+                                        color:
+                                            _currentlySelectedPlaylistId != null
+                                                ? Theme.of(context)
+                                                    .colorScheme
+                                                    .surfaceVariant
+                                                    .withOpacity(0.3)
+                                                : null,
+                                        child:
+                                            _viewMode == ViewMode.list
+                                                ? TrackTableWidget(
+                                                  tracks: displayedTracks,
+                                                  key: const ValueKey(
+                                                    'track-table',
+                                                  ),
+                                                  selectedTrackIds:
+                                                      _selectedTrackIds,
+                                                  audioPlayerBloc:
+                                                      audioPlayerBloc,
+                                                  onSelectionChanged:
+                                                      _handleSelectionChanged,
+                                                  onShowContextMenu:
+                                                      _showContextMenu,
+                                                  onRatingChanged:
+                                                      _handleRatingChanged,
+                                                  onSort: _handleSortChanged,
+                                                  initialSortColumnName:
+                                                      _sortColumnName,
+                                                  initialSortDirection:
+                                                      _sortDirectionSf,
+                                                )
+                                                : FolderTreeView(
+                                                  tracks:
+                                                      allTracks, // Tree view needs all tracks
+                                                  key: const ValueKey(
+                                                    'folder-tree',
+                                                  ),
+                                                  rootFolders: rootFolders,
+                                                  selectedTrack:
+                                                      _selectedTrackForPlayer,
+                                                  onTrackSelected: (track) {
+                                                    // Filled placeholder
+                                                    setState(() {
+                                                      _selectedTrackIds.clear();
+                                                      if (track.id != null) {
+                                                        _selectedTrackIds.add(
+                                                          track.id!,
+                                                        );
+                                                        _anchorTrackId =
+                                                            track.id;
+                                                      } else {
+                                                        _anchorTrackId = null;
+                                                      }
+                                                      _updatePlayerSelection();
+                                                    });
+                                                  },
+                                                  onTrackDeleted: (trackId) {
+                                                    // Filled placeholder
+                                                    context
+                                                        .read<CollectionBloc>()
+                                                        .add(
+                                                          RemoveTrack(trackId),
+                                                        );
+                                                  },
                                                 ),
-                                                child: IgnorePointer(
-                                                  ignoring: _isPlayerMinimized,
-                                                  child:
-                                                      _selectedTrackForPlayer ==
-                                                              null
-                                                          ? const SizedBox.shrink()
-                                                          : AudioPlayerWidget(
-                                                            key: ValueKey(
-                                                              _selectedTrackForPlayer!
-                                                                  .id,
-                                                            ),
-                                                            trackId:
-                                                                _selectedTrackForPlayer!
-                                                                    .id!,
-                                                            title:
-                                                                _selectedTrackForPlayer!
-                                                                    .title,
-                                                            artist:
-                                                                _selectedTrackForPlayer!
-                                                                    .artist,
-                                                            audioSource:
-                                                                _selectedTrackForPlayer!
-                                                                    .path,
-                                                            isUrl:
-                                                                _selectedTrackForPlayer!
-                                                                    .isUrl,
-                                                            rating:
-                                                                _selectedTrackForPlayer!
-                                                                    .rating,
-                                                            notes:
-                                                                _selectedTrackForPlayer!
-                                                                    .comment,
-                                                            generalTags:
-                                                                _selectedTrackForPlayer!
-                                                                    .generalTags,
-                                                            onRatingChanged: (
-                                                              rating,
-                                                            ) {
-                                                              if (_selectedTrackForPlayer
-                                                                      ?.id !=
-                                                                  null) {
-                                                                _handleRatingChanged(
+                                      ),
+                                    ),
+                                  ),
+                                  // --- Audio Player ---
+                                  if (_selectedTrackForPlayer != null)
+                                    AnimatedContainer(
+                                      // Filled placeholder
+                                      duration: const Duration(
+                                        milliseconds: 300,
+                                      ),
+                                      height: _playerHeightAnimation.value,
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(context).cardColor,
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(
+                                              0.2,
+                                            ),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, -2),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          // Player Minimize/Expand Toggle Bar
+                                          Container(
+                                            height: 36,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .surfaceVariant
+                                                .withOpacity(0.5),
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                IconButton(
+                                                  icon: Icon(
+                                                    _isPlayerMinimized
+                                                        ? Icons
+                                                            .keyboard_arrow_up
+                                                        : Icons
+                                                            .keyboard_arrow_down,
+                                                  ),
+                                                  onPressed: _togglePlayerSize,
+                                                  tooltip:
+                                                      _isPlayerMinimized
+                                                          ? 'Expand player'
+                                                          : 'Minimize player',
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          // Player Content Area
+                                          Expanded(
+                                            child: Stack(
+                                              children: [
+                                                // Full Player
+                                                AnimatedOpacity(
+                                                  opacity:
+                                                      _isPlayerMinimized
+                                                          ? 0.0
+                                                          : 1.0,
+                                                  duration: const Duration(
+                                                    milliseconds: 200,
+                                                  ),
+                                                  child: IgnorePointer(
+                                                    ignoring:
+                                                        _isPlayerMinimized,
+                                                    child: AudioPlayerWidget(
+                                                      key: ValueKey(
+                                                        _selectedTrackForPlayer!
+                                                            .id,
+                                                      ),
+                                                      trackId:
+                                                          _selectedTrackForPlayer!
+                                                              .id!,
+                                                      title:
+                                                          _selectedTrackForPlayer!
+                                                              .title,
+                                                      artist:
+                                                          _selectedTrackForPlayer!
+                                                              .artist,
+                                                      audioSource:
+                                                          _selectedTrackForPlayer!
+                                                              .path,
+                                                      isUrl:
+                                                          _selectedTrackForPlayer!
+                                                              .isUrl,
+                                                      rating:
+                                                          _selectedTrackForPlayer!
+                                                              .rating,
+                                                      notes:
+                                                          _selectedTrackForPlayer!
+                                                              .comment,
+                                                      generalTags:
+                                                          _selectedTrackForPlayer!
+                                                              .generalTags,
+                                                      onRatingChanged: (
+                                                        rating,
+                                                      ) {
+                                                        if (_selectedTrackForPlayer
+                                                                ?.id !=
+                                                            null) {
+                                                          _handleRatingChanged(
+                                                            _selectedTrackForPlayer!
+                                                                .id!,
+                                                            rating,
+                                                          );
+                                                        }
+                                                      },
+                                                      onNotesChanged: (notes) {
+                                                        if (_selectedTrackForPlayer
+                                                                ?.id !=
+                                                            null) {
+                                                          context
+                                                              .read<
+                                                                CollectionBloc
+                                                              >()
+                                                              .add(
+                                                                UpdateTrackComment(
                                                                   _selectedTrackForPlayer!
                                                                       .id!,
-                                                                  rating,
-                                                                );
-                                                              }
-                                                            },
-                                                            onNotesChanged: (
-                                                              notes,
-                                                            ) {
-                                                              if (_selectedTrackForPlayer
-                                                                      ?.id !=
-                                                                  null) {
-                                                                context
-                                                                    .read<
-                                                                      CollectionBloc
-                                                                    >()
-                                                                    .add(
-                                                                      UpdateTrackComment(
-                                                                        _selectedTrackForPlayer!
-                                                                            .id!,
-                                                                        notes,
-                                                                      ),
-                                                                    );
-                                                              }
-                                                            },
-                                                          ),
+                                                                  notes,
+                                                                ),
+                                                              );
+                                                        }
+                                                      },
+                                                    ),
+                                                  ),
                                                 ),
-                                              ),
-                                              // Minimized Player View (fades in when minimized)
-                                              AnimatedOpacity(
-                                                opacity:
-                                                    _isPlayerMinimized
-                                                        ? 1.0
-                                                        : 0.0,
-                                                duration: const Duration(
-                                                  milliseconds: 200,
+                                                // Minimized Player
+                                                AnimatedOpacity(
+                                                  opacity:
+                                                      _isPlayerMinimized
+                                                          ? 1.0
+                                                          : 0.0,
+                                                  duration: const Duration(
+                                                    milliseconds: 200,
+                                                  ),
+                                                  child: IgnorePointer(
+                                                    ignoring:
+                                                        !_isPlayerMinimized,
+                                                    child:
+                                                        _buildMinimizedPlayer(),
+                                                  ),
                                                 ),
-                                                child: IgnorePointer(
-                                                  ignoring: !_isPlayerMinimized,
-                                                  child:
-                                                      _buildMinimizedPlayer(), // Assuming method exists
-                                                ),
-                                              ),
-                                            ],
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                              ],
-                            );
-                          },
-                        ), // End BlocConsumer
-                        // Drag overlay (conditionally displayed)
-                        if (_isDragging)
-                          Container(
-                            // Your drag overlay definition
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.primary.withOpacity(0.1),
-                            child: Center(/* ... Drag overlay content ... */),
-                          ),
-                        // Loading Indicator Overlay (conditionally displayed)
-                        BlocBuilder<CollectionBloc, CollectionState>(
-                          builder: (context, state) {
-                            if (state is CollectionLoading) {
-                              return Positioned.fill(
-                                // Your loading overlay definition
+                                ],
+                              );
+                            },
+                          ), // End BlocConsumer
+                          // Drag overlay
+                          if (_isDragging)
+                            Container(
+                              // Filled placeholder
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.primary.withOpacity(0.1),
+                              child: Center(
                                 child: Container(
-                                  color: Colors.black.withOpacity(0.4),
-                                  child: const Center(
-                                    /* ... Loading content ... */
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 30,
+                                    vertical: 20,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        Theme.of(context).colorScheme.surface,
+                                    borderRadius: BorderRadius.circular(10),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.2),
+                                        blurRadius: 10,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.file_download_done_outlined,
+                                        size: 48,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        'Drop Audio Files or Folders Here',
+                                        style:
+                                            Theme.of(
+                                              context,
+                                            ).textTheme.titleMedium,
+                                      ),
+                                    ],
                                   ),
                                 ),
-                              );
-                            }
-                            return const SizedBox.shrink();
-                          },
-                        ),
-                      ], // End Stack children
-                    ), // End Stack
-                  ), // End DropTarget
-                ), // End Expanded (Collection content area)
-              ], // End Main Column Children
-            ), // End Main Column
-          ), // End Expanded (Main Content Area)
-        ], // End Row Children
-      ), // End Row
-    );
+                              ),
+                            ),
+                          // Loading Indicator Overlay
+                          BlocBuilder<CollectionBloc, CollectionState>(
+                            // Filled placeholder
+                            builder: (context, state) {
+                              if (state is CollectionLoading) {
+                                return Positioned.fill(
+                                  child: Container(
+                                    color: Colors.black.withOpacity(0.4),
+                                    child: const Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          CircularProgressIndicator(
+                                            color: Colors.white,
+                                          ),
+                                          SizedBox(height: 16),
+                                          Text(
+                                            'Processing audio...',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+                              return const SizedBox.shrink();
+                            },
+                          ),
+                        ], // End Stack children
+                      ), // End Stack
+                    ), // End DropTarget
+                  ), // End Expanded (Collection content area)
+                ], // End Main Column Children
+              ), // End Main Column
+            ), // End Expanded (Main Content Area)
+          ], // End Row Children
+        ), // End Row
+      ), // End BlocListener
+    ); // End Scaffold
   }
 
   // Minimized player view
