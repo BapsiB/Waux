@@ -58,6 +58,10 @@ class _HomeScreenState extends State<HomeScreen>
   String? _currentlySelectedPlaylistId;
   Playlist? _currentlySelectedPlaylist;
 
+  final double _fullPlayerHeight = 490; // Or your original height
+  // *** Adjust minimized height for bottom controls ***
+  final double _minimizedPlayerHeight = 100; // Example height for controls only
+
   @override
   void initState() {
     super.initState();
@@ -67,9 +71,20 @@ class _HomeScreenState extends State<HomeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
-    _playerHeightAnimation = Tween<double>(begin: 490, end: 100).animate(
+    // *** Update Tween with new minimized height ***
+    _playerHeightAnimation = Tween<double>(
+      begin: _fullPlayerHeight,
+      end: _minimizedPlayerHeight,
+    ).animate(
+      // Use _minimizedPlayerHeight
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     )..addListener(() => setState(() {}));
+
+    // *** Start with player minimized if a track is initially selected (optional) ***
+    // if (_selectedTrackForPlayer != null) {
+    //   _isPlayerMinimized = true;
+    //   _animationController.value = 1.0; // Start animation controller at the end (minimized)
+    // }
   }
 
   @override
@@ -150,10 +165,11 @@ class _HomeScreenState extends State<HomeScreen>
   void _togglePlayerSize() {
     setState(() {
       _isPlayerMinimized = !_isPlayerMinimized;
-      if (_isPlayerMinimized)
+      if (_isPlayerMinimized) {
         _animationController.forward();
-      else
+      } else {
         _animationController.reverse();
+      }
     });
   }
 
@@ -291,70 +307,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
     for (final folderPath in foldersToProcess) {
       await _processDirectory(folderPath);
-    }
-  }
-
-  Future<void> _pickAndAddFolder() async {
-    try {
-      final result = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Select Folder to Add',
-      );
-      if (result != null) {
-        context.read<CollectionBloc>().add(AddRootFolder(result));
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              "Added '${pathLib.basename(result)}' as root folder.",
-            ),
-          ),
-        );
-        await _processDirectory(result);
-      }
-    } catch (e) {
-      debugPrint("Error picking folder: $e");
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error selecting folder: $e")));
-    }
-  }
-
-  Future<void> _pickAndAddAudioFile() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.audio,
-        allowMultiple: true,
-        allowedExtensions: _supportedExtensions,
-        dialogTitle: 'Select Audio Files',
-      );
-      if (result != null && result.files.isNotEmpty) {
-        List<String> filePathsToAdd = [];
-        for (final file in result.files) {
-          if (file.path != null) {
-            filePathsToAdd.add(file.path!);
-          } else if (file.bytes != null) {
-            final tempDir = await getTemporaryDirectory();
-            final tempFile = File('${tempDir.path}/${file.name}');
-            await tempFile.writeAsBytes(file.bytes!);
-            filePathsToAdd.add(tempFile.path);
-            debugPrint(
-              "Handled file from bytes: ${file.name} -> ${tempFile.path}",
-            );
-          }
-        }
-        if (filePathsToAdd.isNotEmpty) {
-          context.read<CollectionBloc>().add(
-            AddTracksFromPaths(filePathsToAdd),
-          );
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Adding ${filePathsToAdd.length} files...")),
-          );
-        }
-      }
-    } catch (e, stackTrace) {
-      debugPrint("Error picking file(s): $e\n$stackTrace");
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error selecting file(s): $e")));
     }
   }
 
@@ -687,7 +639,54 @@ class _HomeScreenState extends State<HomeScreen>
     print("Rating changed in table: Track $trackId -> $newRating stars");
     context.read<CollectionBloc>().add(UpdateTrackRating(trackId, newRating));
   }
-  // --- End rating handler ---
+
+  // --- NEW: Handler for Play Preview Click ---
+  void _handlePlayPreviewAndMinimize(Track track) {
+    print("Handling Play Preview and Minimize for: ${track.title}");
+    final bloc = context.read<AudioPlayerBloc>();
+    final currentBlocState = bloc.state;
+
+    // Check if this track is already loaded and playing to avoid redundant loads
+    bool needsLoad = true;
+    if (currentBlocState is AudioPlayerLoaded &&
+        currentBlocState.currentSource == track.path) {
+      needsLoad = false;
+      print("Track already loaded.");
+    }
+
+    setState(() {
+      _selectedTrackForPlayer = track; // Select the track for the player
+      _isPlayerMinimized = true; // Set state to minimized
+      if (!_animationController.isCompleted) {
+        // Jump animation to the end if not already minimized
+        _animationController.forward(from: 1.0);
+      }
+    });
+
+    // Load and Play audio using the BLoC
+    if (needsLoad) {
+      bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
+      // Delay playing slightly after load if needed, ensure widget is mounted
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (!mounted) return;
+        final postDelayState = bloc.state;
+        // Verify the correct track is loaded before playing
+        if (postDelayState is AudioPlayerLoaded &&
+            postDelayState.currentSource == track.path) {
+          bloc.add(PlayAudio());
+          print("Dispatched PlayAudio after loading.");
+        } else {
+          print(
+            "Skipped PlayAudio: State mismatch after delay or widget unmounted.",
+          );
+        }
+      });
+    } else {
+      // If already loaded, just ensure it plays
+      bloc.add(PlayAudio());
+      print("Dispatched PlayAudio for already loaded track.");
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1059,6 +1058,8 @@ class _HomeScreenState extends State<HomeScreen>
                                                       _sortColumnName,
                                                   initialSortDirection:
                                                       _sortDirectionSf,
+                                                  onPlayPreviewAndMinimize:
+                                                      _handlePlayPreviewAndMinimize,
                                                 )
                                                 : FolderTreeView(
                                                   tracks:
@@ -1232,13 +1233,14 @@ class _HomeScreenState extends State<HomeScreen>
                                                           ? 1.0
                                                           : 0.0,
                                                   duration: const Duration(
-                                                    milliseconds: 200,
-                                                  ),
+                                                    milliseconds: 150,
+                                                  ), // Faster fade
                                                   child: IgnorePointer(
                                                     ignoring:
                                                         !_isPlayerMinimized,
+                                                    // *** Call the updated minimized player builder ***
                                                     child:
-                                                        _buildMinimizedPlayer(),
+                                                        _buildMinimizedPlayerControls(),
                                                   ),
                                                 ),
                                               ],
@@ -1345,111 +1347,128 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // Minimized player view
-  Widget _buildMinimizedPlayer() {
+  Widget _buildMinimizedPlayerControls() {
     if (_selectedTrackForPlayer == null) return const SizedBox.shrink();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      height: double.infinity,
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: Colors.grey[800],
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Icon(Icons.music_note, color: Colors.white70, size: 24),
+
+    // Use Align to position controls at the bottom
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        height: _minimizedPlayerHeight, // Use the defined height
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        // Optional: Add a subtle background or border if needed
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.8),
+          border: Border(
+            top: BorderSide(color: Theme.of(context).dividerColor, width: 0.5),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
+        ),
+        child: BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
+          // Listen to player state for button icons
+          builder: (context, playerState) {
+            bool isPlaying = false;
+            bool isCurrentTrackLoaded = false;
+
+            if (playerState is AudioPlayerLoaded &&
+                playerState.currentSource == _selectedTrackForPlayer!.path) {
+              isPlaying = playerState.isPlaying;
+              isCurrentTrackLoaded = true;
+            }
+
+            // Simplified Row for controls only
+            return Row(
+              mainAxisAlignment:
+                  MainAxisAlignment.spaceEvenly, // Space out controls
               children: [
-                Text(
-                  _selectedTrackForPlayer!.title,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                SizedBox(height: 2),
-                Text(
-                  _selectedTrackForPlayer!.artist,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: Colors.grey[400]),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
-            builder: (context, playerState) {
-              bool isPlaying = false;
-              bool isCurrentTrackLoaded = false;
-              if (playerState is AudioPlayerLoaded &&
-                  playerState.currentSource == _selectedTrackForPlayer!.path) {
-                isPlaying = playerState.isPlaying;
-                isCurrentTrackLoaded = true;
-              }
-              return Row(
-                children: [
-                  IconButton(
-                    icon: Icon(Icons.skip_previous),
-                    onPressed: () {},
-                    tooltip: 'Previous',
-                    iconSize: 24,
+                // Optional: Display small track info if space allows
+                Expanded(
+                  // Allow text to take available space but truncate
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _selectedTrackForPlayer!.title,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        _selectedTrackForPlayer!.artist,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey[400],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    icon: Icon(
-                      isPlaying
-                          ? Icons.pause_circle_filled
-                          : Icons.play_circle_filled,
-                      size: 32,
-                    ),
-                    onPressed: () {
-                      final bloc = context.read<AudioPlayerBloc>();
-                      if (isCurrentTrackLoaded) {
-                        if (isPlaying) {
-                          bloc.add(PauseAudio());
-                        } else {
+                ),
+                const SizedBox(width: 16), // Spacing
+                // Previous Button
+                IconButton(
+                  icon: const Icon(Icons.skip_previous),
+                  onPressed: () {
+                    /* TODO: Implement Previous Track */
+                  },
+                  tooltip: 'Previous',
+                  iconSize: 24,
+                ),
+                // Play/Pause Button
+                IconButton(
+                  icon: Icon(
+                    isPlaying
+                        ? Icons.pause_circle_filled
+                        : Icons.play_circle_filled,
+                    size: 36, // Slightly larger main button
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  onPressed: () {
+                    final bloc = context.read<AudioPlayerBloc>();
+                    if (isCurrentTrackLoaded) {
+                      if (isPlaying) {
+                        bloc.add(PauseAudio());
+                      } else {
+                        bloc.add(PlayAudio());
+                      }
+                    } else {
+                      // This case should ideally be handled by _handlePlayPreviewAndMinimize
+                      // but as a fallback:
+                      bloc.add(
+                        LoadAudio(
+                          source: _selectedTrackForPlayer!.path,
+                          isUrl: _selectedTrackForPlayer!.isUrl,
+                        ),
+                      );
+                      Future.delayed(const Duration(milliseconds: 100), () {
+                        if (!mounted) return;
+                        final postDelayState = bloc.state;
+                        if (postDelayState is AudioPlayerLoaded &&
+                            postDelayState.currentSource ==
+                                _selectedTrackForPlayer!.path) {
                           bloc.add(PlayAudio());
                         }
-                      } else {
-                        bloc.add(
-                          LoadAudio(
-                            source: _selectedTrackForPlayer!.path,
-                            isUrl: _selectedTrackForPlayer!.isUrl,
-                          ),
-                        );
-                        Future.delayed(const Duration(milliseconds: 100), () {
-                          final postDelayState =
-                              context.read<AudioPlayerBloc>().state;
-                          if (postDelayState is AudioPlayerLoaded &&
-                              postDelayState.currentSource ==
-                                  _selectedTrackForPlayer!.path) {
-                            bloc.add(PlayAudio());
-                          }
-                        });
-                      }
-                    },
-                    tooltip: isPlaying ? 'Pause' : 'Play',
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.skip_next),
-                    onPressed: () {},
-                    tooltip: 'Next',
-                    iconSize: 24,
-                  ),
-                ],
-              );
-            },
-          ),
-        ],
+                      });
+                    }
+                  },
+                  tooltip: isPlaying ? 'Pause' : 'Play',
+                ),
+                // Next Button
+                IconButton(
+                  icon: const Icon(Icons.skip_next),
+                  onPressed: () {
+                    /* TODO: Implement Next Track */
+                  },
+                  tooltip: 'Next',
+                  iconSize: 24,
+                ),
+                // Optional: Volume Control or other minimal controls
+              ],
+            );
+          },
+        ),
       ),
     );
   }

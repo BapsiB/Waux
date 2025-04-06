@@ -10,25 +10,27 @@ import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart'; // Impo
 // Add these typedefs for clarity
 typedef PlayPreviewCallback = void Function(Track track);
 typedef RatingChangeCallback = void Function(int trackId, int newRating);
+typedef PlayAndMinimizeCallback = void Function(Track track);
 
 class TrackDataSource extends DataGridSource {
   /// Creates the track data source class with required details.
   TrackDataSource({
-    // removed BuildContext context,
     required List<Track> trackData,
-    required AudioPlayerBloc audioPlayerBloc, // *** Use regular parameter ***
+    required AudioPlayerBloc audioPlayerBloc,
     required this.onRatingChanged,
+    required this.onPlayPreviewAndMinimize, // *** Add callback parameter ***
   }) : _audioPlayerBloc = audioPlayerBloc {
-    // *** Initialize private field ***
     _trackData = trackData;
-    _updateDataGridRows(); // Initial population
+    _updateDataGridRows();
   }
 
   // removed final BuildContext _context;
-  final AudioPlayerBloc _audioPlayerBloc; // *** Keep private field ***
+  final AudioPlayerBloc _audioPlayerBloc;
   List<DataGridRow> _dataGridRows = [];
   List<Track> _trackData = [];
   final RatingChangeCallback onRatingChanged;
+  final PlayAndMinimizeCallback
+  onPlayPreviewAndMinimize; // *** Store callback ***
 
   // Method to update the underlying data and refresh the grid rows
   void updateDataGridSource({required List<Track> trackData}) {
@@ -191,6 +193,8 @@ class TrackDataSource extends DataGridSource {
                   return PreviewCellWidget(
                     track: cellTrack,
                     audioPlayerBloc: _audioPlayerBloc,
+                    onPlayAndMinimize:
+                        () => onPlayPreviewAndMinimize(cellTrack),
                   );
                 case 'rating':
                   final Track? ratingTrack = dataGridCell.value as Track?;

@@ -1,20 +1,24 @@
+// lib/widgets/preview_cell_widget.dart
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart'; // Import Bloc
-import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:audio_looker/services/collection_service.dart'; // Your Track model
-// import 'package:audio_looker/widgets/track_table_row.dart' show WaveformPreviewCell; // Remove if not used elsewhere
 import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart'; // Import AudioPlayerBloc
 import 'package:audio_looker/widgets/waveform_painter.dart'; // Import WaveformPainter
+import 'package:audio_looker/services/audio_service.dart'; // Import AudioService for context reading if needed elsewhere
 
 class PreviewCellWidget extends StatefulWidget {
   final Track track;
-  final AudioPlayerBloc audioPlayerBloc; // Accept bloc instance
+  final AudioPlayerBloc audioPlayerBloc;
+  // Callback passed from HomeScreen via TrackDataSource
+  final VoidCallback onPlayAndMinimize;
 
   const PreviewCellWidget({
     Key? key,
     required this.track,
-    required this.audioPlayerBloc, // Add to constructor
+    required this.audioPlayerBloc,
+    required this.onPlayAndMinimize, // Ensure this is required
   }) : super(key: key);
 
   @override
@@ -22,36 +26,36 @@ class PreviewCellWidget extends StatefulWidget {
 }
 
 class _PreviewCellWidgetState extends State<PreviewCellWidget> {
-  // State for playback status
+  // Keep existing state variables (_isCurrentlyPlaying, _currentProgress, etc.)
   bool _isCurrentlyPlaying = false;
   double _currentProgress = 0.0;
   Duration _currentDuration = Duration.zero;
   StreamSubscription<AudioPlayerState>? _playerStateSubscription;
   final GlobalKey _waveformAreaKey = GlobalKey();
 
-  // --- State for Dragging ---
+  // State for Dragging
   bool _isDragging = false;
-  double? _dragProgress; // Visual drag position (0.0 to 1.0)
+  double? _dragProgress;
   bool _wasPlayingBeforeDrag = false;
-  double _finalDragRatio = 0.0; // Store final ratio for drag end
-  DateTime? _lastSeekDispatchTime; // For throttling
-  final Duration _seekThrottleInterval = const Duration(
-    milliseconds: 100,
-  ); // Throttle interval (10 times/sec)
+  double _finalDragRatio = 0.0;
+  DateTime? _lastSeekDispatchTime;
+  final Duration _seekThrottleInterval = const Duration(milliseconds: 100);
 
   @override
   void initState() {
     super.initState();
-    // Initialize state from the bloc's current state
     _updateStateFromBloc(widget.audioPlayerBloc.state);
-
-    // Listen to future state changes
     _playerStateSubscription = widget.audioPlayerBloc.stream.listen((state) {
       if (mounted) {
-        // Check if widget is still mounted before calling setState
         _updateStateFromBloc(state);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _playerStateSubscription?.cancel();
+    super.dispose();
   }
 
   void _updateStateFromBloc(AudioPlayerState playerState) {
@@ -62,7 +66,7 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
     if (playerState is AudioPlayerLoaded &&
         playerState.currentSource == widget.track.path) {
       isPlaying = playerState.isPlaying;
-      duration = playerState.duration; // Store duration
+      duration = playerState.duration;
       if (playerState.duration > Duration.zero) {
         progress = (playerState.position.inMilliseconds /
                 playerState.duration.inMilliseconds)
@@ -70,26 +74,17 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
       }
     }
 
-    // Update local state only if changed
-    // Check duration as well
     if (isPlaying != _isCurrentlyPlaying ||
         progress != _currentProgress ||
         duration != _currentDuration) {
       setState(() {
         _isCurrentlyPlaying = isPlaying;
         _currentProgress = progress;
-        _currentDuration = duration; // Update duration
+        _currentDuration = duration;
       });
     }
   }
 
-  @override
-  void dispose() {
-    _playerStateSubscription?.cancel(); // Cancel subscription
-    super.dispose();
-  }
-
-  // --- Helper to calculate seek ratio ---
   double? _calculateSeekRatio(Offset globalPosition) {
     final RenderBox? box =
         _waveformAreaKey.currentContext?.findRenderObject() as RenderBox?;
@@ -100,7 +95,7 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
         return (localPosition.dx / containerWidth).clamp(0.0, 1.0);
       }
     }
-    return null; // Return null if calculation fails
+    return null;
   }
 
   @override
@@ -122,117 +117,75 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
               _isCurrentlyPlaying
                   ? 'Pause ${widget.track.title}'
                   : 'Play ${widget.track.title}',
-          onPressed: () {
-            final bloc = widget.audioPlayerBloc;
-            final currentState = bloc.state;
-
-            if (currentState is AudioPlayerLoaded &&
-                currentState.currentSource == widget.track.path) {
-              if (currentState.isPlaying) {
-                bloc.add(PauseAudio());
-              } else {
-                if (currentState.position >= currentState.duration &&
-                    currentState.duration > Duration.zero) {
-                  bloc.add(const SeekAudio(position: Duration.zero));
-                }
-                bloc.add(PlayAudio());
-              }
-            } else {
-              bloc.add(
-                LoadAudio(source: widget.track.path, isUrl: widget.track.isUrl),
-              );
-              Future.delayed(const Duration(milliseconds: 150), () {
-                final postDelayState = bloc.state;
-                if (postDelayState is AudioPlayerLoaded &&
-                    postDelayState.currentSource == widget.track.path) {
-                  bloc.add(PlayAudio());
-                }
-              });
-            }
-          },
+          // Uses the callback passed from HomeScreen
+          onPressed: widget.onPlayAndMinimize,
         ),
         const SizedBox(width: 8),
         // Waveform Preview
         Expanded(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            // --- Tap Down (Direct Seek) ---
+            // --- UPDATED onTapDown ---
+            // Tapping the waveform now also triggers the minimize action
             onTapDown: (details) {
-              final bloc = widget.audioPlayerBloc;
-              final currentState = bloc.state;
+              print("Waveform Tapped - Calling onPlayAndMinimize");
+              widget
+                  .onPlayAndMinimize(); // Call the same callback as the button
 
-              if (currentState is AudioPlayerLoaded &&
-                  currentState.currentSource == widget.track.path &&
-                  currentState.duration > Duration.zero) {
-                final seekRatio = _calculateSeekRatio(details.globalPosition);
-                if (seekRatio != null) {
-                  final seekPosition = currentState.duration * seekRatio;
-                  print(
-                    'Waveform TAP seek request: ${seekPosition.inMilliseconds}ms (Ratio: $seekRatio)',
-                  );
-                  bloc.add(SeekAudio(position: seekPosition));
-                } else {
-                  print("Waveform TAP seek failed: Could not calculate ratio.");
-                }
-              } else {
-                print(
-                  'Waveform TAP on unloaded/invalid track. Treating as play request.',
-                );
-                bloc.add(
-                  LoadAudio(
-                    source: widget.track.path,
-                    isUrl: widget.track.isUrl,
-                  ),
-                );
-                Future.delayed(const Duration(milliseconds: 150), () {
-                  final postDelayState = bloc.state;
-                  if (postDelayState is AudioPlayerLoaded &&
-                      postDelayState.currentSource == widget.track.path) {
-                    bloc.add(PlayAudio());
-                  }
-                });
-              }
+              // --- REMOVE the old logic below ---
+              // final bloc = widget.audioPlayerBloc;
+              // final currentState = bloc.state;
+              // if (currentState is AudioPlayerLoaded &&
+              //     currentState.currentSource == widget.track.path &&
+              //     currentState.duration > Duration.zero) {
+              //   final seekRatio = _calculateSeekRatio(details.globalPosition);
+              //   if (seekRatio != null) {
+              //     final seekPosition = currentState.duration * seekRatio;
+              //     bloc.add(SeekAudio(position: seekPosition));
+              //     bloc.add(PlayAudio()); // Play after seeking on tap
+              //   }
+              // } else {
+              //   bloc.add(LoadAudio(source: widget.track.path, isUrl: widget.track.isUrl));
+              //   Future.delayed(const Duration(milliseconds: 150), () {
+              //     if (!mounted) return;
+              //     final postDelayState = bloc.state;
+              //     if (postDelayState is AudioPlayerLoaded && postDelayState.currentSource == widget.track.path) {
+              //       bloc.add(PlayAudio());
+              //     }
+              //   });
+              // }
             },
-            // --- Drag Start ---
+            // --- Drag Handlers (Keep existing logic for seeking during drag) ---
             onHorizontalDragStart: (details) {
               final bloc = widget.audioPlayerBloc;
               final currentState = bloc.state;
-              // Only allow dragging if this track is loaded and has duration
               if (currentState is AudioPlayerLoaded &&
                   currentState.currentSource == widget.track.path &&
                   currentState.duration > Duration.zero) {
                 setState(() {
                   _isDragging = true;
-                  _wasPlayingBeforeDrag =
-                      currentState.isPlaying; // Store original state
-                  _lastSeekDispatchTime = null; // Reset throttle timer
-                  // Calculate initial drag position
+                  _wasPlayingBeforeDrag = currentState.isPlaying;
+                  _lastSeekDispatchTime = null;
                   final seekRatio = _calculateSeekRatio(details.globalPosition);
                   if (seekRatio != null) {
                     _dragProgress = seekRatio;
                     _finalDragRatio = seekRatio;
-                    // Dispatch initial seek immediately
                     final seekPosition = currentState.duration * seekRatio;
+                    // Seek directly on drag start for immediate feedback
                     bloc.add(SeekAudio(position: seekPosition));
-                    _lastSeekDispatchTime =
-                        DateTime.now(); // Start throttling timer
+                    _lastSeekDispatchTime = DateTime.now();
                   } else {
-                    _dragProgress = _currentProgress; // Fallback
+                    _dragProgress = _currentProgress;
                     _finalDragRatio = _currentProgress;
                   }
                 });
-                // Pause playback while dragging if it was playing
                 if (_wasPlayingBeforeDrag) {
                   bloc.add(PauseAudio());
                 }
-              } else {
-                print("Drag ignored: Track not loaded or duration is zero.");
               }
             },
-            // --- Drag Update ---
             onHorizontalDragUpdate: (details) {
-              if (!_isDragging) return; // Ignore if not dragging
-
+              if (!_isDragging) return;
               final bloc = widget.audioPlayerBloc;
               final currentState = bloc.state;
               if (currentState is AudioPlayerLoaded &&
@@ -240,55 +193,43 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
                   currentState.duration > Duration.zero) {
                 final seekRatio = _calculateSeekRatio(details.globalPosition);
                 if (seekRatio != null) {
-                  _finalDragRatio = seekRatio; // Always update final ratio
-
-                  // Throttle SeekAudio dispatch
+                  _finalDragRatio = seekRatio;
                   final now = DateTime.now();
                   bool shouldDispatch =
                       _lastSeekDispatchTime == null ||
                       now.difference(_lastSeekDispatchTime!) >
                           _seekThrottleInterval;
-
                   if (shouldDispatch) {
                     final seekPosition = currentState.duration * seekRatio;
                     bloc.add(SeekAudio(position: seekPosition));
                     _lastSeekDispatchTime = now;
-                    print(
-                      "Throttled Seek Dispatched: ${seekPosition.inMilliseconds}ms",
-                    );
                   }
-
-                  // Update visual progress smoothly
                   setState(() {
                     _dragProgress = seekRatio;
                   });
                 }
               }
             },
-            // --- Drag End ---
             onHorizontalDragEnd: (details) {
               if (!_isDragging) return;
-
               final bloc = widget.audioPlayerBloc;
               final currentState = bloc.state;
               if (currentState is AudioPlayerLoaded &&
                   currentState.currentSource == widget.track.path &&
                   currentState.duration > Duration.zero) {
-                // Dispatch final seek event unconditionally using the last calculated ratio
                 final finalSeekPosition =
                     currentState.duration * _finalDragRatio;
+                // Final seek on drag end
                 bloc.add(SeekAudio(position: finalSeekPosition));
-                print(
-                  "Final Seek Dispatched on DragEnd: ${finalSeekPosition.inMilliseconds}ms (Ratio: $_finalDragRatio)",
-                );
-
-                // Resume playback if it was playing before drag
                 if (_wasPlayingBeforeDrag) {
-                  bloc.add(PlayAudio());
+                  // Resume playing slightly after the final seek settles
+                  Future.delayed(const Duration(milliseconds: 50), () {
+                    if (mounted) {
+                      bloc.add(PlayAudio());
+                    }
+                  });
                 }
               }
-
-              // Reset dragging state
               setState(() {
                 _isDragging = false;
                 _dragProgress = null;
@@ -309,8 +250,7 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
                     context,
                   ).colorScheme.onSurface.withOpacity(0.25),
                   playbackProgress: _currentProgress,
-                  // Pass drag progress to the painter
-                  dragProgress: _dragProgress,
+                  dragProgress: _dragProgress, // Pass drag progress
                 ),
               ),
             ),
