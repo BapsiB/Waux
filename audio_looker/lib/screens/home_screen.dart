@@ -9,6 +9,7 @@ import 'package:audio_looker/blocs/collection/collection_bloc.dart';
 import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart'; // Import Bloc
 import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/widgets/audio_player_widget.dart';
+import 'package:audio_looker/widgets/playlist_drawer.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:path/path.dart' as pathLib;
@@ -637,34 +638,40 @@ class _HomeScreenState extends State<HomeScreen>
         actions: [
           IconButton(
             icon: Icon(
-              _viewMode == ViewMode.list ? Icons.folder : Icons.table_rows,
+              _viewMode == ViewMode.list
+                  ? Icons.account_tree
+                  : Icons.table_rows,
             ),
-            onPressed: _toggleViewMode,
+            onPressed: () {
+              // Use inline function or a separate method like _toggleViewMode
+              setState(() {
+                _viewMode =
+                    _viewMode == ViewMode.list ? ViewMode.tree : ViewMode.list;
+                // Clear selection when switching views
+                _selectedTrackIds.clear();
+                _selectedTrackForPlayer = null;
+                _anchorTrackId = null;
+                // Update player selection (likely deselect)
+                _updatePlayerSelection();
+              });
+            },
             tooltip:
                 _viewMode == ViewMode.list
                     ? 'Switch to folder view'
                     : 'Switch to table view',
           ),
-          IconButton(
-            icon: const Icon(Icons.link),
-            onPressed: _showAddUrlDialog,
-            tooltip: 'Add from URL',
-          ),
-          IconButton(
-            icon: const Icon(Icons.folder),
-            onPressed: _pickAndAddFolder,
-            tooltip: 'Add folder',
-          ),
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _pickAndAddAudioFile,
-            tooltip: 'Add audio file(s)',
-          ),
+          SizedBox(width: 8),
+          // --- Removed Import Buttons ---
+          // IconButton(icon: const Icon(Icons.link), ... ),
+          // IconButton(icon: const Icon(Icons.folder), ... ),
+          // IconButton(icon: const Icon(Icons.add), ... ),
         ],
       ),
+      drawer: const PlaylistDrawer(),
       body: Column(
+        // Main body is a Column
         children: [
-          // Search bar
+          // Search bar (existing)
           Padding(
             padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
             child: TextField(
@@ -683,6 +690,10 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
           ),
+
+          // --- REMOVED Segmented Button ---
+          // Padding( ... SegmentedButton ... ),
+
           // Collection content area
           Expanded(
             child: DropTarget(
@@ -703,51 +714,69 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                         );
                       }
+                      if (state is CollectionLoaded) {
+                        final currentTrackIds =
+                            state.tracks.map((t) => t.id).toSet();
+                        bool selectionChanged = false;
+                        _selectedTrackIds.removeWhere((id) {
+                          if (!currentTrackIds.contains(id)) {
+                            selectionChanged = true;
+                            if (_anchorTrackId == id) _anchorTrackId = null;
+                            return true;
+                          }
+                          return false;
+                        });
+                        if (selectionChanged) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) {
+                              setState(() {
+                                _updatePlayerSelection();
+                              });
+                            }
+                          });
+                        }
+                      }
                     },
                     builder: (context, state) {
                       List<Track> tracks = [];
                       List<String> rootFolders = [];
                       bool isLoading = false;
                       bool isInitialLoad = false;
+                      List<Tag> allTags = [];
 
                       if (state is CollectionLoading) {
                         isLoading = true;
                         tracks = state.currentTracks ?? [];
-                        final loadedState =
-                            context
-                                .read<CollectionBloc>()
-                                .state; // Read current state safely
-                        if (loadedState is CollectionLoaded) {
-                          rootFolders = loadedState.rootFolders;
-                        }
+                        rootFolders = state.currentRootFolders ?? [];
+                        allTags = state.currentAllTags ?? [];
                       } else if (state is CollectionLoaded) {
                         isLoading = false;
                         tracks = state.tracks;
                         rootFolders = state.rootFolders;
+                        allTags = state.allTags;
                       } else if (state is CollectionError) {
                         tracks = state.tracks ?? [];
-                        final loadedState =
-                            context
-                                .read<CollectionBloc>()
-                                .state; // Read current state safely
-                        if (loadedState is CollectionLoaded) {
-                          rootFolders = loadedState.rootFolders;
-                        }
+                        rootFolders = [];
+                        allTags = [];
                       } else if (state is CollectionInitial) {
                         isLoading = true;
                         isInitialLoad = true;
                       }
 
-                      if (isInitialLoad)
+                      if (isInitialLoad) {
                         return const Center(child: CircularProgressIndicator());
+                      }
 
                       List<Track> displayedTracks =
-                          _getCurrentDisplayedTracks();
+                          _viewMode == ViewMode.list
+                              ? _getSortedTracks(tracks)
+                              : tracks;
 
                       if (!isLoading &&
                           displayedTracks.isEmpty &&
                           _searchController.text.isEmpty &&
-                          rootFolders.isEmpty) {
+                          rootFolders.isEmpty &&
+                          _viewMode == ViewMode.list) {
                         return Center(
                           child: Padding(
                             padding: const EdgeInsets.all(20.0),
@@ -768,7 +797,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Add files/folders using the buttons above or drag & drop.',
+                                  'Add files/folders using drag & drop.', // Updated text as buttons are removed
                                   style: Theme.of(context).textTheme.bodyMedium,
                                   textAlign: TextAlign.center,
                                 ),
@@ -786,7 +815,7 @@ class _HomeScreenState extends State<HomeScreen>
                         );
                       }
 
-                      // Build the appropriate view
+                      // Build the appropriate view (List or Tree)
                       return Column(
                         children: [
                           Expanded(
@@ -798,8 +827,7 @@ class _HomeScreenState extends State<HomeScreen>
                                         key: const ValueKey('track-table'),
                                         tracks: displayedTracks,
                                         selectedTrackIds: _selectedTrackIds,
-                                        audioPlayerBloc:
-                                            audioPlayerBloc, // *** Pass Bloc down ***
+                                        audioPlayerBloc: audioPlayerBloc,
                                         onSelectionChanged:
                                             _handleSelectionChanged,
                                         onShowContextMenu: _showContextMenu,
@@ -809,8 +837,8 @@ class _HomeScreenState extends State<HomeScreen>
                                         initialSortDirection: _sortDirectionSf,
                                       )
                                       : FolderTreeView(
-                                        tracks:
-                                            tracks, // Pass original, unsorted tracks
+                                        key: const ValueKey('folder-tree'),
+                                        tracks: tracks,
                                         rootFolders: rootFolders,
                                         selectedTrack: _selectedTrackForPlayer,
                                         onTrackSelected: (track) {
@@ -826,57 +854,14 @@ class _HomeScreenState extends State<HomeScreen>
                                           });
                                         },
                                         onTrackDeleted: (trackId) {
-                                          // ONLY dispatch the event to the BLoC
                                           context.read<CollectionBloc>().add(
                                             RemoveTrack(trackId),
                                           );
-                                          // REMOVE the setState call below:
-                                          /*
-                 setState(() {
-                    if (_selectedTrackIds.contains(trackId)) {
-                      _selectedTrackIds.remove(trackId);
-                      if (_selectedTrackForPlayer?.id == trackId) _selectedTrackForPlayer = null;
-                      if (_anchorTrackId == trackId) _anchorTrackId = null;
-                      _updatePlayerSelection();
-                    }
-                  });
-                 */
-                                          // The BlocConsumer will handle the UI rebuild when the BLoC state updates
-                                          // We might still need to clear local selection state (_selectedTrackIds etc.)
-                                          // but let's see if the BLoC update handles the visual removal first.
-                                          // If selection state becomes stale after delete, we can add back
-                                          // ONLY the logic to clear local selection state if needed, maybe in the listener.
-                                          // For now, let's rely purely on BLoC state change for UI refresh.
-
-                                          // Clear local selection state *after* dispatching BLoC event
-                                          // This prevents UI flicker if setState runs before BLoC update
-                                          WidgetsBinding.instance
-                                              .addPostFrameCallback((_) {
-                                                if (mounted &&
-                                                    _selectedTrackIds.contains(
-                                                      trackId,
-                                                    )) {
-                                                  setState(() {
-                                                    _selectedTrackIds.remove(
-                                                      trackId,
-                                                    );
-                                                    if (_selectedTrackForPlayer
-                                                            ?.id ==
-                                                        trackId)
-                                                      _selectedTrackForPlayer =
-                                                          null;
-                                                    if (_anchorTrackId ==
-                                                        trackId)
-                                                      _anchorTrackId = null;
-                                                    _updatePlayerSelection(); // Update player if deleted track was selected
-                                                  });
-                                                }
-                                              });
-                                        }, // --- End of onTrackDeleted ---
+                                        },
                                       ),
                             ),
                           ),
-                          // Audio player
+                          // Audio player (conditional display)
                           if (_selectedTrackForPlayer != null)
                             AnimatedContainer(
                               duration: const Duration(milliseconds: 300),
@@ -893,6 +878,7 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                               child: Column(
                                 children: [
+                                  // Player Minimize/Expand Toggle Bar
                                   Container(
                                     height: 36,
                                     color: Theme.of(context)
@@ -918,80 +904,95 @@ class _HomeScreenState extends State<HomeScreen>
                                       ],
                                     ),
                                   ),
+                                  // Player Content Area (Expanded Player vs Minimized)
                                   Expanded(
                                     child: Stack(
                                       children: [
+                                        // Full AudioPlayerWidget (fades out when minimized)
                                         AnimatedOpacity(
                                           opacity:
                                               _isPlayerMinimized ? 0.0 : 1.0,
                                           duration: const Duration(
                                             milliseconds: 200,
                                           ),
-                                          child:
-                                              _selectedTrackForPlayer == null
-                                                  ? const SizedBox.shrink()
-                                                  : AudioPlayerWidget(
-                                                    key: ValueKey(
-                                                      _selectedTrackForPlayer!
-                                                          .id,
-                                                    ),
-                                                    trackId:
+                                          child: IgnorePointer(
+                                            ignoring: _isPlayerMinimized,
+                                            child:
+                                                _selectedTrackForPlayer == null
+                                                    ? const SizedBox.shrink()
+                                                    : AudioPlayerWidget(
+                                                      key: ValueKey(
                                                         _selectedTrackForPlayer!
-                                                            .id!,
-                                                    title:
-                                                        _selectedTrackForPlayer!
-                                                            .title,
-                                                    artist:
-                                                        _selectedTrackForPlayer!
-                                                            .artist,
-                                                    audioSource:
-                                                        _selectedTrackForPlayer!
-                                                            .path,
-                                                    isUrl:
-                                                        _selectedTrackForPlayer!
-                                                            .isUrl,
-                                                    rating:
-                                                        _selectedTrackForPlayer!
-                                                            .rating,
-                                                    notes:
-                                                        _selectedTrackForPlayer!
-                                                            .comment,
-                                                    generalTags:
-                                                        _selectedTrackForPlayer!
-                                                            .generalTags,
-                                                    onRatingChanged: (rating) {
-                                                      _handleRatingChanged(
-                                                        _selectedTrackForPlayer!
-                                                            .id!,
+                                                            .id,
+                                                      ),
+                                                      trackId:
+                                                          _selectedTrackForPlayer!
+                                                              .id!,
+                                                      title:
+                                                          _selectedTrackForPlayer!
+                                                              .title,
+                                                      artist:
+                                                          _selectedTrackForPlayer!
+                                                              .artist,
+                                                      audioSource:
+                                                          _selectedTrackForPlayer!
+                                                              .path,
+                                                      isUrl:
+                                                          _selectedTrackForPlayer!
+                                                              .isUrl,
+                                                      rating:
+                                                          _selectedTrackForPlayer!
+                                                              .rating,
+                                                      notes:
+                                                          _selectedTrackForPlayer!
+                                                              .comment,
+                                                      generalTags:
+                                                          _selectedTrackForPlayer!
+                                                              .generalTags,
+                                                      onRatingChanged: (
                                                         rating,
-                                                      );
-                                                    },
-                                                    onNotesChanged: (notes) {
-                                                      if (_selectedTrackForPlayer
-                                                              ?.id !=
-                                                          null) {
-                                                        context
-                                                            .read<
-                                                              CollectionBloc
-                                                            >()
-                                                            .add(
-                                                              UpdateTrackComment(
-                                                                _selectedTrackForPlayer!
-                                                                    .id!,
-                                                                notes,
-                                                              ),
-                                                            );
-                                                      }
-                                                    },
-                                                  ),
+                                                      ) {
+                                                        if (_selectedTrackForPlayer
+                                                                ?.id !=
+                                                            null) {
+                                                          _handleRatingChanged(
+                                                            _selectedTrackForPlayer!
+                                                                .id!,
+                                                            rating,
+                                                          );
+                                                        }
+                                                      },
+                                                      onNotesChanged: (notes) {
+                                                        if (_selectedTrackForPlayer
+                                                                ?.id !=
+                                                            null) {
+                                                          context
+                                                              .read<
+                                                                CollectionBloc
+                                                              >()
+                                                              .add(
+                                                                UpdateTrackComment(
+                                                                  _selectedTrackForPlayer!
+                                                                      .id!,
+                                                                  notes,
+                                                                ),
+                                                              );
+                                                        }
+                                                      },
+                                                    ),
+                                          ),
                                         ),
+                                        // Minimized Player View (fades in when minimized)
                                         AnimatedOpacity(
                                           opacity:
                                               _isPlayerMinimized ? 1.0 : 0.0,
                                           duration: const Duration(
                                             milliseconds: 200,
                                           ),
-                                          child: _buildMinimizedPlayer(),
+                                          child: IgnorePointer(
+                                            ignoring: !_isPlayerMinimized,
+                                            child: _buildMinimizedPlayer(),
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -1003,7 +1004,7 @@ class _HomeScreenState extends State<HomeScreen>
                       );
                     },
                   ),
-                  // Drag overlay
+                  // Drag overlay (conditionally displayed)
                   if (_isDragging)
                     Container(
                       color: Theme.of(
@@ -1043,10 +1044,11 @@ class _HomeScreenState extends State<HomeScreen>
                         ),
                       ),
                     ),
-                  // Loading Indicator Overlay
+                  // Loading Indicator Overlay (conditionally displayed)
                   BlocBuilder<CollectionBloc, CollectionState>(
                     builder: (context, state) {
                       if (state is CollectionLoading) {
+                        // Show whenever loading
                         return Positioned.fill(
                           child: Container(
                             color: Colors.black.withOpacity(0.4),

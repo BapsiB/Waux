@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/widgets/waveform_painter.dart';
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart'; // Needed for play button
+import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
+import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 // --- Widget for the first cell (Waveform + Play Button) ---
 // lib/widgets/track_table_row.dart (Relevant part)
@@ -95,6 +96,101 @@ class TrackTableRow extends StatelessWidget {
     required this.onPlayPreview,
     // TODO: Add parameters for visible columns later
   }) : super(key: key);
+
+  DataGridRow buildTrackTableRow(Track track) {
+    // The data for the draggable is the track's file path
+    final String draggableData = track.path;
+
+    // Feedback widget shown while dragging
+    final Widget feedbackWidget = Material(
+      // Wrap in Material for theme styles
+      elevation: 4.0, // Add shadow
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade300, // Simple background
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          track.title, // Show filename while dragging
+          style: const TextStyle(fontSize: 14),
+        ),
+      ),
+    );
+
+    // Widget shown underneath the feedback widget at the original position
+    final Widget childWhenDragging = Container(
+      // Optional: Style the placeholder differently
+      // color: Colors.grey.withOpacity(0.3),
+      // child: Center(child: Text('...')), // Placeholder content
+    );
+
+    return DataGridRow(
+      cells: [
+        // --- Make the first cell (or the whole row conceptually) draggable ---
+        DataGridCell<Track>(
+          columnName: 'filename',
+          value: track,
+          // Wrap the cell content (e.g., Text) in Draggable
+          // Note: Syncfusion DataGrid cells expect specific Widget types sometimes.
+          // A common approach is to wrap the *content* of the cell.
+          // If wrapping the cell directly causes issues, you might need a custom cell renderer
+          // or wrap the entire Row widget if possible (depends on DataGrid structure).
+          // Let's try wrapping the content displayed within the cell.
+          // ASSUMPTION: The cell typically displays a Text widget.
+          // We need to wrap this Text widget. This often happens within the
+          // DataGridSource's buildRow method or a custom cell renderer.
+
+          // --- IMPORTANT MODIFICATION ---
+          // The actual wrapping needs to happen where the cell's widget is built.
+          // This usually occurs in your `TrackDataSource.buildRow` method or
+          // if you are using `DataGridSource.buildRow`.
+
+          // Let's assume your DataGridSource builds the cell like this:
+          // case 'filename':
+          //   return Container( // Or whatever widget holds the text
+          //     padding: EdgeInsets.all(8.0),
+          //     alignment: Alignment.centerLeft,
+          //     child: Text(track.fileName), // The widget to wrap
+          //   );
+
+          // You would modify that part in TrackDataSource to include Draggable:
+          /*
+        case 'filename':
+           return Draggable<String>(
+             data: draggableData, // The track path
+             feedback: feedbackWidget,
+             childWhenDragging: Container( // Placeholder for the cell content
+                 padding: EdgeInsets.all(8.0),
+                 alignment: Alignment.centerLeft,
+                 child: Text(track.fileName, style: TextStyle(color: Colors.grey))), // Dimmed original
+             child: Container( // The actual cell content when not dragging
+               padding: EdgeInsets.all(8.0),
+               alignment: Alignment.centerLeft,
+               child: Text(track.fileName),
+             ),
+           );
+        */
+          // For now, we just set the value here. The Draggable logic needs to be
+          // implemented in the DataGridSource's build method for the 'filename' column.
+        ),
+        DataGridCell<String>(columnName: 'artist', value: track.artist),
+        DataGridCell<String>(columnName: 'album', value: track.album),
+        // DataGridCell<String>(columnName: 'genre', value: track.genre),
+        // DataGridCell<int>(columnName: 'year', value: track.year),
+        DataGridCell<int>(columnName: 'rating', value: track.rating),
+        DataGridCell<Track>(
+          columnName: 'preview',
+          value: track,
+        ), // For preview widget
+        DataGridCell<List<String>>(
+          columnName: 'tags',
+          value: track.generalTags, // Use the correct List<String> field
+        ),
+        // Add other cells as needed
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {

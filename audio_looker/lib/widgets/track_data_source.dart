@@ -68,9 +68,12 @@ class TrackDataSource extends DataGridSource {
   @override
   List<DataGridRow> get rows => _dataGridRows;
 
+  // lib/widgets/track_data_source.dart (Inside TrackDataSource class's buildRow method)
+
   @override
   DataGridRowAdapter? buildRow(DataGridRow row) {
-    // Find the corresponding track using the hidden ID cell
+    // --- Find the Track object for this row ---
+    // (Your logic to get the track object might differ slightly)
     final int trackId =
         row
                 .getCells()
@@ -83,127 +86,159 @@ class TrackDataSource extends DataGridSource {
         -1;
     Track? track;
     try {
+      // Assumes _trackData holds the list of tracks for the data source
       track = _trackData.firstWhere((t) => t.id == trackId);
     } catch (e) {
       debugPrint("Track with ID $trackId not found in buildRow.");
+      return null; // Return null if track not found
+    }
+    // --- End Track object finding ---
+
+    // Ensure track is not null before proceeding
+    if (track == null) {
+      debugPrint("Track object is null for ID $trackId, cannot build row.");
       return null;
     }
 
-    // Removed context lookup
+    // Data to be dragged (the track's file path)
+    final String draggableData =
+        track.path; // Use 'path' or 'filePath' depending on your Track model
+
+    // ----- REMOVE feedbackWidget definition from here -----
 
     return DataGridRowAdapter(
       cells:
           row.getCells().map<Widget>((dataGridCell) {
-            switch (dataGridCell.columnName) {
-              case 'id':
-                return const SizedBox.shrink();
-              case 'preview':
-                final Track? cellTrack = dataGridCell.value as Track?;
-                if (cellTrack == null) return const SizedBox.shrink();
-                return Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerDown: (_) {}, // Absorb pointer event
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4.0,
-                      vertical: 4.0,
-                    ),
-                    alignment: Alignment.centerLeft,
-                    // Pass the stored bloc instance directly
-                    child: PreviewCellWidget(
-                      track: cellTrack,
-                      audioPlayerBloc: _audioPlayerBloc,
-                    ),
+            // Decide which column initiates the drag (e.g., 'title')
+            if (dataGridCell.columnName == 'title') {
+              // --- WRAP THIS CELL'S CONTENT WITH DRAGGABLE ---
+              return Draggable<String>(
+                data: draggableData, // The track path is the data being dragged
+                // ----- DEFINE feedbackWidget HERE using Builder or accessing context directly -----
+                // Option 1: Direct access (often works if Draggable is built in a context-aware part)
+                feedback: Material(
+                  // Use Material for proper theme application
+                  elevation: 4.0,
+                  // *** Now you can access context here ***
+                  child: Builder(
+                    // Use Builder to ensure context is available
+                    builder: (context) {
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        color:
+                            Theme.of(
+                              context,
+                            ).colorScheme.primaryContainer, // Access theme here
+                        child: Text(
+                          track!
+                              .title, // Show title while dragging (use track!)
+                          style: TextStyle(
+                            fontSize: 14,
+                            color:
+                                Theme.of(context)
+                                    .colorScheme
+                                    .onPrimaryContainer, // Access theme here
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                );
-              case 'title':
-              case 'artist':
-              case 'album':
-                return Container(
-                  alignment: Alignment.centerLeft,
+                ),
+
+                // ----- END feedbackWidget definition -----
+                childWhenDragging: Container(
+                  // Appearance of the original cell while dragging
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8.0,
                     vertical: 4.0,
                   ),
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    dataGridCell.value.toString(),
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.grey.shade400,
+                    ), // Dimmed text
+                  ),
+                ),
+                child: Container(
+                  // The actual cell content when not dragging
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8.0,
+                    vertical: 4.0,
+                  ),
+                  alignment: Alignment.centerLeft,
                   child: Text(
                     dataGridCell.value.toString(),
                     overflow: TextOverflow.ellipsis,
                   ),
-                );
-              case 'rating':
-                final Track? ratingTrack = dataGridCell.value as Track?;
-                if (ratingTrack == null || ratingTrack.id == null)
-                  return const SizedBox.shrink();
-                return Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerDown: (_) {}, // Absorb pointer event
-                  child: Container(
+                ),
+              );
+              // --- END DRAGGABLE WRAPPER ---
+            } else {
+              // --- Render other cells as before ---
+              // (Your existing switch statement for other columns)
+              switch (dataGridCell.columnName) {
+                // ... cases for 'id', 'preview', 'rating', 'tags', default ...
+                case 'id':
+                  return const SizedBox.shrink(); // Hide ID column visually
+                case 'preview':
+                  final Track? cellTrack = dataGridCell.value as Track?;
+                  if (cellTrack == null) return const SizedBox.shrink();
+                  return PreviewCellWidget(
+                    track: cellTrack,
+                    audioPlayerBloc: _audioPlayerBloc,
+                  );
+                case 'rating':
+                  final Track? ratingTrack = dataGridCell.value as Track?;
+                  if (ratingTrack == null || ratingTrack.id == null)
+                    return const SizedBox.shrink();
+                  return RatingCellWidget(
+                    trackId: ratingTrack.id!,
+                    currentRating: ratingTrack.rating,
+                    onRatingChanged: onRatingChanged,
+                  );
+                case 'tags':
+                  final tags =
+                      dataGridCell.value as List<String>? ??
+                      []; // Ensure it's List<String>
+                  return Container(
                     alignment: Alignment.centerLeft,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8.0,
                       vertical: 4.0,
                     ),
-                    child: RatingCellWidget(
-                      // RatingCellWidget does NOT get the bloc
-                      trackId: ratingTrack.id!,
-                      currentRating: ratingTrack.rating,
-                      onRatingChanged: onRatingChanged,
+                    child:
+                        tags.isEmpty
+                            ? const SizedBox.shrink()
+                            : Wrap(
+                              spacing: 4.0,
+                              runSpacing: 4.0,
+                              children:
+                                  tags
+                                      .map((tag) => Chip(label: Text(tag)))
+                                      .toList(),
+                            ),
+                  );
+                default:
+                  // Default rendering for other columns (artist, album, etc.)
+                  return Container(
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0,
+                      vertical: 4.0,
                     ),
-                  ),
-                );
-              case 'tags':
-                final tags = dataGridCell.value as List<String>;
-                return Container(
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8.0,
-                    vertical: 4.0,
-                  ),
-                  child:
-                      tags.isEmpty
-                          ? const SizedBox.shrink()
-                          : Wrap(
-                            spacing: 4.0,
-                            runSpacing: 4.0,
-                            children:
-                                tags
-                                    .map(
-                                      (tag) => Chip(
-                                        label: Text(tag),
-                                        labelStyle: const TextStyle(
-                                          fontSize: 10,
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 0,
-                                        ),
-                                        materialTapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                        backgroundColor: Colors.blueGrey
-                                            .withOpacity(0.1),
-                                        side: BorderSide.none,
-                                        visualDensity: VisualDensity.compact,
-                                      ),
-                                    )
-                                    .toList(),
-                          ),
-                );
-              default:
-                return Container(
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8.0,
-                    vertical: 4.0,
-                  ),
-                  child: Text(
-                    dataGridCell.value?.toString() ?? '',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                );
+                    child: Text(
+                      dataGridCell.value?.toString() ?? '',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+              }
             }
           }).toList(),
     );
   }
-
-  // Removed _getBuildContextFromSomewhere()
 }

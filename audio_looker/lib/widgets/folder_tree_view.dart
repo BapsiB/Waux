@@ -159,19 +159,6 @@ class _FolderTreeViewState extends State<FolderTreeView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Show counts at the top
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16.0,
-                vertical: 8.0,
-              ),
-              child: Text(
-                "${widget.tracks.length} audio files | ${widget.rootFolders.length} root folders",
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey,
-                ),
-              ),
-            ),
             const Divider(),
             // Build the tree view
             _buildTreeView(_folderStructure, []),
