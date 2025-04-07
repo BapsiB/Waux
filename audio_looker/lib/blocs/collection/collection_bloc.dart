@@ -13,15 +13,12 @@ import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/services/audio_service.dart';
 
 // --- Event Definitions ---
-
+// ... (Events remain the same) ...
 abstract class CollectionEvent extends Equatable {
   const CollectionEvent();
-
   @override
   List<Object?> get props => [];
 }
-
-// --- Existing Events (Largely Unchanged Signature) ---
 
 class LoadCollection extends CollectionEvent {}
 
@@ -92,7 +89,6 @@ class RemoveTrackGeneralTag extends CollectionEvent {
   List<Object?> get props => [trackId, tag];
 }
 
-// Global Tag Events (Unchanged)
 class LoadAllTags extends CollectionEvent {}
 
 class CreateGeneralTag extends CollectionEvent {
@@ -117,7 +113,6 @@ class SetGeneralTagColor extends CollectionEvent {
   List<Object?> get props => [tagName, colorValue];
 }
 
-// Root Folder Events (Now specific to Local Collections)
 class AddRootFolder extends CollectionEvent {
   final String folderPath;
   const AddRootFolder(this.folderPath);
@@ -131,9 +126,7 @@ class RemoveRootFolder extends CollectionEvent {
   @override
   List<Object> get props => [folderPath];
 }
-// LoadRootFolders might not be needed if loaded within LoadCollection
 
-// Import/Export Events (Operate on Active Collection)
 class ImportCollectionFromFile extends CollectionEvent {
   final String path;
   const ImportCollectionFromFile(this.path);
@@ -148,29 +141,23 @@ class ExportCollectionToFile extends CollectionEvent {
   List<Object?> get props => [path];
 }
 
-// --- NEW Events for Collection Management ---
-
-// Fetches the list of available collection definitions
 class LoadCollectionList extends CollectionEvent {}
 
-// Switches the active collection
 class SwitchCollection extends CollectionEvent {
-  final String collectionId; // ID of the collection definition to switch to
+  final String collectionId;
   const SwitchCollection(this.collectionId);
   @override
   List<Object> get props => [collectionId];
 }
 
-// Creates a new shared collection
 class CreateSharedCollection extends CollectionEvent {
   final String name;
-  final String rootPath; // The single root folder path
+  final String rootPath;
   const CreateSharedCollection({required this.name, required this.rootPath});
   @override
   List<Object> get props => [name, rootPath];
 }
 
-// Creates a new local collection
 class CreateLocalCollection extends CollectionEvent {
   final String name;
   const CreateLocalCollection(this.name);
@@ -178,7 +165,6 @@ class CreateLocalCollection extends CollectionEvent {
   List<Object> get props => [name];
 }
 
-// Deletes a collection definition (doesn't delete the DB file itself)
 class DeleteCollection extends CollectionEvent {
   final String collectionId;
   const DeleteCollection(this.collectionId);
@@ -187,57 +173,45 @@ class DeleteCollection extends CollectionEvent {
 }
 
 // --- State Definitions (Modified) ---
-
+// ... (States remain the same as in previous BLoC update) ...
 abstract class CollectionState extends Equatable {
   const CollectionState();
-
   @override
   List<Object?> get props => [];
 }
 
 class CollectionInitial extends CollectionState {}
 
-// Modified: Includes active collection info and potentially the list
 class CollectionLoading extends CollectionState {
-  final CollectionDefinition?
-  activeCollectionDefinition; // Info about collection being loaded
-  final List<CollectionDefinition>?
-  availableCollections; // List of all known collections
-  final List<Track>?
-  currentTracks; // Keep current tracks while loading new collection
-  final List<Tag>? currentAllTags; // Keep current tags
-  final List<String>?
-  currentRootFolders; // <<< ADDED: Keep current root folders (for local collections)
-
+  final CollectionDefinition? activeCollectionDefinition;
+  final List<CollectionDefinition>? availableCollections;
+  final List<Track>? currentTracks;
+  final List<Tag>? currentAllTags;
+  final List<String>? currentRootFolders;
   const CollectionLoading({
     this.activeCollectionDefinition,
     this.availableCollections,
     this.currentTracks,
     this.currentAllTags,
-    this.currentRootFolders, // <<< ADDED to constructor
+    this.currentRootFolders,
   });
-
   @override
   List<Object?> get props => [
     activeCollectionDefinition,
     availableCollections,
     currentTracks,
     currentAllTags,
-    currentRootFolders, // <<< ADDED to props
+    currentRootFolders,
   ];
 }
 
-// Modified: Includes active collection info and the list of available collections
 class CollectionLoaded extends CollectionState {
-  final CollectionDefinition
-  activeCollectionDefinition; // Info about the loaded collection
-  final List<CollectionDefinition>
-  availableCollections; // List of all known collections
-  final List<Track> tracks; // Tracks for the active collection
-  final List<String> rootFolders; // Root folders (only relevant for local type)
-  final List<Tag> allTags; // Global tags
-  final String? searchQuery; // Active search query
-
+  final CollectionDefinition activeCollectionDefinition;
+  final List<CollectionDefinition> availableCollections;
+  final List<Track> tracks;
+  final List<String> rootFolders;
+  final List<Tag> allTags;
+  final String? searchQuery;
   const CollectionLoaded({
     required this.activeCollectionDefinition,
     required this.availableCollections,
@@ -246,7 +220,6 @@ class CollectionLoaded extends CollectionState {
     required this.allTags,
     this.searchQuery,
   });
-
   @override
   List<Object?> get props => [
     activeCollectionDefinition,
@@ -255,10 +228,7 @@ class CollectionLoaded extends CollectionState {
     rootFolders,
     allTags,
     searchQuery,
-    // Use deep equality check for lists/maps if needed
-    // Consider using listEquals from foundation.dart
   ];
-
   CollectionLoaded copyWith({
     CollectionDefinition? activeCollectionDefinition,
     List<CollectionDefinition>? availableCollections,
@@ -266,7 +236,6 @@ class CollectionLoaded extends CollectionState {
     List<String>? rootFolders,
     List<Tag>? allTags,
     String? searchQuery,
-    // Helper to explicitly clear search query
     bool clearSearchQuery = false,
   }) {
     return CollectionLoaded(
@@ -281,31 +250,26 @@ class CollectionLoaded extends CollectionState {
   }
 }
 
-// Modified: Includes active collection info and potentially the list
 class CollectionError extends CollectionState {
   final String message;
-  final CollectionDefinition?
-  activeCollectionDefinition; // Collection context for the error
-  final List<CollectionDefinition>?
-  availableCollections; // List of all known collections
-  final List<Track>? tracks; // Keep tracks on error for better UX if possible
-  final List<String>? rootFolders; // <<< ADDED: Keep root folders on error too
-
+  final CollectionDefinition? activeCollectionDefinition;
+  final List<CollectionDefinition>? availableCollections;
+  final List<Track>? tracks;
+  final List<String>? rootFolders;
   const CollectionError(
     this.message, {
     this.activeCollectionDefinition,
     this.availableCollections,
     this.tracks,
-    this.rootFolders, // <<< ADDED to constructor
+    this.rootFolders,
   });
-
   @override
   List<Object?> get props => [
     message,
     activeCollectionDefinition,
     availableCollections,
     tracks,
-    rootFolders, // <<< ADDED to props
+    rootFolders,
   ];
 }
 
@@ -321,6 +285,16 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
   // Store the list of available collections definitions in the BLoC
   List<CollectionDefinition> _availableCollections = [];
 
+  // Define supported extensions (consider making this configurable later)
+  final List<String> _supportedExtensions = [
+    'mp3',
+    'wav',
+    'ogg',
+    'm4a',
+    'aac',
+    'flac',
+  ];
+
   CollectionBloc(this._collectionService) : super(CollectionInitial()) {
     // --- Register Handlers for NEW Events ---
     on<LoadCollectionList>(_onLoadCollectionList);
@@ -328,14 +302,13 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     on<CreateSharedCollection>(
       _onCreateSharedCollection,
     ); // <<< Handler Updated
-    on<CreateLocalCollection>(_onCreateLocalCollection); // <<< Handler Updated
+    on<CreateLocalCollection>(_onCreateLocalCollection);
     on<DeleteCollection>(_onDeleteCollection);
 
     // --- Register Handlers for Existing Events ---
-    // ... (rest of event registrations remain the same) ...
     on<LoadCollection>(_onLoadCollection);
     on<AddTrackFromPath>(_onAddTrackFromPath);
-    on<AddTracksFromPaths>(_onAddTracksFromPaths);
+    on<AddTracksFromPaths>(_onAddTracksFromPaths); // <<< Handler Updated
     on<AddTrackFromUrl>(_onAddTrackFromUrl);
     on<RemoveTrack>(_onRemoveTrack);
     on<SearchCollection>(_onSearchCollection);
@@ -365,10 +338,13 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           ),
         );
       }
+      // Consider adding logic here to emit CollectionLoaded when isLoading becomes false
+      // if the service doesn't trigger a state update itself upon completion.
     });
   }
 
-  // --- Helper to get current state properties safely ---
+  // --- Helper methods ---
+  // ... (_getActiveDefFromState, _getAvailableCollectionsFromState, etc. remain the same) ...
   CollectionDefinition? _getActiveDefFromState() {
     final currentState = state;
     if (currentState is CollectionLoaded)
@@ -405,13 +381,10 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     if (currentState is CollectionLoaded) return currentState.allTags;
     if (currentState is CollectionLoading)
       return currentState.currentAllTags ?? [];
-    // Tags usually don't cause errors, maybe keep them on error?
-    if (currentState is CollectionError)
-      return []; // Or return previous tags if available
+    if (currentState is CollectionError) return [];
     return [];
   }
 
-  // <<< ADDED Helper for Root Folders >>>
   List<String> _getRootFoldersFromState() {
     final currentState = state;
     if (currentState is CollectionLoaded) return currentState.rootFolders;
@@ -421,12 +394,93 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     return [];
   }
 
+  // --- >>> NEW Helper: Recursive File Finder <<< ---
+  Future<void> _findAudioFilesRecursively(
+    Directory dir,
+    List<String> audioFilePaths,
+    List<String> supportedExtensions,
+  ) async {
+    // ... (Implementation remains the same as previous step) ...
+    try {
+      await for (final entity in dir.list(
+        recursive: false,
+        followLinks: false,
+      )) {
+        FileSystemEntityType type = await FileSystemEntity.type(
+          entity.path,
+          followLinks: false,
+        );
+        if (type == FileSystemEntityType.file) {
+          final extension = pathLib
+              .extension(entity.path)
+              .toLowerCase()
+              .replaceFirst('.', '');
+          if (supportedExtensions.contains(extension)) {
+            audioFilePaths.add(entity.path);
+          }
+        } else if (type == FileSystemEntityType.directory) {
+          await _findAudioFilesRecursively(
+            Directory(entity.path),
+            audioFilePaths,
+            supportedExtensions,
+          );
+        }
+      }
+    } catch (e) {
+      print("Error scanning directory ${dir.path}: $e");
+    }
+  }
+
+  // --- >>> MODIFIED Helper: Scan Root and RETURN paths <<< ---
+  Future<List<String>> _scanRootForTracks(
+    String rootPath,
+    Emitter<CollectionState> emit,
+  ) async {
+    print("BLOC: Scanning for tracks in root: $rootPath");
+    List<String> foundFilePaths = []; // Initialize empty list
+    try {
+      final dir = Directory(rootPath);
+      if (!await dir.exists()) {
+        print("BLOC: Root path directory does not exist: $rootPath");
+        emit(
+          CollectionError(
+            "Cannot scan: Directory not found $rootPath",
+            activeCollectionDefinition: _getActiveDefFromState(),
+            availableCollections: _getAvailableCollectionsFromState(),
+          ),
+        );
+        return foundFilePaths; // Return empty list
+      }
+      await _findAudioFilesRecursively(
+        dir,
+        foundFilePaths,
+        _supportedExtensions,
+      );
+      print(
+        "BLOC: Scan complete. Found ${foundFilePaths.length} tracks in $rootPath.",
+      );
+    } catch (e, stackTrace) {
+      print("BLOC: Error scanning root path $rootPath: $e\n$stackTrace");
+      emit(
+        CollectionError(
+          "Error scanning folder $rootPath: $e",
+          activeCollectionDefinition: _getActiveDefFromState(),
+          availableCollections: _getAvailableCollectionsFromState(),
+          tracks: _getTracksFromState(),
+          rootFolders: _getRootFoldersFromState(),
+        ),
+      );
+    }
+    return foundFilePaths; // Return the list (might be empty)
+  }
+
   // --- Handlers for NEW Collection Management Events ---
 
   Future<void> _onLoadCollectionList(
     LoadCollectionList event,
     Emitter<CollectionState> emit,
   ) async {
+    // ... (Handler remains the same as previous step) ...
     print("BLOC: Loading collection list...");
     try {
       _availableCollections =
@@ -434,8 +488,6 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       print(
         "BLOC: Loaded ${_availableCollections.length} collection definitions.",
       );
-
-      // Update the current state with the new list
       final currentState = state;
       if (currentState is CollectionLoaded) {
         emit(
@@ -462,9 +514,6 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           ),
         );
       } else {
-        // If initial, emit a Loading state containing the list,
-        // but no active collection yet. Or emit a specific "ListLoaded" state.
-        // Let's emit CollectionLoading for simplicity.
         emit(CollectionLoading(availableCollections: _availableCollections));
         print("BLOC: Collection list loaded from Initial state.");
       }
@@ -531,6 +580,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     }
   }
 
+  // --- >>> REVISED Handler <<< ---
   Future<void> _onCreateSharedCollection(
     CreateSharedCollection event,
     Emitter<CollectionState> emit,
@@ -538,13 +588,25 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     print(
       "BLOC: Creating shared collection '${event.name}' at ${event.rootPath}",
     );
-    // Preserve current state details
     final previousState = state;
     final previousActiveDef = _getActiveDefFromState();
+    final previousAvailable = _getAvailableCollectionsFromState();
     final previousTracks = _getTracksFromState();
     final previousTags = _getTagsFromState();
     final previousRoots = _getRootFoldersFromState();
-    final previousAvailable = _getAvailableCollectionsFromState();
+
+    // Show loading immediately
+    emit(
+      CollectionLoading(
+        activeCollectionDefinition: previousActiveDef,
+        availableCollections: previousAvailable,
+        currentTracks: previousTracks,
+        currentAllTags: previousTags,
+        currentRootFolders: previousRoots,
+      ),
+    );
+
+    CollectionDefinition? definition;
 
     try {
       final id = const Uuid().v4();
@@ -553,7 +615,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           .replaceAll(' ', '_');
       final dbPath = pathLib.join(event.rootPath, '_collection_$safeName.db');
 
-      final definition = CollectionDefinition(
+      definition = CollectionDefinition(
         id: id,
         name: event.name,
         type: CollectionType.shared,
@@ -564,61 +626,54 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       // 1. Add definition to storage
       await _collectionService.addCollectionDefinition(definition);
 
-      // 2. Open the collection to initialize DB
+      // 2. Open the collection to initialize DB file (if it doesn't exist)
+      //    Keep it open because AddTracksFromPaths will need it.
       await _collectionService.openCollection(definition);
-      await _collectionService.closeCollection();
 
-      // --- >>> FIX: Reload list and emit updated state <<< ---
-      // 3. Reload the list of collections
+      // 3. Scan the root path for tracks
+      final foundPaths = await _scanRootForTracks(event.rootPath, emit);
+
+      // 4. Reload the collection list (now includes the new one)
       _availableCollections =
           await _collectionService.loadCollectionDefinitions();
       print(
-        "BLOC: Shared collection created. New list size: ${_availableCollections.length}",
+        "BLOC: Shared collection definition created. Found ${foundPaths.length} tracks to add.",
       );
 
-      // 4. Emit an appropriate state with the updated list
-      // We usually stay on the *previous* collection after creating a new one,
-      // so emit based on the previous state type but with the new list.
-      if (previousState is CollectionLoaded) {
-        emit(
-          previousState.copyWith(availableCollections: _availableCollections),
-        );
-      } else if (previousState is CollectionLoading) {
+      // 5. If tracks were found, dispatch event to add them.
+      //    Otherwise, dispatch LoadCollection to show the empty collection.
+      if (foundPaths.isNotEmpty) {
+        // Dispatch AddTracksFromPaths. This event's handler (_onAddTracksFromPaths)
+        // will now be responsible for emitting the final CollectionLoaded state.
+        add(AddTracksFromPaths(foundPaths));
+        // We emit a loading state here just to update the available collections list
+        // while tracks are being added in the background by the AddTracksFromPaths handler.
         emit(
           CollectionLoading(
-            activeCollectionDefinition: previousActiveDef,
-            availableCollections: _availableCollections, // Updated list
-            currentTracks: previousTracks,
-            currentAllTags: previousTags,
-            currentRootFolders: previousRoots,
-          ),
-        );
-      } else if (previousState is CollectionError) {
-        emit(
-          CollectionError(
-            previousState.message,
-            activeCollectionDefinition: previousActiveDef,
-            availableCollections: _availableCollections, // Updated list
-            tracks: previousTracks,
-            rootFolders: previousRoots,
+            activeCollectionDefinition:
+                definition, // Show the new one as loading
+            availableCollections: _availableCollections,
+            currentTracks: [], // Start with empty tracks for the new collection
+            currentAllTags: previousTags, // Keep global tags
+            currentRootFolders: [definition.rootPath!], // Shared has one root
           ),
         );
       } else {
-        // E.g., CollectionInitial
-        emit(
-          CollectionLoading(availableCollections: _availableCollections),
-        ); // Emit loading with list
+        // No tracks found, just load the empty collection state
+        add(LoadCollection());
+        // LoadCollection will emit Loading then Loaded(empty)
       }
-      // Optionally, automatically switch: add(SwitchCollection(id));
     } catch (e, stackTrace) {
       print("BLOC ERROR creating shared collection: $e\n$stackTrace");
+      if (definition != null &&
+          _collectionService.getActiveCollection()?.id == definition.id) {
+        await _collectionService.closeCollection();
+      }
       emit(
         CollectionError(
           "Failed to create shared collection: $e",
-          activeCollectionDefinition:
-              previousActiveDef, // Revert to previous context
-          availableCollections:
-              previousAvailable, // Use list before failed attempt
+          activeCollectionDefinition: previousActiveDef,
+          availableCollections: previousAvailable,
           tracks: previousTracks,
           rootFolders: previousRoots,
         ),
@@ -630,14 +685,26 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     CreateLocalCollection event,
     Emitter<CollectionState> emit,
   ) async {
+    // ... (Handler remains the same as previous step - no auto-scan needed) ...
     print("BLOC: Creating local collection '${event.name}'");
-    // Preserve current state details
     final previousState = state;
     final previousActiveDef = _getActiveDefFromState();
+    final previousAvailable = _getAvailableCollectionsFromState();
     final previousTracks = _getTracksFromState();
     final previousTags = _getTagsFromState();
     final previousRoots = _getRootFoldersFromState();
-    final previousAvailable = _getAvailableCollectionsFromState();
+
+    emit(
+      CollectionLoading(
+        activeCollectionDefinition: previousActiveDef,
+        availableCollections: previousAvailable,
+        currentTracks: previousTracks,
+        currentAllTags: previousTags,
+        currentRootFolders: previousRoots,
+      ),
+    );
+
+    CollectionDefinition? definition;
 
     try {
       final id = const Uuid().v4();
@@ -651,30 +718,22 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
         'local_$safeName.db',
       );
 
-      final definition = CollectionDefinition(
+      definition = CollectionDefinition(
         id: id,
         name: event.name,
         type: CollectionType.local,
         dbPath: dbPath,
         rootPath: null,
       );
-
-      // 1. Add definition to storage
       await _collectionService.addCollectionDefinition(definition);
-
-      // 2. Open the collection to initialize DB
       await _collectionService.openCollection(definition);
       await _collectionService.closeCollection();
-
-      // --- >>> FIX: Reload list and emit updated state <<< ---
-      // 3. Reload the list of collections
       _availableCollections =
           await _collectionService.loadCollectionDefinitions();
       print(
         "BLOC: Local collection created. New list size: ${_availableCollections.length}",
       );
 
-      // 4. Emit an appropriate state with the updated list
       if (previousState is CollectionLoaded) {
         emit(
           previousState.copyWith(availableCollections: _availableCollections),
@@ -683,7 +742,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
         emit(
           CollectionLoading(
             activeCollectionDefinition: previousActiveDef,
-            availableCollections: _availableCollections, // Updated list
+            availableCollections: _availableCollections,
             currentTracks: previousTracks,
             currentAllTags: previousTags,
             currentRootFolders: previousRoots,
@@ -694,22 +753,24 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           CollectionError(
             previousState.message,
             activeCollectionDefinition: previousActiveDef,
-            availableCollections: _availableCollections, // Updated list
+            availableCollections: _availableCollections,
             tracks: previousTracks,
             rootFolders: previousRoots,
           ),
         );
       } else {
-        // E.g., CollectionInitial
         emit(CollectionLoading(availableCollections: _availableCollections));
       }
-      // Optionally, automatically switch: add(SwitchCollection(id));
     } catch (e, stackTrace) {
       print("BLOC ERROR creating local collection: $e\n$stackTrace");
+      if (definition != null &&
+          _collectionService.getActiveCollection()?.id == definition.id) {
+        await _collectionService.closeCollection();
+      }
       emit(
         CollectionError(
           "Failed to create local collection: $e",
-          activeCollectionDefinition: previousActiveDef, // Revert
+          activeCollectionDefinition: previousActiveDef,
           availableCollections: previousAvailable,
           tracks: previousTracks,
           rootFolders: previousRoots,
@@ -805,15 +866,13 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     LoadCollection event,
     Emitter<CollectionState> emit,
   ) async {
-    final activeDefinition =
-        _collectionService.getActiveCollection(); // Get from service
+    // ... (Handler remains the same as previous step) ...
+    final activeDefinition = _collectionService.getActiveCollection();
     if (activeDefinition == null) {
       print(
         "BLOC: Cannot load collection, no active collection set in service.",
       );
-      // Try loading list and switching to default?
       add(LoadCollectionList());
-      // TODO: Add logic to auto-select a default collection if none is active
       emit(
         CollectionError(
           "No active collection selected.",
@@ -822,38 +881,26 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       );
       return;
     }
-
-    // Emit loading state, ensuring we pass the *correct* active definition
     emit(
       CollectionLoading(
         activeCollectionDefinition: activeDefinition,
-        availableCollections: _availableCollections, // Use BLoC's cached list
-        currentTracks: _getTracksFromState(), // Preserve tracks during load
-        currentAllTags: _getTagsFromState(), // Preserve tags
-        currentRootFolders: _getRootFoldersFromState(), // <<< Preserve folders
+        availableCollections: _availableCollections,
+        currentTracks: _getTracksFromState(),
+        currentAllTags: _getTagsFromState(),
+        currentRootFolders: _getRootFoldersFromState(),
       ),
     );
-
     try {
-      // Service methods now operate on the active DB implicitly
-      final tracks =
-          await _collectionService
-              .getAllTracks(); // Paths are resolved by service
-      final rootFolders =
-          _collectionService
-              .getRootFolders(); // Gets roots for active collection
-      final allTags = await _collectionService.getAllTags(); // Global tags
-
+      final tracks = await _collectionService.getAllTracks();
+      final rootFolders = _collectionService.getRootFolders();
+      final allTags = await _collectionService.getAllTags();
       print(
         "BLOC: Loaded ${tracks.length} tracks, ${rootFolders.length} roots, ${allTags.length} tags for collection '${activeDefinition.name}'.",
       );
-
-      // Preserve search query if previous state was CollectionLoaded
       String? previousSearchQuery;
       if (state is CollectionLoaded) {
         previousSearchQuery = (state as CollectionLoaded).searchQuery;
       }
-
       emit(
         CollectionLoaded(
           activeCollectionDefinition: activeDefinition,
@@ -861,7 +908,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           tracks: tracks,
           rootFolders: rootFolders,
           allTags: allTags,
-          searchQuery: previousSearchQuery, // Preserve search query
+          searchQuery: previousSearchQuery,
         ),
       );
     } catch (e, stackTrace) {
@@ -871,8 +918,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           "Failed to load collection data: ${e.toString()}",
           activeCollectionDefinition: activeDefinition,
           availableCollections: _availableCollections,
-          rootFolders: _getRootFoldersFromState(), // <<< Pass folders
-          // Don't show tracks on error? Or show previous ones?
+          rootFolders: _getRootFoldersFromState(),
         ),
       );
     }
@@ -882,30 +928,25 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     AddRootFolder event,
     Emitter<CollectionState> emit,
   ) async {
+    // ... (Handler remains the same as previous step) ...
     final activeDef = _getActiveDefFromState();
     if (activeDef?.type != CollectionType.local) {
       print(
         "BLOC: Skipping AddRootFolder - only applicable to local collections.",
       );
-      // Optionally emit an error or warning state
       return;
     }
-    // Ensure state is loaded or loading before proceeding
     if (state is CollectionLoaded || state is CollectionLoading) {
       final currentState = state;
-      // Get current tracks and tags to preserve them
       final currentTracks = _getTracksFromState();
       final currentTags = _getTagsFromState();
       final currentAvailableCollections = _getAvailableCollectionsFromState();
-
       try {
         await _collectionService.addRootFolder(event.folderPath);
         final updatedRootFolders = _collectionService.getRootFolders();
-
         if (currentState is CollectionLoaded) {
           emit(currentState.copyWith(rootFolders: updatedRootFolders));
         } else if (currentState is CollectionLoading) {
-          // Update the loading state with the new root folders
           emit(
             CollectionLoading(
               activeCollectionDefinition:
@@ -913,7 +954,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
               availableCollections: currentState.availableCollections,
               currentTracks: currentState.currentTracks,
               currentAllTags: currentState.currentAllTags,
-              currentRootFolders: updatedRootFolders, // <<< Update folders here
+              currentRootFolders: updatedRootFolders,
             ),
           );
         }
@@ -925,8 +966,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
             activeCollectionDefinition: activeDef,
             availableCollections: currentAvailableCollections,
             tracks: currentTracks,
-            rootFolders:
-                _getRootFoldersFromState(), // Pass current folders on error
+            rootFolders: _getRootFoldersFromState(),
           ),
         );
       }
@@ -937,6 +977,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     RemoveRootFolder event,
     Emitter<CollectionState> emit,
   ) async {
+    // ... (Handler remains the same as previous step) ...
     final activeDef = _getActiveDefFromState();
     if (activeDef?.type != CollectionType.local) {
       print(
@@ -946,19 +987,15 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     }
     if (state is CollectionLoaded || state is CollectionLoading) {
       final currentState = state;
-      // Get current tracks and tags to preserve them
       final currentTracks = _getTracksFromState();
       final currentTags = _getTagsFromState();
       final currentAvailableCollections = _getAvailableCollectionsFromState();
-
       try {
         await _collectionService.removeRootFolder(event.folderPath);
         final updatedRootFolders = _collectionService.getRootFolders();
-
         if (currentState is CollectionLoaded) {
           emit(currentState.copyWith(rootFolders: updatedRootFolders));
         } else if (currentState is CollectionLoading) {
-          // Update the loading state with the new root folders
           emit(
             CollectionLoading(
               activeCollectionDefinition:
@@ -966,7 +1003,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
               availableCollections: currentState.availableCollections,
               currentTracks: currentState.currentTracks,
               currentAllTags: currentState.currentAllTags,
-              currentRootFolders: updatedRootFolders, // <<< Update folders here
+              currentRootFolders: updatedRootFolders,
             ),
           );
         }
@@ -978,8 +1015,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
             activeCollectionDefinition: activeDef,
             availableCollections: currentAvailableCollections,
             tracks: currentTracks,
-            rootFolders:
-                _getRootFoldersFromState(), // Pass current folders on error
+            rootFolders: _getRootFoldersFromState(),
           ),
         );
       }
@@ -990,6 +1026,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     AddTrackFromPath event,
     Emitter<CollectionState> emit,
   ) async {
+    // ... (Handler logic remains similar, relies on service) ...
     final activeDef = _getActiveDefFromState();
     if (activeDef == null) {
       emit(
@@ -1000,26 +1037,21 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       );
       return;
     }
-    // Keep track of current state for potential error recovery
     final tracksBeforeAdd = _getTracksFromState();
     final tagsBeforeAdd = _getTagsFromState();
-    final rootsBeforeAdd = _getRootFoldersFromState(); // <<< Get folders
-
+    final rootsBeforeAdd = _getRootFoldersFromState();
     emit(
       CollectionLoading(
         activeCollectionDefinition: activeDef,
         availableCollections: _availableCollections,
         currentTracks: tracksBeforeAdd,
         currentAllTags: tagsBeforeAdd,
-        currentRootFolders: rootsBeforeAdd, // <<< Pass folders
+        currentRootFolders: rootsBeforeAdd,
       ),
     );
-
     try {
-      // Service now handles relative/absolute path logic
       await _collectionService.addLocalFile(event.filePath);
-      // Reload all tracks for the active collection
-      add(LoadCollection()); // Trigger full reload
+      add(LoadCollection()); // Reload all tracks
     } catch (e, stackTrace) {
       print("BLOC ERROR adding track from path: $e\n$stackTrace");
       emit(
@@ -1027,8 +1059,8 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           e.toString(),
           activeCollectionDefinition: activeDef,
           availableCollections: _availableCollections,
-          tracks: tracksBeforeAdd, // Revert to tracks before failed add
-          rootFolders: rootsBeforeAdd, // <<< Pass folders
+          tracks: tracksBeforeAdd,
+          rootFolders: rootsBeforeAdd,
         ),
       );
     }
@@ -1038,6 +1070,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     AddTrackFromUrl event,
     Emitter<CollectionState> emit,
   ) async {
+    // ... (Handler logic remains similar, relies on service) ...
     final activeDef = _getActiveDefFromState();
     if (activeDef == null) {
       emit(
@@ -1050,21 +1083,19 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     }
     final tracksBeforeAdd = _getTracksFromState();
     final tagsBeforeAdd = _getTagsFromState();
-    final rootsBeforeAdd = _getRootFoldersFromState(); // <<< Get folders
-
+    final rootsBeforeAdd = _getRootFoldersFromState();
     emit(
       CollectionLoading(
         activeCollectionDefinition: activeDef,
         availableCollections: _availableCollections,
         currentTracks: tracksBeforeAdd,
         currentAllTags: tagsBeforeAdd,
-        currentRootFolders: rootsBeforeAdd, // <<< Pass folders
+        currentRootFolders: rootsBeforeAdd,
       ),
     );
-
     try {
       await _collectionService.addUrl(event.url);
-      add(LoadCollection()); // Trigger full reload
+      add(LoadCollection());
     } catch (e, stackTrace) {
       print("BLOC ERROR adding track from URL: $e\n$stackTrace");
       emit(
@@ -1073,25 +1104,13 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           activeCollectionDefinition: activeDef,
           availableCollections: _availableCollections,
           tracks: tracksBeforeAdd,
-          rootFolders: rootsBeforeAdd, // <<< Pass folders
+          rootFolders: rootsBeforeAdd,
         ),
       );
     }
   }
 
-  // --- Waveform Processing Logic (Keep for now, ensure absolute paths used) ---
-  // Make sure _ensureAudioServiceInitialized is called before these are used.
-
-  Future<void> _ensureAudioServiceInitialized() async {
-    if (!_audioServiceInitialized) {
-      print('AUDIO: Initializing AudioService');
-      // Assuming AudioService has an async initialize method
-      // await _audioService.initialize();
-      _audioServiceInitialized = true;
-      print('AUDIO: AudioService initialization complete');
-    }
-  }
-
+  // --- >>> REVISED Handler <<< ---
   Future<void> _onAddTracksFromPaths(
     AddTracksFromPaths event,
     Emitter<CollectionState> emit,
@@ -1107,88 +1126,96 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       return;
     }
     print(
-      "BATCH: Processing ${event.filePaths.length} files for collection ${activeDef.name}",
+      "BLOC: AddTracksFromPaths received ${event.filePaths.length} files for collection ${activeDef.name}",
     );
     final tracksBeforeAdd = _getTracksFromState();
     final tagsBeforeAdd = _getTagsFromState();
-    final rootsBeforeAdd = _getRootFoldersFromState(); // <<< Get folders
+    final rootsBeforeAdd = _getRootFoldersFromState();
 
+    // Emit Loading state *before* starting the potentially long add process
     emit(
       CollectionLoading(
         activeCollectionDefinition: activeDef,
         availableCollections: _availableCollections,
-        currentTracks: tracksBeforeAdd,
+        currentTracks: tracksBeforeAdd, // Show previous tracks while adding
         currentAllTags: tagsBeforeAdd,
-        currentRootFolders: rootsBeforeAdd, // <<< Pass folders
+        currentRootFolders: rootsBeforeAdd,
       ),
     );
 
     try {
-      List<Track> addedTracks = [];
-      // Step 1: Add all tracks via service (handles relative/absolute paths)
+      List<Track> addedOrFoundTracks = [];
+      // Step 1: Add all tracks via service (handles relative/absolute paths and checks existence)
+      // This loop adds tracks one by one to the DB.
       for (final filePath in event.filePaths) {
         try {
-          // addLocalFile returns the added/existing track with resolved path
           final track = await _collectionService.addLocalFile(filePath);
-          addedTracks.add(track);
-          print('BATCH: Added/found track: ${track.title}');
+          addedOrFoundTracks.add(track);
+          // print('BLOC: Added/found track during AddTracksFromPaths: ${track.title}');
         } catch (e) {
-          print('BATCH ERROR: Failed to add file $filePath: $e');
+          print(
+            'BLOC ERROR: Failed to add file $filePath during AddTracksFromPaths: $e',
+          );
+          // Optionally collect errors to show user later
         }
       }
+      print(
+        "BLOC: Finished adding/checking ${addedOrFoundTracks.length} tracks in service.",
+      );
 
-      // Step 2: Update UI immediately to show added tracks
-      print("BATCH: Updating UI with added tracks");
-      final currentTracks =
+      // Step 2: Emit final loaded state with all tracks from the DB
+      // This ensures the UI reflects the complete state *after* adding.
+      final currentTracks = await _collectionService.getAllTracks();
+      final currentRootFolders = _collectionService.getRootFolders();
+      final currentTags =
           await _collectionService
-              .getAllTracks(); // Get all for active collection
-      final currentRootFolders =
-          _collectionService.getRootFolders(); // Refresh roots
+              .getAllTags(); // Reload global tags too? Optional.
 
-      // Preserve search query if previous state was CollectionLoaded
-      String? previousSearchQuery;
-      if (state is CollectionLoaded) {
-        previousSearchQuery = (state as CollectionLoaded).searchQuery;
-      }
+      print(
+        "BLOC: Emitting CollectionLoaded after AddTracksFromPaths. Track count: ${currentTracks.length}",
+      );
 
       emit(
         CollectionLoaded(
           activeCollectionDefinition: activeDef,
-          availableCollections: _availableCollections,
+          availableCollections: _availableCollections, // Use cached list
           tracks: currentTracks,
-          rootFolders: currentRootFolders, // Use updated roots
-          allTags: tagsBeforeAdd, // Tags haven't changed yet
-          searchQuery: previousSearchQuery, // Preserve search
+          rootFolders: currentRootFolders,
+          allTags: currentTags,
+          searchQuery:
+              (state is CollectionLoaded)
+                  ? (state as CollectionLoaded).searchQuery
+                  : null, // Preserve search
         ),
       );
 
-      // Step 3: Start background waveform processing only if not already in progress
-      // Use the ABSOLUTE paths from the addedTracks list for waveform extraction
+      // Step 3: Start background waveform processing (if applicable)
+      // Use the ABSOLUTE paths from the addedOrFoundTracks list
       final absolutePathsToProcess =
-          addedTracks.where((t) => !t.isUrl).map((t) => t.path).toList();
+          addedOrFoundTracks.where((t) => !t.isUrl).map((t) => t.path).toList();
       print(
-        "BATCH: Checking if waveform processing can start for ${absolutePathsToProcess.length} files",
+        "BLOC: Checking waveform processing for ${absolutePathsToProcess.length} files after AddTracksFromPaths.",
       );
       if (!_isProcessingWaveforms && absolutePathsToProcess.isNotEmpty) {
-        print("BATCH: Starting background waveform extraction");
-        _startBackgroundWaveformExtraction(
-          absolutePathsToProcess,
-        ); // Pass absolute paths
+        print(
+          "BLOC: Starting background waveform extraction from AddTracksFromPaths.",
+        );
+        _startBackgroundWaveformExtraction(absolutePathsToProcess);
       } else {
         print(
-          "BATCH: Waveform processing already in progress or no files to process, skipping",
+          "BLOC: Waveform processing already running or no files needed processing.",
         );
       }
     } catch (e, stackTrace) {
-      print('BATCH ERROR: Exception in _onAddTracksFromPaths: $e\n$stackTrace');
-      _collectionService.setLoading(false); // Ensure loading state is cleared
+      print('BLOC ERROR: Exception in _onAddTracksFromPaths: $e\n$stackTrace');
+      // Emit error state, reverting to state before the add attempt
       emit(
         CollectionError(
           e.toString(),
           activeCollectionDefinition: activeDef,
           availableCollections: _availableCollections,
           tracks: tracksBeforeAdd,
-          rootFolders: rootsBeforeAdd, // <<< Pass folders
+          rootFolders: rootsBeforeAdd,
         ),
       );
     }
@@ -1197,6 +1224,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
   Future<void> _startBackgroundWaveformExtraction(
     List<String> absoluteFilePaths,
   ) async {
+    // ... (Handler remains the same as previous step) ...
     if (_isProcessingWaveforms) {
       print('WAVEFORM: Already processing waveforms, skipping');
       return;
@@ -1205,37 +1233,28 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     print(
       'WAVEFORM: Starting extraction for ${absoluteFilePaths.length} files',
     );
-
     try {
       await _ensureAudioServiceInitialized();
-
       for (int i = 0; i < absoluteFilePaths.length; i++) {
-        final filePath = absoluteFilePaths[i]; // This is already absolute
+        final filePath = absoluteFilePaths[i];
         final fileName = pathLib.basename(filePath);
         print(
           'WAVEFORM: Processing file ${i + 1}/${absoluteFilePaths.length}: $fileName',
         );
-
         try {
-          // Find track ID using the absolute path
           final track = await _collectionService.getTrackByPath(filePath);
           if (track?.id != null) {
             print('WAVEFORM: Found track ID: ${track!.id} for file: $fileName');
-            // Extract waveform using absolute path
             final success = await _extractWaveformData(track.id!, filePath);
             print(
               'WAVEFORM: Extraction ${success ? "succeeded" : "failed"} for $fileName',
             );
-
-            // Update UI after each file if still on the same collection
             final currentActiveDef = _collectionService.getActiveCollection();
-            // Check if the state is still CollectionLoaded AND if the active definition matches
             if (state is CollectionLoaded &&
                 (state as CollectionLoaded).activeCollectionDefinition.id ==
                     currentActiveDef?.id) {
               print('WAVEFORM: Updating UI after processing file ${i + 1}');
               final updatedTracks = await _collectionService.getAllTracks();
-              // Ensure state is still CollectionLoaded before emitting
               if (state is CollectionLoaded) {
                 emit(
                   (state as CollectionLoaded).copyWith(tracks: updatedTracks),
@@ -1252,7 +1271,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
         } catch (e) {
           print('WAVEFORM ERROR: Exception processing $fileName: $e');
         }
-        await Future.delayed(const Duration(milliseconds: 500)); // Pause
+        await Future.delayed(const Duration(milliseconds: 500));
       }
       print('WAVEFORM: Completed extraction for all files');
     } catch (e) {
@@ -1262,26 +1281,17 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     }
   }
 
-  // _extractWaveformData, _updateTrackWithWaveform remain largely the same,
-  // but ensure they use the absolute path passed in.
   Future<bool> _extractWaveformData(
     int trackId,
     String absoluteFilePath,
   ) async {
+    // ... (Handler remains the same as previous step) ...
     print(
       'EXTRACT: Starting for track $trackId: ${pathLib.basename(absoluteFilePath)}',
     );
-    // ... (rest of the waveform extraction logic using absoluteFilePath) ...
-    // Make sure loadAudio is called with the absoluteFilePath and isUrl: false
     try {
-      // Ensure AudioService is ready
       await _ensureAudioServiceInitialized();
-      // Assuming loadAudio triggers waveform generation/caching in AudioService
       await _audioService.loadAudio(absoluteFilePath, isUrl: false);
-
-      // Wait for waveform data via stream or direct access (adjust based on AudioService)
-      // This part depends heavily on how AudioService provides the data
-      // Example using stream:
       final completer = Completer<List<double>?>();
       StreamSubscription? sub;
       sub = _audioService.waveformStream.listen((data) {
@@ -1290,8 +1300,6 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           sub?.cancel();
         }
       });
-
-      // Add a timeout
       Future.delayed(Duration(seconds: 60), () {
         if (!completer.isCompleted) {
           print(
@@ -1301,9 +1309,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           sub?.cancel();
         }
       });
-
       final waveformData = await completer.future;
-
       if (waveformData != null && waveformData.isNotEmpty) {
         await _updateTrackWithWaveform(trackId, waveformData);
         return true;
@@ -1321,11 +1327,10 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     int trackId,
     List<double> waveformData,
   ) async {
+    // ... (Handler remains the same as previous step) ...
     print('UPDATE: Saving waveform data for track $trackId');
-    // Get track using ID (service resolves path)
     final track = await _collectionService.getTrack(trackId);
     if (track != null) {
-      // Update track using service (service handles relative/absolute storage)
       await _collectionService.updateTrack(
         track.copyWith(waveformData: waveformData),
       );
@@ -1335,8 +1340,6 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       throw Exception('Track not found');
     }
   }
-
-  // --- Other Existing Handlers (Adaptations) ---
 
   Future<void> _onRemoveTrack(
     RemoveTrack event,
@@ -1735,6 +1738,16 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           rootFolders: currentState.rootFolders, // <<< Pass folders
         ),
       );
+    }
+  }
+
+  Future<void> _ensureAudioServiceInitialized() async {
+    if (!_audioServiceInitialized) {
+      print('AUDIO: Initializing AudioService');
+      // Assuming AudioService has an async initialize method
+      // await _audioService.initialize();
+      _audioServiceInitialized = true;
+      print('AUDIO: AudioService initialization complete');
     }
   }
 
