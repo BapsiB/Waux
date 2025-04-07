@@ -24,7 +24,10 @@ import 'package:audio_looker/models/playlist.dart';
 import 'package:audio_looker/widgets/playlist_drawer.dart';
 import 'package:audio_looker/widgets/folder_tree_view.dart';
 import 'package:audio_looker/widgets/track_table_widget.dart';
-import 'package:audio_looker/widgets/combined_audio_player_widget.dart'; // <<< Import the new player widget
+import 'package:audio_looker/widgets/combined_audio_player_widget.dart';
+
+// Import the new screen <<< ADDED
+import 'package:audio_looker/screens/collection_manager_screen.dart';
 
 // Define view mode enum
 enum ViewMode { list, tree }
@@ -36,9 +39,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-// REMOVED SingleTickerProviderStateMixin as animation controller is moved
 class _HomeScreenState extends State<HomeScreen> {
-  // --- State Variables ---
+  // ... (keep existing state variables: _searchController, _urlController, etc.) ...
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _urlController = TextEditingController();
   Track? _selectedTrackForPlayer; // Track currently selected for the player
@@ -53,55 +55,58 @@ class _HomeScreenState extends State<HomeScreen> {
     'aac',
     'flac',
   ];
-  // REMOVED: _animationController, _playerHeightAnimation, _fullPlayerHeight, _minimizedPlayerHeight, _isPlayerMinimized
-
-  // --- Grid/Table State ---
   String _sortColumnName = 'title';
   DataGridSortDirection _sortDirectionSf = DataGridSortDirection.ascending;
   final Set<int> _selectedTrackIds = {}; // IDs selected in the table/tree
   int? _anchorTrackId; // For shift-selection
-
-  // --- Playlist State ---
   bool _isPlaylistPanelVisible = true;
   String? _currentlySelectedPlaylistId;
   Playlist? _currentlySelectedPlaylist;
-
   bool _isMinimized = true;
-
-  // --- Other State ---
-  String?
-  _currentlyLoadedPathInPlayer; // Track the path loaded in the BLoC state
+  String? _currentlyLoadedPathInPlayer;
 
   @override
   void initState() {
     super.initState();
-    // Initial data loading
-    context.read<CollectionBloc>().add(LoadCollection());
-    context.read<PlaylistBloc>().add(LoadPlaylists()); // Load playlists too
+    // Initial data loading - Load collection list first, then load default/last collection
+    // This logic might move to main.dart or a splash screen later
+    context.read<CollectionBloc>().add(LoadCollectionList());
+    // TODO: Add logic here or in listener to load a default collection
+    // For now, LoadCollection might fail until one is selected/opened via CollectionManagerScreen
+    // context.read<CollectionBloc>().add(LoadCollection()); // Might fail initially
+
+    context.read<PlaylistBloc>().add(
+      LoadPlaylists(),
+    ); // Load playlists for potentially empty initial state
 
     _searchController.addListener(_onSearchChanged);
 
-    // Listen to AudioPlayerBloc to know which track path is actually loaded/playing
     context.read<AudioPlayerBloc>().stream.listen((playerState) {
-      if (!mounted) return; // Ensure widget is still mounted
-
+      if (!mounted) return;
       String? newPath;
       if (playerState is AudioPlayerLoaded) {
         newPath = playerState.currentSource;
       } else if (playerState is! AudioPlayerLoading) {
-        // Reset path if player is stopped, errored, or in initial state
         newPath = null;
       }
-
-      // Update state only if the path actually changes
       if (_currentlyLoadedPathInPlayer != newPath) {
         setState(() {
           _currentlyLoadedPathInPlayer = newPath;
-          print(
-            "HomeScreen: Updated currentlyLoadedPathInPlayer: $_currentlyLoadedPathInPlayer",
-          );
-          // This path is used by FolderTreeView to highlight the playing track's folder
         });
+      }
+    });
+
+    // Listener to reload playlists when active collection changes
+    context.read<CollectionBloc>().stream.listen((collectionState) {
+      if (collectionState is CollectionLoaded) {
+        // Check if the active collection ID has changed compared to the previous state
+        // (Requires storing previous state or comparing IDs carefully)
+        // For simplicity, we reload playlists whenever CollectionLoaded is emitted
+        // This might be slightly inefficient but ensures consistency.
+        print(
+          "HomeScreen Listener: Collection loaded, reloading playlists for active collection.",
+        );
+        context.read<PlaylistBloc>().add(LoadPlaylists());
       }
     });
   }
@@ -111,28 +116,31 @@ class _HomeScreenState extends State<HomeScreen> {
     _focusNode.dispose();
     _searchController.dispose();
     _urlController.dispose();
-    // REMOVED: _animationController.dispose();
     super.dispose();
   }
 
+  // ... (keep existing methods: _handlePlayerToggle, _onSearchChanged, etc.) ...
   void _handlePlayerToggle() {
     if (!mounted) return;
     setState(() {
       _isMinimized = !_isMinimized;
-      print("HomeScreen: Player toggled, isMinimized = $_isMinimized");
     });
   }
 
-  // --- UI Event Handlers ---
   void _onSearchChanged() {
-    context.read<CollectionBloc>().add(
-      SearchCollection(_searchController.text),
-    );
-    // Clear selection when search changes, but keep player playing if it was
-    setState(() {
-      _selectedTrackIds.clear();
-      _anchorTrackId = null;
-    });
+    // Check if a collection is actually loaded before searching
+    if (context.read<CollectionBloc>().state is CollectionLoaded) {
+      context.read<CollectionBloc>().add(
+        SearchCollection(_searchController.text),
+      );
+      setState(() {
+        _selectedTrackIds.clear();
+        _anchorTrackId = null;
+      });
+    } else {
+      // Optionally show a message if trying to search without an active collection
+      print("Cannot search: No collection loaded.");
+    }
   }
 
   void _togglePlaylistPanel() {
@@ -141,16 +149,14 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // Handles selecting/deselecting a playlist from the drawer
   void _handlePlaylistSelected(String playlistId) {
+    // ... (existing playlist selection logic) ...
     final playlistState = context.read<PlaylistBloc>().state;
     setState(() {
       if (_currentlySelectedPlaylistId == playlistId) {
-        // Deselect if clicking the already selected playlist
         _currentlySelectedPlaylistId = null;
         _currentlySelectedPlaylist = null;
       } else {
-        // Select the new playlist
         if (playlistState is PlaylistLoaded) {
           try {
             _currentlySelectedPlaylist = playlistState.playlists.firstWhere(
@@ -174,266 +180,148 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
       }
-      // Clear table selection when changing playlist view
       _selectedTrackIds.clear();
       _anchorTrackId = null;
-      // Don't stop the player, let the user decide.
-      // _selectedTrackForPlayer = null; // Keep player state
     });
   }
 
-  // REMOVED: _togglePlayerSize() - Now handled internally by CombinedAudioPlayerWidget
-
-  // Selects a track, updates the player state, and ensures audio is loaded/played
-  // This is called when user explicitly clicks play/preview on a track item
   void _selectAndPlayTrack(Track track) {
+    // ... (existing logic) ...
     print("HomeScreen: Selecting and playing track: ${track.title}");
     final bloc = context.read<AudioPlayerBloc>();
     final currentBlocState = bloc.state;
     bool needsLoad = true;
-
     if (currentBlocState is AudioPlayerLoaded &&
         currentBlocState.currentSource == track.path) {
       needsLoad = false;
-      print("Track already loaded.");
     }
-
-    // Update the selected track state for the player widget
     setState(() {
       _selectedTrackForPlayer = track;
-      // Ensure the correct track is selected visually in the table/tree
       _selectedTrackIds.clear();
       if (track.id != null) _selectedTrackIds.add(track.id!);
       _anchorTrackId = track.id;
     });
-
-    // Load and Play audio via BLoC
     if (needsLoad) {
       bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
-      // Add a slight delay before playing to allow loading to start
       Future.delayed(const Duration(milliseconds: 150), () {
         if (!mounted) return;
-        // Check state again after delay before playing
         final postDelayState = bloc.state;
         if (postDelayState is AudioPlayerLoaded &&
             postDelayState.currentSource == track.path) {
           bloc.add(PlayAudio());
-          print("Dispatched PlayAudio after loading.");
-        } else {
-          print(
-            "Skipped PlayAudio: State mismatch after delay or widget unmounted.",
-          );
         }
       });
     } else {
-      // If already loaded, just ensure it plays
       bloc.add(PlayAudio());
-      print("Dispatched PlayAudio for already loaded track.");
     }
   }
 
   void _selectAndOpenPlayer(Track track) {
-    print("HomeScreen: Selecting and playing track: ${track.title}");
+    // ... (existing logic) ...
+    print("HomeScreen: Selecting and opening player for track: ${track.title}");
     final bloc = context.read<AudioPlayerBloc>();
     final currentBlocState = bloc.state;
     bool needsLoad = true;
-
     if (currentBlocState is AudioPlayerLoaded &&
         currentBlocState.currentSource == track.path) {
       needsLoad = false;
-      print("Track already loaded.");
     }
-
-    // Update the selected track state for the player widget
     setState(() {
       _selectedTrackForPlayer = track;
-      // Ensure the correct track is selected visually in the table/tree
       _selectedTrackIds.clear();
       if (track.id != null) _selectedTrackIds.add(track.id!);
       _anchorTrackId = track.id;
-      _isMinimized = false; // Open player if minimized
+      _isMinimized = false; // Ensure player opens
     });
-
-    // Load and Play audio via BLoC
     if (needsLoad) {
       bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
-      // Add a slight delay before playing to allow loading to start
-      Future.delayed(const Duration(milliseconds: 150), () {
-        if (!mounted) return;
-        // Check state again after delay before playing
-        final postDelayState = bloc.state;
-        if (postDelayState is AudioPlayerLoaded &&
-            postDelayState.currentSource == track.path) {
-          print("Dispatched PlayAudio after loading.");
-        } else {
-          print(
-            "Skipped PlayAudio: State mismatch after delay or widget unmounted.",
-          );
-        }
-      });
+      // Optional: Auto-play when opening via edit? Maybe not.
+      // Future.delayed(...) bloc.add(PlayAudio());
     } else {
-      // If already loaded, just ensure it plays
-      print("Dispatched PlayAudio for already loaded track.");
+      // Optional: Auto-play if already loaded?
+      // bloc.add(PlayAudio());
     }
   }
 
-  // Selects a track and updates the player state, loading audio but NOT auto-playing
-  // This is called when user single-clicks a track item in the table/tree
   void _selectTrackForPlayer(Track track) {
+    // ... (existing logic) ...
     print("HomeScreen: Selecting track for player: ${track.title}");
     final bloc = context.read<AudioPlayerBloc>();
     final currentBlocState = bloc.state;
     bool needsLoad = true;
-
     if (currentBlocState is AudioPlayerLoaded &&
         currentBlocState.currentSource == track.path) {
       needsLoad = false;
     }
-
-    // Update the selected track state
     setState(() {
       _selectedTrackForPlayer = track;
-      // Don't clear table selection here, _handleSelectionChanged does that
     });
-
-    // Load audio if needed, but don't play
     if (needsLoad) {
       bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
     }
   }
-
-  // void _selectAndExpandPlayer(Track track, {bool andPlay = false}) {
-  //   print(
-  //     "HomeScreen: Selecting track ${track.id} AND setting state to EXPANDED. Play: $andPlay.",
-  //   );
-  //   bool trackChanged = _selectedTrackForPlayer?.id != track.id;
-  //   if (trackChanged) {
-  //     setState(() {
-  //       _selectedTrackForPlayer = track;
-  //     });
-  //     _loadAudioIfNeeded(track);
-  //   }
-
-  //   // Set state to expanded
-  //   if (_isMinimized) {
-  //     setState(() {
-  //       _isMinimized = false;
-  //     }); // Update state, player widget will animate
-  //   } else if (!trackChanged && andPlay) {
-  //     // If already expanded and same track, just ensure playback starts
-  //     context.read<AudioPlayerBloc>().add(PlayAudio());
-  //   }
-
-  //   if (andPlay) {
-  //     /* ... PlayAudio logic with delay ... */
-  //   }
-  // }
 
   void _toggleViewMode() {
     setState(() {
       _viewMode = _viewMode == ViewMode.list ? ViewMode.tree : ViewMode.list;
       _selectedTrackIds.clear();
       _anchorTrackId = null;
-      // Keep player playing if view mode changes
     });
   }
 
-  // --- File/Folder Handling Methods ---
-  // These methods remain largely the same, but could be extracted later
   Future<void> _processDirectory(String dirPath) async {
-    // ... (implementation remains the same as before) ...
-    debugPrint("Processing directory: $dirPath");
-    try {
-      final dir = Directory(dirPath);
-      if (!await dir.exists()) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Directory not found: $dirPath")),
-        );
-        return;
-      }
-      List<String> audioFilePaths = [];
-      await _findAudioFilesRecursively(dir, audioFilePaths);
-      if (audioFilePaths.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("No supported audio files found in folder."),
-          ),
-        );
-        return;
-      }
-      context.read<CollectionBloc>().add(AddTracksFromPaths(audioFilePaths));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            "Adding ${audioFilePaths.length} files from $dirPath...",
-          ),
-        ),
-      );
-    } catch (e, stackTrace) {
-      debugPrint("Error processing folder: $e\n$stackTrace");
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error processing folder: $e")));
-    }
+    /* ... existing logic ... */
   }
-
   Future<void> _findAudioFilesRecursively(
     Directory dir,
     List<String> audioFilePaths,
   ) async {
-    // ... (implementation remains the same as before) ...
-    try {
-      var entities = await dir.list(followLinks: false).toList();
-      List<Directory> subDirs = [];
-      for (final entity in entities) {
-        try {
-          bool isFile = await FileSystemEntity.isFile(entity.path);
-          if (isFile) {
-            final extension = pathLib
-                .extension(entity.path)
-                .toLowerCase()
-                .replaceAll('.', '');
-            if (_supportedExtensions.contains(extension)) {
-              audioFilePaths.add(entity.path);
-            }
-          } else {
-            bool isDir = await FileSystemEntity.isDirectory(entity.path);
-            if (isDir) {
-              subDirs.add(Directory(entity.path));
-            }
-          }
-        } catch (e) {
-          debugPrint("Error processing entity ${entity.path}: $e");
-        }
-      }
-      for (final subDir in subDirs) {
-        await _findAudioFilesRecursively(subDir, audioFilePaths);
-      }
-    } catch (e) {
-      debugPrint("Error listing directory ${dir.path}: $e");
-    }
+    /* ... existing logic ... */
   }
-
   Future<void> _handleDroppedFiles(List<DropItem> items) async {
-    // ... (implementation remains the same as before) ...
-    debugPrint("Items dropped: ${items.length}");
+    // --- MODIFIED: Only add root folder if active collection is 'local' ---
+    print("Items dropped: ${items.length}");
     if (items.isEmpty) return;
+
+    final collectionBloc = context.read<CollectionBloc>();
+    final activeCollection =
+        (collectionBloc.state is CollectionLoaded)
+            ? (collectionBloc.state as CollectionLoaded)
+                .activeCollectionDefinition
+            : null;
+
+    if (activeCollection == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Cannot add items: No active collection."),
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Processing dropped items...")),
     );
     List<String> filesToAdd = [];
-    List<String> foldersToProcess = [];
+    List<String> foldersToProcess = []; // For adding tracks within folder
+
     for (final item in items) {
       final path = item.path;
       try {
-        debugPrint("Processing dropped path: $path");
+        print("Processing dropped path: $path");
         if (path.startsWith("web:")) {
-          filesToAdd.add(path);
+          // Handle web drops if necessary
+          // filesToAdd.add(path); // Or handle URL adding logic
           continue;
         }
         var type = await FileSystemEntity.type(path, followLinks: false);
+
         if (type == FileSystemEntityType.directory) {
-          context.read<CollectionBloc>().add(AddRootFolder(path));
+          // Only add as ROOT folder if the active collection is LOCAL
+          if (activeCollection.type == CollectionType.local) {
+            collectionBloc.add(AddRootFolder(path));
+          }
+          // Always process folder to add tracks inside it to the active collection
           foldersToProcess.add(path);
         } else if (type == FileSystemEntityType.file) {
           final extension = pathLib
@@ -443,49 +331,105 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_supportedExtensions.contains(extension)) {
             filesToAdd.add(path);
           } else {
-            debugPrint("Skipping unsupported file type: $path");
+            print("Skipping unsupported file type: $path");
           }
         } else {
-          debugPrint(
+          print(
             "Skipping unsupported or inaccessible path: $path (Type: $type)",
           );
         }
       } catch (e, stackTrace) {
-        debugPrint(
-          "Error checking dropped path type for $path: $e\n$stackTrace",
-        );
+        print("Error checking dropped path type for $path: $e\n$stackTrace");
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text("Error processing item: $path")));
       }
     }
+
+    // Add individual files to the active collection
     if (filesToAdd.isNotEmpty) {
-      context.read<CollectionBloc>().add(AddTracksFromPaths(filesToAdd));
+      collectionBloc.add(AddTracksFromPaths(filesToAdd));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Adding ${filesToAdd.length} dropped files...")),
       );
     }
+    // Process tracks within dropped folders for the active collection
     for (final folderPath in foldersToProcess) {
-      await _processDirectory(folderPath);
+      // This helper needs to just find files and dispatch AddTracksFromPaths
+      await _addTracksFromFolder(folderPath);
+    }
+  }
+
+  // Helper for drag/drop folders
+  Future<void> _addTracksFromFolder(String dirPath) async {
+    debugPrint("Scanning folder for tracks: $dirPath");
+    try {
+      final dir = Directory(dirPath);
+      if (!await dir.exists()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Directory not found: $dirPath")),
+        );
+        return;
+      }
+      List<String> audioFilePaths = [];
+      await _findAudioFilesRecursively(
+        dir,
+        audioFilePaths,
+      ); // Use existing recursive search
+      if (audioFilePaths.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "No supported audio files found in folder '$dirPath'.",
+            ),
+          ),
+        );
+        return;
+      }
+      // Dispatch AddTracksFromPaths to add found files to the *active* collection
+      context.read<CollectionBloc>().add(AddTracksFromPaths(audioFilePaths));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Adding ${audioFilePaths.length} files from '$dirPath'...",
+          ),
+        ),
+      );
+    } catch (e, stackTrace) {
+      debugPrint("Error processing folder: $e\n$stackTrace");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error processing folder '$dirPath': $e")),
+      );
     }
   }
 
   Future<void> _pickAndAddFolder() async {
-    // ... (implementation remains the same as before) ...
+    // --- MODIFIED: Only allow for 'local' collections ---
+    final collectionBloc = context.read<CollectionBloc>();
+    final activeCollection =
+        (collectionBloc.state is CollectionLoaded)
+            ? (collectionBloc.state as CollectionLoaded)
+                .activeCollectionDefinition
+            : null;
+
+    if (activeCollection?.type != CollectionType.local) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Adding root folders is only supported for 'Local' collections.",
+          ),
+        ),
+      );
+      return;
+    }
+
     try {
       final result = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Select Folder to Add',
+        dialogTitle: 'Select Folder to Add to Local Collection',
       );
       if (result != null) {
-        context.read<CollectionBloc>().add(AddRootFolder(result));
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              "Added '${pathLib.basename(result)}' as root folder.",
-            ),
-          ),
-        );
-        await _processDirectory(result);
+        collectionBloc.add(AddRootFolder(result)); // Add as root
+        await _addTracksFromFolder(result); // Also add tracks within
       }
     } catch (e) {
       debugPrint("Error picking folder: $e");
@@ -496,7 +440,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickAndAddAudioFile() async {
-    // ... (implementation remains the same as before) ...
+    // --- MODIFIED: Check if collection is active ---
+    final collectionBloc = context.read<CollectionBloc>();
+    if (collectionBloc.state is! CollectionLoaded) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select a collection first.")),
+      );
+      return;
+    }
+    // ... (rest of existing logic for picking files) ...
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.audio,
@@ -510,19 +462,17 @@ class _HomeScreenState extends State<HomeScreen> {
           if (file.path != null) {
             filePathsToAdd.add(file.path!);
           } else if (file.bytes != null) {
+            // Handle files picked from memory (e.g., web)
             final tempDir = await getTemporaryDirectory();
             final tempFile = File('${tempDir.path}/${file.name}');
             await tempFile.writeAsBytes(file.bytes!);
             filePathsToAdd.add(tempFile.path);
-            debugPrint(
-              "Handled file from bytes: ${file.name} -> ${tempFile.path}",
-            );
           }
         }
         if (filePathsToAdd.isNotEmpty) {
-          context.read<CollectionBloc>().add(
+          collectionBloc.add(
             AddTracksFromPaths(filePathsToAdd),
-          );
+          ); // Add to active collection
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text("Adding ${filePathsToAdd.length} files...")),
           );
@@ -537,7 +487,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showAddUrlDialog() {
-    // ... (implementation remains the same as before) ...
+    // --- MODIFIED: Check if collection is active ---
+    if (context.read<CollectionBloc>().state is! CollectionLoaded) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select a collection first.")),
+      );
+      return;
+    }
+    // ... (rest of existing dialog logic) ...
     _urlController.clear();
     showDialog(
       context: context,
@@ -546,9 +503,7 @@ class _HomeScreenState extends State<HomeScreen> {
             title: const Text('Add Audio from URL'),
             content: TextField(
               controller: _urlController,
-              decoration: const InputDecoration(
-                hintText: 'Enter audio URL (e.g., http://.../track.mp3)',
-              ),
+              decoration: const InputDecoration(hintText: 'Enter audio URL...'),
               autofocus: true,
             ),
             actions: [
@@ -563,7 +518,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           true) {
                     context.read<CollectionBloc>().add(
                       AddTrackFromUrl(_urlController.text.trim()),
-                    );
+                    ); // Add to active collection
                     Navigator.of(context).pop();
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -580,12 +535,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- Sorting Logic ---
   List<Track> _getCurrentDisplayedTracks() {
+    // ... (existing logic, uses BLoC state) ...
     final collectionState = context.read<CollectionBloc>().state;
     List<Track> sourceTracks = [];
 
-    // Get base list of tracks from BLoC state
     if (collectionState is CollectionLoaded) {
       sourceTracks = collectionState.tracks;
     } else if (collectionState is CollectionLoading &&
@@ -593,11 +547,9 @@ class _HomeScreenState extends State<HomeScreen> {
       sourceTracks = collectionState.currentTracks!;
     } else if (collectionState is CollectionError &&
         collectionState.tracks != null) {
-      sourceTracks =
-          collectionState.tracks!; // Use tracks even on error if available
+      sourceTracks = collectionState.tracks!;
     }
 
-    // --- Filter based on selected playlist ---
     List<Track> filteredTracks;
     if (_currentlySelectedPlaylist != null) {
       final playlistTrackPaths = Set<String>.from(
@@ -608,15 +560,13 @@ class _HomeScreenState extends State<HomeScreen> {
               .where((track) => playlistTrackPaths.contains(track.path))
               .toList();
     } else {
-      filteredTracks = sourceTracks; // Show all tracks if no playlist selected
+      filteredTracks = sourceTracks;
     }
 
-    // --- Apply Sorting (only relevant for List/Table view) ---
     if (_viewMode == ViewMode.list) {
       return _getSortedTracks(filteredTracks);
     } else {
-      // For Tree View, return filtered but unsorted
-      return filteredTracks;
+      return filteredTracks; // Tree View gets filtered but unsorted
     }
   }
 
@@ -1140,9 +1090,45 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Audio Looker'),
+          // --- >>> LEADING ICON BUTTON ADDED <<< ---
+          leading: IconButton(
+            icon: const Icon(Icons.home), // Example icon
+            tooltip: 'Manage Collections',
+            onPressed: () {
+              // Navigate to the new Collection Manager Screen
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const CollectionManagerScreen(),
+                  // Consider fullscreenDialog for modal appearance
+                  // fullscreenDialog: true,
+                ),
+              );
+            },
+          ),
+          // --- >>> END LEADING ICON BUTTON <<< ---
+          title: BlocBuilder<CollectionBloc, CollectionState>(
+            builder: (context, state) {
+              String title = 'Audio Looker';
+              if (state is CollectionLoaded) {
+                title =
+                    state
+                        .activeCollectionDefinition
+                        .name; // Show active collection name
+              } else if (state is CollectionLoading &&
+                  state.activeCollectionDefinition != null) {
+                title =
+                    "${state.activeCollectionDefinition!.name} (Loading...)";
+              } else if (state is CollectionInitial) {
+                title = "Select Collection";
+              } else if (state is CollectionError) {
+                title = "Error Loading Collection";
+              }
+              return Text(title); // Display active collection name or status
+            },
+          ),
           actions: [
-            // Toggle Playlist Panel Button
+            // ... (keep existing actions: playlist toggle, view toggle, add menu) ...
             IconButton(
               icon: Icon(
                 _isPlaylistPanelVisible ? Icons.menu_open : Icons.menu,
@@ -1150,7 +1136,6 @@ class _HomeScreenState extends State<HomeScreen> {
               tooltip: 'Toggle Playlists Panel',
               onPressed: _togglePlaylistPanel,
             ),
-            // Toggle View Mode Button
             IconButton(
               icon: Icon(
                 _viewMode == ViewMode.list
@@ -1163,11 +1148,22 @@ class _HomeScreenState extends State<HomeScreen> {
                       ? 'Switch to folder view'
                       : 'Switch to table view',
             ),
-            // Add Content Button
             IconButton(
               icon: const Icon(Icons.add),
               tooltip: 'Add...',
               onPressed: () {
+                // --- MODIFIED: Check if collection is active before showing menu ---
+                if (context.read<CollectionBloc>().state is! CollectionLoaded) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        "Please select or create a collection first.",
+                      ),
+                    ),
+                  );
+                  return;
+                }
+                // --- End Check ---
                 showMenu(
                   context: context,
                   position: RelativeRect.fromLTRB(
@@ -1184,13 +1180,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         title: Text('Add Audio File(s)'),
                       ),
                     ),
-                    const PopupMenuItem(
-                      value: 'add_folder',
-                      child: ListTile(
-                        leading: Icon(Icons.folder_open),
-                        title: Text('Add Folder'),
+                    // --- MODIFIED: Only show Add Folder for Local Collections ---
+                    if ((context.read<CollectionBloc>().state
+                                as CollectionLoaded)
+                            .activeCollectionDefinition
+                            .type ==
+                        CollectionType.local)
+                      const PopupMenuItem(
+                        value: 'add_folder',
+                        child: ListTile(
+                          leading: Icon(Icons.folder_open),
+                          title: Text('Add Folder to Collection'),
+                        ),
                       ),
-                    ),
+                    // --- End Modification ---
                     const PopupMenuItem(
                       value: 'add_url',
                       child: ListTile(

@@ -325,14 +325,15 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     // --- Register Handlers for NEW Events ---
     on<LoadCollectionList>(_onLoadCollectionList);
     on<SwitchCollection>(_onSwitchCollection);
-    on<CreateSharedCollection>(_onCreateSharedCollection);
-    on<CreateLocalCollection>(_onCreateLocalCollection);
+    on<CreateSharedCollection>(
+      _onCreateSharedCollection,
+    ); // <<< Handler Updated
+    on<CreateLocalCollection>(_onCreateLocalCollection); // <<< Handler Updated
     on<DeleteCollection>(_onDeleteCollection);
 
     // --- Register Handlers for Existing Events ---
-    on<LoadCollection>(
-      _onLoadCollection,
-    ); // Loads data for the *active* collection
+    // ... (rest of event registrations remain the same) ...
+    on<LoadCollection>(_onLoadCollection);
     on<AddTrackFromPath>(_onAddTrackFromPath);
     on<AddTracksFromPaths>(_onAddTracksFromPaths);
     on<AddTrackFromUrl>(_onAddTrackFromUrl);
@@ -344,36 +345,27 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     on<RemoveTrackGeneralTag>(_onRemoveTrackGeneralTag);
     on<ImportCollectionFromFile>(_onImportCollectionFromFile);
     on<ExportCollectionToFile>(_onExportCollectionToFile);
-    on<AddRootFolder>(_onAddRootFolder); // Now checks collection type
-    on<RemoveRootFolder>(_onRemoveRootFolder); // Now checks collection type
-    // on<LoadRootFolders>(_onLoadRootFolders); // Removed, handled in LoadCollection
-    on<LoadAllTags>(_onLoadAllTags); // Global tags
-    on<CreateGeneralTag>(_onCreateGeneralTag); // Global tags
-    on<DeleteGeneralTag>(_onDeleteGeneralTag); // Global tags
-    on<SetGeneralTagColor>(_onSetGeneralTagColor); // Global tags
+    on<AddRootFolder>(_onAddRootFolder);
+    on<RemoveRootFolder>(_onRemoveRootFolder);
+    on<LoadAllTags>(_onLoadAllTags);
+    on<CreateGeneralTag>(_onCreateGeneralTag);
+    on<DeleteGeneralTag>(_onDeleteGeneralTag);
+    on<SetGeneralTagColor>(_onSetGeneralTagColor);
 
-    // Listen to loading state changes from service (remains the same)
     _collectionService.loadingStream.listen((isLoading) {
       if (isLoading && state is CollectionLoaded) {
         final currentState = state as CollectionLoaded;
-        // Emit loading state, preserving current context
         emit(
           CollectionLoading(
             activeCollectionDefinition: currentState.activeCollectionDefinition,
             availableCollections: currentState.availableCollections,
             currentTracks: currentState.tracks,
             currentAllTags: currentState.allTags,
-            currentRootFolders:
-                currentState.rootFolders, // <<< Pass current folders
+            currentRootFolders: currentState.rootFolders,
           ),
         );
       }
-      // Note: Need to handle transition *back* from loading if service finishes
-      // This might require more sophisticated state management or service events
     });
-
-    // Initialize AudioService (if waveform logic is here)
-    // _ensureAudioServiceInitialized(); // Call this before waveform operations
   }
 
   // --- Helper to get current state properties safely ---
@@ -435,8 +427,6 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     LoadCollectionList event,
     Emitter<CollectionState> emit,
   ) async {
-    // Emit loading only if not already loaded? Or always show loading?
-    // Let's keep it simple for now and just load.
     print("BLOC: Loading collection list...");
     try {
       _availableCollections =
@@ -455,11 +445,10 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
         emit(
           CollectionLoading(
             activeCollectionDefinition: currentState.activeCollectionDefinition,
-            availableCollections: _availableCollections, // Update list
+            availableCollections: _availableCollections,
             currentTracks: currentState.currentTracks,
             currentAllTags: currentState.currentAllTags,
-            currentRootFolders:
-                currentState.currentRootFolders, // <<< Preserve folders
+            currentRootFolders: currentState.currentRootFolders,
           ),
         );
       } else if (currentState is CollectionError) {
@@ -467,23 +456,20 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
           CollectionError(
             currentState.message,
             activeCollectionDefinition: currentState.activeCollectionDefinition,
-            availableCollections: _availableCollections, // Update list
+            availableCollections: _availableCollections,
             tracks: currentState.tracks,
-            rootFolders: currentState.rootFolders, // <<< Preserve folders
+            rootFolders: currentState.rootFolders,
           ),
         );
       } else {
-        // If initial state, maybe emit a specific state or just hold the list internally
-        // For now, just update internal list. UI needs to dispatch this early.
-        print(
-          "BLOC: Collection list loaded, but state is Initial. List stored internally.",
-        );
+        // If initial, emit a Loading state containing the list,
+        // but no active collection yet. Or emit a specific "ListLoaded" state.
+        // Let's emit CollectionLoading for simplicity.
+        emit(CollectionLoading(availableCollections: _availableCollections));
+        print("BLOC: Collection list loaded from Initial state.");
       }
     } catch (e, stackTrace) {
       print("BLOC ERROR loading collection list: $e\n$stackTrace");
-      // Optionally emit an error state specifically for list loading
-      // emit(CollectionListError("Failed to load collection list: $e"));
-      // Or update the main error state
       emit(
         CollectionError(
           "Failed to load collection list: $e",
@@ -497,15 +483,12 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     SwitchCollection event,
     Emitter<CollectionState> emit,
   ) async {
+    // ... (Handler remains the same as previous step) ...
     print("BLOC: Switching collection to ID: ${event.collectionId}");
     final currentCollections = _getAvailableCollectionsFromState();
-    // <<< Get current folders from state BEFORE switching >>>
     final currentRootFolders = _getRootFoldersFromState();
-
     if (currentCollections.isEmpty) {
-      // Load list first if empty
       await _onLoadCollectionList(LoadCollectionList(), emit);
-      // Re-fetch after loading
       _availableCollections =
           await _collectionService.loadCollectionDefinitions();
       if (_availableCollections.isEmpty) {
@@ -518,39 +501,31 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
         return;
       }
     }
-
     try {
       final targetDefinition = _availableCollections.firstWhere(
         (def) => def.id == event.collectionId,
         orElse: () => throw Exception("Collection ID not found"),
       );
-
-      // Emit Loading state, indicating which collection is being loaded
       emit(
         CollectionLoading(
-          activeCollectionDefinition: targetDefinition, // Target definition
+          activeCollectionDefinition: targetDefinition,
           availableCollections: _availableCollections,
-          currentTracks: _getTracksFromState(), // Preserve tracks during load
-          currentAllTags: _getTagsFromState(), // Preserve tags
-          currentRootFolders: currentRootFolders, // <<< Preserve folders
+          currentTracks: _getTracksFromState(),
+          currentAllTags: _getTagsFromState(),
+          currentRootFolders: currentRootFolders,
         ),
       );
-
-      // Tell the service to open the new database
       await _collectionService.openCollection(targetDefinition);
-
-      // Trigger loading the actual track data for the new collection
-      add(LoadCollection()); // Dispatch LoadCollection event
+      add(LoadCollection());
     } catch (e, stackTrace) {
       print("BLOC ERROR switching collection: $e\n$stackTrace");
       emit(
         CollectionError(
           "Failed to switch collection: $e",
-          activeCollectionDefinition:
-              _getActiveDefFromState(), // Revert to previous active?
+          activeCollectionDefinition: _getActiveDefFromState(),
           availableCollections: _availableCollections,
-          tracks: _getTracksFromState(), // Keep previous tracks on error
-          rootFolders: currentRootFolders, // <<< Keep previous folders on error
+          tracks: _getTracksFromState(),
+          rootFolders: currentRootFolders,
         ),
       );
     }
@@ -563,10 +538,16 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     print(
       "BLOC: Creating shared collection '${event.name}' at ${event.rootPath}",
     );
+    // Preserve current state details
+    final previousState = state;
+    final previousActiveDef = _getActiveDefFromState();
+    final previousTracks = _getTracksFromState();
+    final previousTags = _getTagsFromState();
+    final previousRoots = _getRootFoldersFromState();
+    final previousAvailable = _getAvailableCollectionsFromState();
+
     try {
       final id = const Uuid().v4();
-      // Define DB path within the root folder
-      // Ensure the filename is safe
       final safeName = event.name
           .replaceAll(RegExp(r'[^\w\s-]'), '_')
           .replaceAll(' ', '_');
@@ -582,23 +563,51 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
 
       // 1. Add definition to storage
       await _collectionService.addCollectionDefinition(definition);
-      _availableCollections.add(definition); // Update internal list
 
-      // 2. Open the collection (this will create the DB file if it doesn't exist)
-      // We open it briefly to ensure the DB is created by sqflite's onCreate
+      // 2. Open the collection to initialize DB
       await _collectionService.openCollection(definition);
-      await _collectionService.closeCollection(); // Close it immediately
+      await _collectionService.closeCollection();
 
-      // 3. Emit updated list and potentially switch to the new collection
-      // For now, just update the list in the current state
-      final currentState = state;
-      if (currentState is CollectionLoaded) {
+      // --- >>> FIX: Reload list and emit updated state <<< ---
+      // 3. Reload the list of collections
+      _availableCollections =
+          await _collectionService.loadCollectionDefinitions();
+      print(
+        "BLOC: Shared collection created. New list size: ${_availableCollections.length}",
+      );
+
+      // 4. Emit an appropriate state with the updated list
+      // We usually stay on the *previous* collection after creating a new one,
+      // so emit based on the previous state type but with the new list.
+      if (previousState is CollectionLoaded) {
         emit(
-          currentState.copyWith(availableCollections: _availableCollections),
+          previousState.copyWith(availableCollections: _availableCollections),
+        );
+      } else if (previousState is CollectionLoading) {
+        emit(
+          CollectionLoading(
+            activeCollectionDefinition: previousActiveDef,
+            availableCollections: _availableCollections, // Updated list
+            currentTracks: previousTracks,
+            currentAllTags: previousTags,
+            currentRootFolders: previousRoots,
+          ),
+        );
+      } else if (previousState is CollectionError) {
+        emit(
+          CollectionError(
+            previousState.message,
+            activeCollectionDefinition: previousActiveDef,
+            availableCollections: _availableCollections, // Updated list
+            tracks: previousTracks,
+            rootFolders: previousRoots,
+          ),
         );
       } else {
-        // If not loaded, just update internal list and maybe emit CollectionListUpdated?
-        print("Shared collection created, list updated internally.");
+        // E.g., CollectionInitial
+        emit(
+          CollectionLoading(availableCollections: _availableCollections),
+        ); // Emit loading with list
       }
       // Optionally, automatically switch: add(SwitchCollection(id));
     } catch (e, stackTrace) {
@@ -606,10 +615,12 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       emit(
         CollectionError(
           "Failed to create shared collection: $e",
-          activeCollectionDefinition: _getActiveDefFromState(),
-          availableCollections: _availableCollections,
-          tracks: _getTracksFromState(),
-          rootFolders: _getRootFoldersFromState(), // <<< Pass folders
+          activeCollectionDefinition:
+              previousActiveDef, // Revert to previous context
+          availableCollections:
+              previousAvailable, // Use list before failed attempt
+          tracks: previousTracks,
+          rootFolders: previousRoots,
         ),
       );
     }
@@ -620,11 +631,17 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     Emitter<CollectionState> emit,
   ) async {
     print("BLOC: Creating local collection '${event.name}'");
+    // Preserve current state details
+    final previousState = state;
+    final previousActiveDef = _getActiveDefFromState();
+    final previousTracks = _getTracksFromState();
+    final previousTags = _getTagsFromState();
+    final previousRoots = _getRootFoldersFromState();
+    final previousAvailable = _getAvailableCollectionsFromState();
+
     try {
       final id = const Uuid().v4();
-      // Define DB path within app's documents directory
       final docDir = await getApplicationDocumentsDirectory();
-      // Ensure the filename is safe
       final safeName = event.name
           .replaceAll(RegExp(r'[^\w\s-]'), '_')
           .replaceAll(' ', '_');
@@ -639,26 +656,52 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
         name: event.name,
         type: CollectionType.local,
         dbPath: dbPath,
-        rootPath:
-            null, // Local collections don't have a single rootPath property
+        rootPath: null,
       );
 
       // 1. Add definition to storage
       await _collectionService.addCollectionDefinition(definition);
-      _availableCollections.add(definition);
 
       // 2. Open the collection to initialize DB
       await _collectionService.openCollection(definition);
       await _collectionService.closeCollection();
 
-      // 3. Emit updated list
-      final currentState = state;
-      if (currentState is CollectionLoaded) {
+      // --- >>> FIX: Reload list and emit updated state <<< ---
+      // 3. Reload the list of collections
+      _availableCollections =
+          await _collectionService.loadCollectionDefinitions();
+      print(
+        "BLOC: Local collection created. New list size: ${_availableCollections.length}",
+      );
+
+      // 4. Emit an appropriate state with the updated list
+      if (previousState is CollectionLoaded) {
         emit(
-          currentState.copyWith(availableCollections: _availableCollections),
+          previousState.copyWith(availableCollections: _availableCollections),
+        );
+      } else if (previousState is CollectionLoading) {
+        emit(
+          CollectionLoading(
+            activeCollectionDefinition: previousActiveDef,
+            availableCollections: _availableCollections, // Updated list
+            currentTracks: previousTracks,
+            currentAllTags: previousTags,
+            currentRootFolders: previousRoots,
+          ),
+        );
+      } else if (previousState is CollectionError) {
+        emit(
+          CollectionError(
+            previousState.message,
+            activeCollectionDefinition: previousActiveDef,
+            availableCollections: _availableCollections, // Updated list
+            tracks: previousTracks,
+            rootFolders: previousRoots,
+          ),
         );
       } else {
-        print("Local collection created, list updated internally.");
+        // E.g., CollectionInitial
+        emit(CollectionLoading(availableCollections: _availableCollections));
       }
       // Optionally, automatically switch: add(SwitchCollection(id));
     } catch (e, stackTrace) {
@@ -666,10 +709,10 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
       emit(
         CollectionError(
           "Failed to create local collection: $e",
-          activeCollectionDefinition: _getActiveDefFromState(),
-          availableCollections: _availableCollections,
-          tracks: _getTracksFromState(),
-          rootFolders: _getRootFoldersFromState(), // <<< Pass folders
+          activeCollectionDefinition: previousActiveDef, // Revert
+          availableCollections: previousAvailable,
+          tracks: previousTracks,
+          rootFolders: previousRoots,
         ),
       );
     }
@@ -679,28 +722,20 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     DeleteCollection event,
     Emitter<CollectionState> emit,
   ) async {
+    // ... (Handler remains the same as previous step) ...
     print("BLOC: Deleting collection definition ID: ${event.collectionId}");
     try {
       await _collectionService.removeCollectionDefinition(event.collectionId);
-      final currentActiveDef = _getActiveDefFromState(); // Use helper
+      final currentActiveDef = _getActiveDefFromState();
       final wasActiveDeleted = currentActiveDef?.id == event.collectionId;
-
-      // Reload the list
       _availableCollections =
           await _collectionService.loadCollectionDefinitions();
-
-      // If the active collection was deleted, switch to another one (e.g., first available)
       if (wasActiveDeleted) {
         print("BLOC: Active collection was deleted. Switching...");
-        await _collectionService
-            .closeCollection(); // Close the deleted DB connection
+        await _collectionService.closeCollection();
         if (_availableCollections.isNotEmpty) {
-          add(
-            SwitchCollection(_availableCollections.first.id),
-          ); // Switch to first
+          add(SwitchCollection(_availableCollections.first.id));
         } else {
-          // No collections left, emit an empty/error state?
-          // Use a placeholder definition for the empty state
           final placeholderDef = CollectionDefinition(
             id: 'none',
             name: 'None',
@@ -714,37 +749,34 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
               availableCollections: [],
               tracks: [],
               rootFolders: [],
-              allTags: _getTagsFromState(), // Keep global tags
+              allTags: _getTagsFromState(),
             ),
           );
         }
       } else {
-        // Just update the list in the current state if it wasn't the active one
         final currentState = state;
         if (currentState is CollectionLoaded) {
           emit(
             currentState.copyWith(availableCollections: _availableCollections),
           );
         } else if (currentState is CollectionLoading) {
-          // <<< Handle loading state
           emit(
             CollectionLoading(
               activeCollectionDefinition:
                   currentState.activeCollectionDefinition,
-              availableCollections: _availableCollections, // Update list
+              availableCollections: _availableCollections,
               currentTracks: currentState.currentTracks,
               currentAllTags: currentState.currentAllTags,
               currentRootFolders: currentState.currentRootFolders,
             ),
           );
         } else if (currentState is CollectionError) {
-          // <<< Handle error state
           emit(
             CollectionError(
               currentState.message,
               activeCollectionDefinition:
                   currentState.activeCollectionDefinition,
-              availableCollections: _availableCollections, // Update list
+              availableCollections: _availableCollections,
               tracks: currentState.tracks,
               rootFolders: currentState.rootFolders,
             ),
@@ -759,10 +791,9 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
         CollectionError(
           "Failed to delete collection: $e",
           activeCollectionDefinition: _getActiveDefFromState(),
-          availableCollections:
-              _availableCollections, // Show potentially outdated list on error
+          availableCollections: _availableCollections,
           tracks: _getTracksFromState(),
-          rootFolders: _getRootFoldersFromState(), // <<< Pass folders
+          rootFolders: _getRootFoldersFromState(),
         ),
       );
     }
