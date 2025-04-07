@@ -18,6 +18,7 @@ class TrackDataSource extends DataGridSource {
     required AudioPlayerBloc audioPlayerBloc,
     required this.onRatingChanged,
     required this.onPlayPreviewAndMinimize, // Callback for play/edit button
+    required this.onEditMetadata, // Callback for play/edit button
   }) : _audioPlayerBloc = audioPlayerBloc {
     _trackData = trackData;
     _updateDataGridRows();
@@ -28,6 +29,7 @@ class TrackDataSource extends DataGridSource {
   List<Track> _trackData = [];
   final RatingChangeCallback onRatingChanged;
   final PlayAndMinimizeCallback onPlayPreviewAndMinimize; // Store callback
+  final PlayAndMinimizeCallback onEditMetadata; // Store callback
 
   // --- State Management for Hover ---
   final Map<int, bool> _rowHoverState = {};
@@ -297,9 +299,7 @@ class TrackDataSource extends DataGridSource {
                             constraints: const BoxConstraints(),
                             splashRadius: 18,
                             onPressed:
-                                () => onPlayPreviewAndMinimize(
-                                  track!,
-                                ), // Call callback
+                                () => onEditMetadata(track!), // Call callback
                           ),
                         // --- End Conditional Button ---
                       ],

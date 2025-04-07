@@ -65,6 +65,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _currentlySelectedPlaylistId;
   Playlist? _currentlySelectedPlaylist;
 
+  bool _isMinimized = true;
+
   // --- Other State ---
   String?
   _currentlyLoadedPathInPlayer; // Track the path loaded in the BLoC state
@@ -109,6 +111,14 @@ class _HomeScreenState extends State<HomeScreen> {
     _urlController.dispose();
     // REMOVED: _animationController.dispose();
     super.dispose();
+  }
+
+  void _handlePlayerToggle() {
+    if (!mounted) return;
+    setState(() {
+      _isMinimized = !_isMinimized;
+      print("HomeScreen: Player toggled, isMinimized = $_isMinimized");
+    });
   }
 
   // --- UI Event Handlers ---
@@ -220,6 +230,51 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _selectAndOpenPlayer(Track track) {
+    print("HomeScreen: Selecting and playing track: ${track.title}");
+    final bloc = context.read<AudioPlayerBloc>();
+    final currentBlocState = bloc.state;
+    bool needsLoad = true;
+
+    if (currentBlocState is AudioPlayerLoaded &&
+        currentBlocState.currentSource == track.path) {
+      needsLoad = false;
+      print("Track already loaded.");
+    }
+
+    // Update the selected track state for the player widget
+    setState(() {
+      _selectedTrackForPlayer = track;
+      // Ensure the correct track is selected visually in the table/tree
+      _selectedTrackIds.clear();
+      if (track.id != null) _selectedTrackIds.add(track.id!);
+      _anchorTrackId = track.id;
+      _isMinimized = false; // Open player if minimized
+    });
+
+    // Load and Play audio via BLoC
+    if (needsLoad) {
+      bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
+      // Add a slight delay before playing to allow loading to start
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (!mounted) return;
+        // Check state again after delay before playing
+        final postDelayState = bloc.state;
+        if (postDelayState is AudioPlayerLoaded &&
+            postDelayState.currentSource == track.path) {
+          print("Dispatched PlayAudio after loading.");
+        } else {
+          print(
+            "Skipped PlayAudio: State mismatch after delay or widget unmounted.",
+          );
+        }
+      });
+    } else {
+      // If already loaded, just ensure it plays
+      print("Dispatched PlayAudio for already loaded track.");
+    }
+  }
+
   // Selects a track and updates the player state, loading audio but NOT auto-playing
   // This is called when user single-clicks a track item in the table/tree
   void _selectTrackForPlayer(Track track) {
@@ -244,6 +299,33 @@ class _HomeScreenState extends State<HomeScreen> {
       bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
     }
   }
+
+  // void _selectAndExpandPlayer(Track track, {bool andPlay = false}) {
+  //   print(
+  //     "HomeScreen: Selecting track ${track.id} AND setting state to EXPANDED. Play: $andPlay.",
+  //   );
+  //   bool trackChanged = _selectedTrackForPlayer?.id != track.id;
+  //   if (trackChanged) {
+  //     setState(() {
+  //       _selectedTrackForPlayer = track;
+  //     });
+  //     _loadAudioIfNeeded(track);
+  //   }
+
+  //   // Set state to expanded
+  //   if (_isMinimized) {
+  //     setState(() {
+  //       _isMinimized = false;
+  //     }); // Update state, player widget will animate
+  //   } else if (!trackChanged && andPlay) {
+  //     // If already expanded and same track, just ensure playback starts
+  //     context.read<AudioPlayerBloc>().add(PlayAudio());
+  //   }
+
+  //   if (andPlay) {
+  //     /* ... PlayAudio logic with delay ... */
+  //   }
+  // }
 
   void _toggleViewMode() {
     setState(() {
@@ -1418,7 +1500,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                             initialSortDirection:
                                                 _sortDirectionSf,
                                             onPlayPreviewAndMinimize:
-                                                _selectAndPlayTrack, // Use the combined method
+                                                _selectAndPlayTrack,
+                                            onEditMetadata:
+                                                _selectAndOpenPlayer,
                                           )
                                           : FolderTreeView(
                                             tracks:
@@ -1519,17 +1603,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ), // End Expanded Content Area
-                  // --- NEW: Combined Audio Player Widget ---
-                  // Conditionally display the player if a track is selected
                   if (_selectedTrackForPlayer != null)
                     CombinedAudioPlayerWidget(
-                      key: ValueKey(
-                        _selectedTrackForPlayer!.id,
-                      ), // Ensure widget updates correctly
+                      key: ValueKey(_selectedTrackForPlayer!.id),
                       track: _selectedTrackForPlayer!,
-                      // Pass callbacks if needed, e.g., if player UI has next/prev buttons
-                      // onNextTrack: _playNextTrack,
-                      // onPreviousTrack: _playPreviousTrack,
+                      // --- Pass state and callbacks ---
+                      isMinimized: _isMinimized, // Pass state
+                      onToggle: _handlePlayerToggle, // Pass toggle callback
+                      // REMOVED animationController prop
                     ),
                 ],
               ),

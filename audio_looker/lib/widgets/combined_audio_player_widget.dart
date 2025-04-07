@@ -1,30 +1,27 @@
-// lib/widgets/combined_audio_player_widget.dart
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'dart:async'; // For Timer
 
-// Import necessary BLoCs and Services/Models
+// Import BLoCs and Services/Models
 import '../blocs/audio_player/audio_player_bloc.dart';
 import '../blocs/collection/collection_bloc.dart';
-import '../services/collection_service.dart'; // For Track, Tag models
-import '../services/audio_service.dart'; // For AudioTag model if needed
+import '../services/collection_service.dart';
+// import '../services/audio_service.dart';
 
-// Import UI components potentially reused from audio_player_widget
-import 'waveform_painter.dart'; // Assuming WaveformPainter is used
-import 'tag_editor_popup.dart'; // For editing general tags
+// Import UI components
+import 'waveform_painter.dart';
+import 'tag_editor_popup.dart';
 
 class CombinedAudioPlayerWidget extends StatefulWidget {
   final Track track;
-  // Add callbacks if next/previous logic is handled outside
-  // final VoidCallback? onNextTrack;
-  // final VoidCallback? onPreviousTrack;
+  final bool isMinimized; // <<< Input: Current minimized state from parent
+  final VoidCallback onToggle; // <<< Input: Callback to toggle state in parent
 
   const CombinedAudioPlayerWidget({
     Key? key,
     required this.track,
-    // this.onNextTrack,
-    // this.onPreviousTrack,
+    required this.isMinimized,
+    required this.onToggle,
   }) : super(key: key);
 
   @override
@@ -32,15 +29,16 @@ class CombinedAudioPlayerWidget extends StatefulWidget {
       _CombinedAudioPlayerWidgetState();
 }
 
+// ADDED SingleTickerProviderStateMixin
 class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     with SingleTickerProviderStateMixin {
-  // Animation and State for Minimized/Expanded View
+  // --- Animation State (Managed Internally) ---
   late AnimationController _animationController;
   late Animation<double> _playerHeightAnimation;
-  bool _isMinimized = true; // Start expanded by default when a track is present
-  final double _fullPlayerHeight = 490; // Adjust as needed
+  final double _fullPlayerHeight = 490; // Or determine dynamically
   final double _minimizedPlayerHeight =
       100; // Height for the minimized controls bar
+  // --- End Animation State ---
 
   // State mirroring parts of the old AudioPlayerWidget state
   final TextEditingController _notesController = TextEditingController();
@@ -55,60 +53,57 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   DateTime? _lastSeekDispatchTime;
   final Duration _seekThrottleInterval = const Duration(milliseconds: 100);
 
-  // State for Time Tagging (if keeping this feature in expanded view)
+  // State for Time Tagging
   final TextEditingController _timeTagController = TextEditingController();
   bool _isTimeTaggingMode = false;
 
   @override
   void initState() {
     super.initState();
+
+    // --- Initialize Animation Controller (Internal) ---
     _animationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 250), // Faster animation
+      duration: const Duration(milliseconds: 250),
     );
-
     _playerHeightAnimation = Tween<double>(
       begin: _fullPlayerHeight,
       end: _minimizedPlayerHeight,
     ).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
-    )..addListener(() {
-      // Use mounted check before calling setState
-      if (mounted) {
-        setState(() {});
-      }
-    });
+    );
+    // Set initial animation value based on the INITIAL isMinimized prop
+    _animationController.value = widget.isMinimized ? 1.0 : 0.0;
+    // --- End Animation Controller Init ---
 
-    // Initialize state based on the initial track
     _updateStateFromWidget(widget.track);
-
-    // Set initial animation state (start expanded)
-    _animationController.value = _isMinimized ? 1.0 : 0.0;
-
-    // Ensure the audio for the initial track is loaded
-    // Note: HomeScreen might already do this when selecting the track
-    _loadAudioIfNeeded(widget.track);
+    // No need to load audio here, HomeScreen handles it
   }
 
   @override
   void didUpdateWidget(CombinedAudioPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // If the track itself changes, update internal state and load audio
-    if (oldWidget.track.id != widget.track.id) {
+
+    // --- Animate when isMinimized prop changes ---
+    if (widget.isMinimized != oldWidget.isMinimized) {
       print(
-        "CombinedAudioPlayerWidget: Track changed from ${oldWidget.track.id} to ${widget.track.id}",
+        "CombinedAudioPlayerWidget: isMinimized changed to ${widget.isMinimized}. Triggering animation.",
       );
+      if (widget.isMinimized) {
+        _animationController.forward(); // Animate to minimized
+      } else {
+        _animationController.reverse(); // Animate to expanded
+      }
+    }
+    // --- End Animate ---
+
+    // If the track itself changes, update internal state
+    if (oldWidget.track.id != widget.track.id) {
       _updateStateFromWidget(widget.track);
-      _loadAudioIfNeeded(widget.track);
-      // Optionally force expand when a new track is selected
-      // if (_isMinimized) {
-      //   _togglePlayerSize();
-      // }
-      // Reset drag state
       _isDraggingWaveform = false;
       _dragProgress = null;
     } else {
-      // If only track metadata (like rating/notes/tags) updated externally, reflect it
+      // Update rating/notes if changed externally
       if (oldWidget.track.rating != widget.track.rating) {
         _currentRating = widget.track.rating;
       }
@@ -116,18 +111,15 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
           _notesController.text != widget.track.comment) {
         _notesController.text = widget.track.comment;
       }
-      // General tags are handled via BlocBuilder below
     }
   }
 
-  // Helper to update state based on the current track
   void _updateStateFromWidget(Track track) {
+    if (!mounted) return;
     _currentRating = track.rating;
-    // Update notes controller only if the text differs to avoid cursor jumps
     if (_notesController.text != track.comment) {
       _notesController.text = track.comment;
     }
-    // Reset tagging mode when track changes
     _isTimeTaggingMode = false;
     _timeTagController.clear();
   }
@@ -136,69 +128,62 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   void _loadAudioIfNeeded(Track track) {
     final bloc = context.read<AudioPlayerBloc>();
     final currentState = bloc.state;
-
     bool needsLoad = true;
     if (currentState is AudioPlayerLoaded &&
         currentState.currentSource == track.path) {
-      needsLoad = false; // Already loaded
-    } else if (currentState is AudioPlayerLoading) {
-      // Potentially loading the *correct* track, but check source if possible
-      // For simplicity, let's assume loading state means we wait
       needsLoad = false;
+    } else if (currentState is AudioPlayerLoading) {
+      needsLoad = false; // Assume it's loading the right one or wait
     }
-
     if (needsLoad) {
-      print(
-        "CombinedAudioPlayerWidget: Dispatching LoadAudio for track ${track.id}",
-      );
+      print("HomeScreen: Dispatching LoadAudio for track ${track.id}");
       bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
-    } else {
-      print(
-        "CombinedAudioPlayerWidget: Skipping LoadAudio for track ${track.id} (already loaded/loading)",
-      );
     }
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
+    _animationController.dispose(); // Dispose internal controller
     _notesController.dispose();
     _timeTagController.dispose();
     super.dispose();
   }
 
   // Toggle between minimized and expanded states
-  void _togglePlayerSize() {
-    // Use mounted check before calling setState
-    if (!mounted) return;
-    setState(() {
-      _isMinimized = !_isMinimized;
-      if (_isMinimized) {
-        _animationController.forward();
-      } else {
-        _animationController.reverse();
-      }
-    });
-  }
+  // void _togglePlayerSize() {
+  //   // Use mounted check before calling setState
+  //   if (!mounted) return;
+  //   setState(() {
+  //     _isMinimized = !_isMinimized;
+  //     if (_isMinimized) {
+  //       _animationController.forward();
+  //     } else {
+  //       _animationController.reverse();
+  //     }
+  //   });
+  // }
 
   // --- UI Building Methods ---
 
   // Build the common toggle bar
   Widget _buildToggleBar() {
     return Container(
-      height: 36, // Standard height for the toggle bar
+      height: 36,
       color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           IconButton(
-            icon: Icon(
-              _isMinimized
-                  ? Icons.keyboard_arrow_up
-                  : Icons.keyboard_arrow_down,
+            icon: AnimatedIcon(
+              // Use AnimatedIcon for smoother transition
+              icon:
+                  AnimatedIcons
+                      .arrow_menu, // arrow_down / arrow_up look similar
+              progress: _animationController, // Driven by internal controller
             ),
-            onPressed: _togglePlayerSize,
-            tooltip: _isMinimized ? 'Expand player' : 'Minimize player',
+            // Icon(widget.isMinimized ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
+            onPressed: widget.onToggle, // <<< Call the callback to HomeScreen
+            tooltip: widget.isMinimized ? 'Expand player' : 'Minimize player',
           ),
         ],
       ),
@@ -958,10 +943,19 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
         // Use another BlocBuilder for CollectionState to get general tags
         return BlocBuilder<CollectionBloc, CollectionState>(
           builder: (context, collectionState) {
+            bool isCorrectTrackLoaded =
+                playerState is AudioPlayerLoaded &&
+                playerState.currentSource == widget.track.path;
+            bool isErrorForThisTrack =
+                playerState is AudioPlayerError &&
+                playerState.source == widget.track.path;
+            bool isLoadingThisTrack =
+                (playerState is AudioPlayerInitial ||
+                    playerState is AudioPlayerLoading);
+
             // Handle Loading/Error states for the player
             // Show loading if Initial state OR Loading state
-            if (playerState is AudioPlayerInitial ||
-                playerState is AudioPlayerLoading) {
+            if (isLoadingThisTrack && !isCorrectTrackLoaded) {
               // Show a simple loading indicator
               return Container(
                 height:
@@ -982,8 +976,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               );
             }
             // <<< CORRECTED: Check error state and its source >>>
-            else if (playerState is AudioPlayerError &&
-                playerState.source == widget.track.path) {
+            else if (isErrorForThisTrack) {
               // Show error specific to this track
               return Container(
                 height:
@@ -1010,40 +1003,41 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               );
             }
             // Show the main player UI only if the loaded track matches the widget's track
-            else if (playerState is AudioPlayerLoaded &&
-                playerState.currentSource == widget.track.path) {
+            else if (isCorrectTrackLoaded) {
               // --- Main Player UI ---
-              // This track is loaded, build the animated container
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeInOut,
-                height: _playerHeightAnimation.value,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).cardColor,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 8,
-                      offset: const Offset(0, -2), // Shadow for the top edge
+              return AnimatedBuilder(
+                animation: _playerHeightAnimation,
+                builder: (context, child) {
+                  return Container(
+                    // This container's height is animated
+                    height: _playerHeightAnimation.value,
+                    decoration: BoxDecoration(
+                      // Apply decoration here
+                      color: Theme.of(context).cardColor,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.15),
+                          blurRadius: 6,
+                          offset: const Offset(0, -2),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                    child: child, // Pass the actual content as child
+                  );
+                },
                 child: Column(
+                  // The actual content structure
                   children: [
-                    // --- Toggle Bar ---
-                    _buildToggleBar(),
-
-                    // --- Content Area (Expanded + Stack for Min/Max Views) ---
+                    _buildToggleBar(), // Calls widget.onToggle
                     Expanded(
                       child: Stack(
                         children: [
-                          // --- Expanded View ---
+                          // Expanded View
                           AnimatedOpacity(
-                            opacity: _isMinimized ? 0.0 : 1.0,
+                            opacity: widget.isMinimized ? 0.0 : 1.0,
                             duration: const Duration(milliseconds: 150),
                             child: IgnorePointer(
-                              ignoring: _isMinimized,
-                              // Pass necessary state to the builder
+                              ignoring: widget.isMinimized,
                               child: _buildExpandedPlayerUI(
                                 playerState,
                                 widget.track,
@@ -1051,13 +1045,12 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                               ),
                             ),
                           ),
-                          // --- Minimized View ---
+                          // Minimized View
                           AnimatedOpacity(
-                            opacity: _isMinimized ? 1.0 : 0.0,
+                            opacity: widget.isMinimized ? 1.0 : 0.0,
                             duration: const Duration(milliseconds: 150),
                             child: IgnorePointer(
-                              ignoring: !_isMinimized,
-                              // Pass necessary state to the builder
+                              ignoring: !widget.isMinimized,
                               child: _buildMinimizedPlayerControls(
                                 playerState,
                                 widget.track,
@@ -1071,16 +1064,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 ),
               );
             } else {
-              // Fallback: Player might be loaded with a *different* track,
-              // or in an unexpected state (e.g., error for a different track).
-              // Show nothing in these cases.
-              print(
-                "CombinedAudioPlayerWidget: Hiding player (State: ${playerState.runtimeType}, Bloc source: ${playerState is AudioPlayerLoaded
-                    ? playerState.currentSource
-                    : playerState is AudioPlayerError
-                    ? playerState.source
-                    : 'N/A'}, Widget source: ${widget.track.path})",
-              );
+              // Other track loaded/errored, or initial state
               return const SizedBox.shrink();
             }
           },

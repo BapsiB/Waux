@@ -36,6 +36,7 @@ class TrackTableWidget extends StatefulWidget {
   final String initialSortColumnName;
   final DataGridSortDirection initialSortDirection;
   final PlayAndMinimizeCallback onPlayPreviewAndMinimize;
+  final PlayAndMinimizeCallback onEditMetadata;
 
   const TrackTableWidget({
     Key? key,
@@ -49,6 +50,7 @@ class TrackTableWidget extends StatefulWidget {
     required this.initialSortColumnName,
     required this.initialSortDirection,
     required this.onPlayPreviewAndMinimize,
+    required this.onEditMetadata,
   }) : super(key: key);
 
   @override
@@ -79,6 +81,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       audioPlayerBloc: widget.audioPlayerBloc,
       onRatingChanged: widget.onRatingChanged,
       onPlayPreviewAndMinimize: widget.onPlayPreviewAndMinimize,
+      onEditMetadata: widget.onEditMetadata,
     );
     // Initialize Controller here
     _dataGridController = DataGridController();
