@@ -1,8 +1,10 @@
+import 'package:flutter/gestures.dart'; // Required for PointerHoverEvent (though callback removed)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:syncfusion_flutter_core/theme.dart'; // Optional for theming
 import 'dart:math'; // Required for max function
+import 'package:collection/collection.dart'; // Import for deep equality check
 
 import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart'; // Import Bloc
 import 'package:audio_looker/services/collection_service.dart'; // Your Track model
@@ -18,7 +20,7 @@ typedef SelectionChangeCallback =
     });
 typedef ContextMenuCallback =
     void Function(BuildContext context, Offset tapPosition, Track track);
-// typedef PlayPreviewCallback = void Function(Track track); // *** REMOVED ***
+// typedef PlayPreviewCallback = void Function(Track track); // Removed
 typedef RatingChangeCallback = void Function(int trackId, int newRating);
 typedef SortCallback =
     void Function(String columnName, DataGridSortDirection direction);
@@ -26,7 +28,7 @@ typedef SortCallback =
 class TrackTableWidget extends StatefulWidget {
   final List<Track> tracks;
   final Set<int> selectedTrackIds;
-  final AudioPlayerBloc audioPlayerBloc; // *** Add Bloc parameter ***
+  final AudioPlayerBloc audioPlayerBloc;
   final SelectionChangeCallback onSelectionChanged;
   final ContextMenuCallback onShowContextMenu;
   final RatingChangeCallback onRatingChanged;
@@ -39,7 +41,7 @@ class TrackTableWidget extends StatefulWidget {
     Key? key,
     required this.tracks,
     required this.selectedTrackIds,
-    required this.audioPlayerBloc, // *** Add to constructor ***
+    required this.audioPlayerBloc,
     required this.onSelectionChanged,
     required this.onShowContextMenu,
     required this.onRatingChanged,
@@ -54,10 +56,11 @@ class TrackTableWidget extends StatefulWidget {
 }
 
 class _TrackTableWidgetState extends State<TrackTableWidget> {
-  // Data source is now created in build method
   final GlobalKey<SfDataGridState> _sfDataGridKey =
       GlobalKey<SfDataGridState>();
   final FocusNode _focusNode = FocusNode();
+  late TrackDataSource _trackDataSource; // Store the data source instance
+  late DataGridController _dataGridController; // Store the controller instance
 
   late List<GridColumn> _gridColumns;
   bool _isColumnsInitialized = false;
@@ -67,10 +70,22 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   final double _initialRatingWidth = 100;
   final double _defaultTextColumnWidth = 150;
 
+  // Removed hover state tracking from here, it's handled in TrackDataSource
+  // int _hoveredRowIndex = -1;
+
   @override
   void initState() {
     super.initState();
-    // Initialize columns here
+    // Initialize DataSource here
+    _trackDataSource = TrackDataSource(
+      trackData: widget.tracks,
+      audioPlayerBloc: widget.audioPlayerBloc,
+      onRatingChanged: widget.onRatingChanged,
+      onPlayPreviewAndMinimize: widget.onPlayPreviewAndMinimize,
+    );
+    // Initialize Controller here
+    _dataGridController = DataGridController();
+    _updateControllerSelection(); // Initial selection update
 
     // Keep focus logic
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -83,8 +98,34 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _initializeColumns(useFill: true);
-    _isColumnsInitialized = true;
+    // Initialize columns only once or if layout changes significantly
+    if (!_isColumnsInitialized) {
+      _initializeColumns(useFill: true); // Adjust useFill based on needs
+      _isColumnsInitialized = true;
+    }
+  }
+
+  // Helper method to update controller selection based on widget state
+  void _updateControllerSelection() {
+    // Use a try-catch block as rows might be temporarily unavailable during updates
+    try {
+      _dataGridController.selectedRows =
+          _trackDataSource.rows.where((row) {
+            final idCell = row.getCells().firstWhere(
+              (c) => c.columnName == 'id',
+              orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
+            );
+            // Ensure value is not null before checking contains
+            return idCell.value != null &&
+                widget.selectedTrackIds.contains(idCell.value as int);
+          }).toList();
+    } catch (e) {
+      debugPrint(
+        "Error updating controller selection (might be temporary): $e",
+      );
+      // Optionally clear selection if rows are unavailable
+      // _dataGridController.selectedRows = [];
+    }
   }
 
   // initializeColumns remains the same
@@ -168,12 +209,31 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   @override
   void didUpdateWidget(TrackTableWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // No need to update data source based on callbacks here
+    bool dataSourceUpdated = false;
+    // Update the data source if the tracks list changes
+    if (!const ListEquality().equals(widget.tracks, oldWidget.tracks)) {
+      // Deep comparison
+      _trackDataSource.updateDataGridSource(trackData: widget.tracks);
+      dataSourceUpdated = true;
+      // Hover state is managed internally by DataSource now
+    }
+
+    // Update controller selection if external IDs change OR if datasource was updated
+    // Use deep comparison for Sets as well
+    if (dataSourceUpdated ||
+        !const SetEquality().equals(
+          widget.selectedTrackIds,
+          oldWidget.selectedTrackIds,
+        )) {
+      _updateControllerSelection();
+    }
   }
 
   @override
   void dispose() {
     _focusNode.dispose();
+    _dataGridController.dispose(); // Dispose the controller
+    // Dispose the data source if necessary
     super.dispose();
   }
 
@@ -187,6 +247,8 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     final bool isCtrlPressed =
         keyState.isControlPressed || keyState.isMetaPressed;
 
+    // Important: Update the *widget's* state (selectedTrackIds) via the callback
+    // The controller's state will be updated in the next build cycle via didUpdateWidget
     for (var row in addedRows) {
       final idCell = row.getCells().firstWhere((c) => c.columnName == 'id');
       if (idCell.value != null && idCell.value != -1) {
@@ -219,37 +281,18 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     }
   }
 
+  // Removed _getTrackIdFromIndex as hover logic is now in DataSource
+
   @override
   Widget build(BuildContext context) {
-    // context is available here
     if (!_isColumnsInitialized) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    // *** Create DataSource within build using the current context ***
-    final trackDataSource = TrackDataSource(
-      // removed context: context,
-      trackData: widget.tracks,
-      audioPlayerBloc: widget.audioPlayerBloc, // *** Pass bloc instance ***
-      onRatingChanged: widget.onRatingChanged,
-      onPlayPreviewAndMinimize: widget.onPlayPreviewAndMinimize,
-    );
-
     final colorScheme = Theme.of(context).colorScheme;
 
-    // Update DataGridController selection when external selection changes
-    final controller = DataGridController(
-      selectedRows:
-          trackDataSource.rows.where((row) {
-            // Use local trackDataSource instance
-            final idCell = row.getCells().firstWhere(
-              (c) => c.columnName == 'id',
-              orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
-            );
-            return idCell.value != null &&
-                widget.selectedTrackIds.contains(idCell.value as int);
-          }).toList(),
-    );
+    // --- Controller is no longer created here ---
+    // final controller = DataGridController(...)
 
     return Focus(
       focusNode: _focusNode,
@@ -258,10 +301,11 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
           selectionColor: colorScheme.primary.withOpacity(0.2),
           headerColor: colorScheme.surfaceVariant.withOpacity(0.5),
           headerHoverColor: colorScheme.primary.withOpacity(0.1),
+          // rowHoverColor: colorScheme.onSurface.withOpacity(0.04),
         ),
         child: SfDataGrid(
           key: _sfDataGridKey,
-          source: trackDataSource, // Use local trackDataSource instance
+          source: _trackDataSource, // Use the stored data source instance
           gridLinesVisibility: GridLinesVisibility.horizontal,
           headerGridLinesVisibility: GridLinesVisibility.both,
           headerRowHeight: 30,
@@ -269,6 +313,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
           allowColumnsResizing: true,
           columnResizeMode: ColumnResizeMode.onResize,
           onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
+            // --- Column Resize Logic (Unchanged) ---
             setState(() {
               final index = _gridColumns.indexWhere(
                 (col) => col.columnName == details.column.columnName,
@@ -326,6 +371,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
               }
             });
             return true;
+            // --- End Column Resize Logic ---
           },
           allowSorting: true,
           onColumnSortChanged: (
@@ -335,20 +381,22 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
             if (newSortColumn != null) {
               widget.onSort(newSortColumn.name, newSortColumn.sortDirection);
             } else {
+              // Default sort if sorting is cleared
               widget.onSort('title', DataGridSortDirection.ascending);
             }
           },
           selectionMode: SelectionMode.multiple,
           navigationMode: GridNavigationMode.row,
           onSelectionChanged: _handleGridSelectionChange,
-          controller: controller,
+          controller: _dataGridController, // Use the controller from state
           columns: _gridColumns,
+
+          // --- Context Menu (Right-Click) ---
           // onCellSecondaryTap: (DataGridCellSecondaryTapDetails details) {
-          //   int rowIndex = details.rowColumnIndex.rowIndex - 1;
-          //   if (rowIndex >= 0 && rowIndex < trackDataSource.rows.length) {
-          //     // Use local trackDataSource
-          //     final dataRow =
-          //         trackDataSource.rows[rowIndex]; // Use local trackDataSource
+          //   int rowIndex = details.rowColumnIndex.rowIndex;
+          //   // Adjust for header row (rowIndex 0 is header)
+          //   if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
+          //     final dataRow = _trackDataSource.rows[rowIndex - 1];
           //     final idCell = dataRow.getCells().firstWhere(
           //       (cell) => cell.columnName == 'id',
           //       orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
@@ -356,21 +404,23 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
           //     final int trackId = idCell.value as int? ?? -1;
           //     if (trackId != -1) {
           //       try {
+          //         // Find the track from the original widget list passed in
           //         final track = widget.tracks.firstWhere(
           //           (t) => t.id == trackId,
           //         );
-          //         final RenderBox cellRenderBox =
-          //             context.findRenderObject() as RenderBox;
-          //         final Offset globalPosition = cellRenderBox.localToGlobal(
-          //           details.localPosition,
+          //         // Use details.globalPosition for tap location
+          //         widget.onShowContextMenu(
+          //           context,
+          //           details.globalPosition,
+          //           track,
           //         );
-          //         widget.onShowContextMenu(context, globalPosition, track);
           //       } catch (e) {
           //         debugPrint("Error finding track for context menu: $e");
           //       }
           //     }
           //   }
           // },
+          // --- End Context Menu ---
         ),
       ),
     );
