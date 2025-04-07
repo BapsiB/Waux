@@ -166,23 +166,21 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   // --- UI Building Methods ---
 
   // Build the common toggle bar
+  // Build the common toggle bar
   Widget _buildToggleBar() {
     return Container(
-      height: 36,
+      height: 36, // Standard height for the toggle bar
       color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           IconButton(
-            icon: AnimatedIcon(
-              // Use AnimatedIcon for smoother transition
-              icon:
-                  AnimatedIcons
-                      .arrow_menu, // arrow_down / arrow_up look similar
-              progress: _animationController, // Driven by internal controller
+            icon: Icon(
+              widget.isMinimized
+                  ? Icons.keyboard_arrow_up
+                  : Icons.keyboard_arrow_down,
             ),
-            // Icon(widget.isMinimized ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
-            onPressed: widget.onToggle, // <<< Call the callback to HomeScreen
+            onPressed: widget.onToggle,
             tooltip: widget.isMinimized ? 'Expand player' : 'Minimize player',
           ),
         ],
