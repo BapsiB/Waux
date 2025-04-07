@@ -764,7 +764,6 @@ class _HomeScreenState extends State<HomeScreen> {
         Overlay.of(context).context.findRenderObject() as RenderBox;
     // Ensure the right-clicked track is selected
     if (!_selectedTrackIds.contains(track.id)) {
-      // ... (selection logic remains the same) ...
       setState(() {
         _selectedTrackIds.clear();
         if (track.id != null) _selectedTrackIds.add(track.id!);
@@ -954,7 +953,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Helper for context menu
   void _confirmAndDeleteSelected() {
-    // ... (implementation remains the same, includes stopping player if needed) ...
     if (_selectedTrackIds.isEmpty) return;
     final count = _selectedTrackIds.length;
     showDialog(
@@ -1314,7 +1312,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           isDense: true,
                           // Optional: Clear button
-                          // suffixIcon: _searchController.text.isNotEmpty ? IconButton(...) : null,
                         ),
                       ),
                     ),
