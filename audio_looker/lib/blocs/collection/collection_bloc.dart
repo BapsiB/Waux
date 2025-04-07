@@ -247,7 +247,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
 
   CollectionBloc(this._collectionService) : super(CollectionInitial()) {
     // Initialize AudioService
-    _audioService.initialize();
+    // _audioService.initialize();
 
     on<LoadCollection>(_onLoadCollection);
     on<AddTrackFromPath>(_onAddTrackFromPath);

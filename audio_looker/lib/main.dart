@@ -14,12 +14,15 @@ import 'services/playlist_service.dart'; // Import PlaylistService
 import 'screens/home_screen.dart';
 // Import other necessary files
 
-void main() {
+void main() async {
   // Ensure Flutter bindings are initialized
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize services
   final audioService = AudioService();
+  // Initialize the singleton instance
+  await audioService.initialize();
+
   final collectionService = CollectionService();
   final playlistService = PlaylistService(); // Initialize PlaylistService
 

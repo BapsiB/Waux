@@ -25,6 +25,22 @@ class AudioTag {
 }
 
 class AudioService {
+  static final AudioService _instance =
+      AudioService._internal(); // Private static instance
+
+  factory AudioService() {
+    // Public factory constructor
+    return _instance;
+  }
+
+  AudioService._internal() {
+    // Private named constructor
+    // Initialization logic that should run only once can go here
+    // Note: initialize() method still needs to be called externally if
+    // it contains async operations or needs to be controlled timing-wise.
+    print("AudioService Singleton instance created.");
+  }
+
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   // Playback properties
