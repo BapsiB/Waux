@@ -189,9 +189,15 @@ class CollectionDefinition {
 
 class CollectionService {
   // --- Constants ---
-  static const int _databaseVersion = 2; // Keep DB version
+  static const int _databaseVersion =
+      2; // Keep DB version (or increment if needed for playlist tables)
   static const String tableMusic = 'music';
-  // Column names remain the same
+  static const String tablePlaylists = 'playlists'; // <<< NEW
+  static const String tablePlaylistTracks = 'playlist_tracks'; // <<< NEW
+  static const String tableLocalRoots =
+      'local_root_folders'; // <<< Renamed for clarity
+
+  // Column names remain the same for music table
   static const String columnId = 'id';
   static const String columnTitle = 'title';
   static const String columnArtist = 'artist';
@@ -199,16 +205,25 @@ class CollectionService {
   static const String columnPath = 'path'; // Holds absolute OR relative path
   static const String columnIsUrl = 'isUrl';
   static const String columnDuration = 'duration';
-  static const String columnTags = 'tags';
+  static const String columnTags = 'tags'; // Time-based tags
   static const String columnWaveformData = 'waveformData';
   static const String columnRating = 'rating';
   static const String columnComment = 'comment';
   static const String columnGeneralTags = 'generalTags';
 
+  // Playlist table columns <<< NEW
+  static const String columnPlaylistId = 'id';
+  static const String columnPlaylistName = 'name';
+
+  // Playlist tracks table columns <<< NEW
+  static const String columnPlaylistTracksPlaylistId = 'playlist_id';
+  static const String columnPlaylistTracksTrackPath =
+      'track_path'; // Relative/Absolute based on collection
+  static const String columnPlaylistTracksSortOrder = 'sort_order';
+
   // SharedPreferences Keys
   static const String _collectionDefinitionsKey = 'collection_definitions_list';
   static const String _generalTagsKey = 'general_tags_list'; // Global tags
-  // REMOVED: _rootFoldersKey (now managed per local collection or via definition)
 
   // --- State ---
   Database? _database; // Connection to the *active* database
@@ -226,7 +241,8 @@ class CollectionService {
   // final AudioService _audioService = AudioService();
 
   // --- Collection Definition Management (using SharedPreferences) ---
-
+  // (Methods: loadCollectionDefinitions, _saveCollectionDefinitions, addCollectionDefinition, removeCollectionDefinition)
+  // ... (Keep existing methods from previous step) ...
   Future<List<CollectionDefinition>> loadCollectionDefinitions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -285,28 +301,19 @@ class CollectionService {
   }
 
   // --- Service Lifecycle & Collection Switching ---
-
-  // Initializes the service, potentially loading the last active collection
+  // (Methods: initialize, openCollection, closeCollection, getActiveCollection)
+  // ... (Keep existing methods from previous step) ...
   Future<void> initialize() async {
-    // TODO: Load last active collection ID from Prefs?
-    // For now, we just prepare for opening a collection later.
     print("CollectionService initialized. Ready to open a collection.");
-    // await _audioService.initialize(); // If using AudioService
   }
 
-  // Opens a specific collection
   Future<void> openCollection(CollectionDefinition definition) async {
     setLoading(true);
     print("Opening collection: ${definition.name} (${definition.type.name})");
     try {
-      // Close existing DB if open
       await closeCollection();
-
       _activeCollectionDefinition = definition;
-
-      // Determine the actual DB path
       String dbFilePath = definition.dbPath;
-      // For shared, ensure the directory exists (it's the rootPath)
       if (definition.type == CollectionType.shared) {
         final dbDir = Directory(definition.rootPath!);
         if (!await dbDir.exists()) {
@@ -314,41 +321,32 @@ class CollectionService {
             "Shared collection root directory does not exist: ${definition.rootPath}",
           );
         }
-        // dbPath in definition for shared IS the full path including filename
       } else {
-        // For local, ensure the directory exists (app data dir)
         final dbDir = Directory(pathLib.dirname(dbFilePath));
         if (!await dbDir.exists()) {
           await dbDir.create(recursive: true);
         }
       }
-
-      // Open the database
       _database = await _initDatabase(dbFilePath);
       print("Database opened at: $dbFilePath");
-
-      // Load root folders IF it's a local collection
       if (definition.type == CollectionType.local) {
         await _loadLocalCollectionRootFolders();
       } else {
-        _localCollectionRootFolders = []; // Clear for shared collections
+        _localCollectionRootFolders = [];
       }
-
       print("Collection ${definition.name} opened successfully.");
     } catch (e, stackTrace) {
       print("Error opening collection ${definition.name}: $e");
       print(stackTrace);
-      _activeCollectionDefinition = null; // Reset active definition on error
+      _activeCollectionDefinition = null;
       _database = null;
       _localCollectionRootFolders = [];
-      // Rethrow or handle error appropriately
       rethrow;
     } finally {
       setLoading(false);
     }
   }
 
-  // Closes the currently active collection
   Future<void> closeCollection() async {
     if (_database != null && _database!.isOpen) {
       await _database!.close();
@@ -361,32 +359,44 @@ class CollectionService {
     _localCollectionRootFolders = [];
   }
 
-  // Returns the currently active collection definition, if any
   CollectionDefinition? getActiveCollection() {
     return _activeCollectionDefinition;
   }
 
+  // <<< NEW: Helper to get the active DB connection >>>
+  Database? getActiveDatabase() {
+    // Ensure DB is open before returning
+    if (_database != null && _database!.isOpen) {
+      return _database;
+    }
+    print("Warning: getActiveDatabase called but database is null or closed.");
+    return null;
+  }
+
   // Modified: Initializes or opens database at a specific path
   Future<Database> _initDatabase(String dbPath) async {
-    // Ensure the directory exists before opening
     final dbDir = Directory(pathLib.dirname(dbPath));
     if (!await dbDir.exists()) {
       await dbDir.create(recursive: true);
       print("Created database directory: ${dbDir.path}");
     }
-
     return await openDatabase(
       dbPath,
-      version: _databaseVersion,
+      version: _databaseVersion, // Use the constant
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      // Enable foreign keys for cascade delete
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
     );
   }
 
-  // _onCreate and _onUpgrade remain the same (define table structure)
+  // --- MODIFIED: _onCreate includes playlist tables ---
   Future _onCreate(Database db, int version) async {
+    // Music Table
     await db.execute('''
-      CREATE TABLE $tableMusic (
+      CREATE TABLE IF NOT EXISTS $tableMusic (
         $columnId INTEGER PRIMARY KEY,
         $columnTitle TEXT NOT NULL,
         $columnArtist TEXT NOT NULL,
@@ -401,17 +411,38 @@ class CollectionService {
         $columnGeneralTags TEXT
       )
     ''');
-    // --- NEW: Table for local collection root folders ---
+    // Local Root Folders Table
     await db.execute('''
-      CREATE TABLE local_root_folders (
+      CREATE TABLE IF NOT EXISTS $tableLocalRoots (
         path TEXT PRIMARY KEY
       )
     ''');
+    // --- Playlist Tables ---
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tablePlaylists (
+        $columnPlaylistId TEXT PRIMARY KEY,
+        $columnPlaylistName TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tablePlaylistTracks (
+        $columnPlaylistTracksPlaylistId TEXT NOT NULL,
+        $columnPlaylistTracksTrackPath TEXT NOT NULL,
+        $columnPlaylistTracksSortOrder INTEGER,
+        FOREIGN KEY ($columnPlaylistTracksPlaylistId) REFERENCES $tablePlaylists ($columnPlaylistId) ON DELETE CASCADE
+      )
+    ''');
+    // Add index for faster track lookup in playlists
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_id
+      ON $tablePlaylistTracks ($columnPlaylistTracksPlaylistId)
+    ''');
   }
 
+  // --- MODIFIED: _onUpgrade potentially adds playlist tables if upgrading ---
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      // Add new columns for version 2
+      // Add new columns for version 2 to music table
       try {
         await db.execute(
           'ALTER TABLE $tableMusic ADD COLUMN $columnWaveformData TEXT',
@@ -440,24 +471,48 @@ class CollectionService {
       } catch (e) {
         print("Could not add $columnGeneralTags: $e");
       }
+      // Add tables introduced in v2 (local roots, playlists)
       try {
-        // Add root folders table only if upgrading from v1
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS local_root_folders (
-              path TEXT PRIMARY KEY
-            )
-          ''');
+        await db.execute(
+          'CREATE TABLE IF NOT EXISTS $tableLocalRoots (path TEXT PRIMARY KEY)',
+        );
       } catch (e) {
-        print("Could not add local_root_folders table: $e");
+        print("Could not add $tableLocalRoots table: $e");
+      }
+      try {
+        await db.execute(
+          'CREATE TABLE IF NOT EXISTS $tablePlaylists ($columnPlaylistId TEXT PRIMARY KEY, $columnPlaylistName TEXT NOT NULL)',
+        );
+      } catch (e) {
+        print("Could not add $tablePlaylists table: $e");
+      }
+      try {
+        await db.execute('''
+              CREATE TABLE IF NOT EXISTS $tablePlaylistTracks (
+                $columnPlaylistTracksPlaylistId TEXT NOT NULL,
+                $columnPlaylistTracksTrackPath TEXT NOT NULL,
+                $columnPlaylistTracksSortOrder INTEGER,
+                FOREIGN KEY ($columnPlaylistTracksPlaylistId) REFERENCES $tablePlaylists ($columnPlaylistId) ON DELETE CASCADE
+              )
+            ''');
+        await db.execute('''
+              CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_id
+              ON $tablePlaylistTracks ($columnPlaylistTracksPlaylistId)
+            ''');
+      } catch (e) {
+        print("Could not add $tablePlaylistTracks table/index: $e");
       }
     }
-    // Add future upgrade logic here
-    // if (oldVersion < 3) { ... }
+    // Add future upgrade logic here for version 3, 4, etc.
+    // if (oldVersion < 3) {
+    //    // Example: Add a description column to playlists
+    //    try { await db.execute('ALTER TABLE $tablePlaylists ADD COLUMN description TEXT'); } catch (e) { print("Could not add description column: $e"); }
+    // }
   }
 
   // --- Root Folder Management (Revised) ---
-
-  // Loads root folders for the *active local* collection from its DB
+  // (Methods: _loadLocalCollectionRootFolders, addRootFolder, removeRootFolder, getRootFolders)
+  // ... (Keep existing methods from previous step) ...
   Future<void> _loadLocalCollectionRootFolders() async {
     if (_database == null ||
         !_database!.isOpen ||
@@ -467,7 +522,7 @@ class CollectionService {
     }
     try {
       final List<Map<String, dynamic>> maps = await _database!.query(
-        'local_root_folders',
+        tableLocalRoots,
       );
       _localCollectionRootFolders =
           maps.map((map) => map['path'] as String).toList();
@@ -480,28 +535,22 @@ class CollectionService {
     }
   }
 
-  // Adds a root folder path to the *active local* collection's DB
   Future<void> addRootFolder(String folderPath) async {
     if (_activeCollectionDefinition?.type != CollectionType.local) {
       print('Cannot add root folders to non-local collections.');
-      return; // Or throw an error
+      return;
     }
     if (_database == null || !_database!.isOpen) {
       print('Error: Database not open in addRootFolder');
       return;
     }
-
     final normalizedPath = folderPath.replaceAll('\\', '/');
     if (!_localCollectionRootFolders.contains(normalizedPath)) {
       try {
-        await _database!.insert(
-          'local_root_folders',
-          {'path': normalizedPath},
-          conflictAlgorithm: ConflictAlgorithm.ignore, // Ignore if exists
-        );
-        _localCollectionRootFolders.add(
-          normalizedPath,
-        ); // Update in-memory list
+        await _database!.insert(tableLocalRoots, {
+          'path': normalizedPath,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        _localCollectionRootFolders.add(normalizedPath);
         print('Added root folder to local collection: $normalizedPath');
       } catch (e) {
         print('Error adding local root folder to DB: $e');
@@ -509,7 +558,6 @@ class CollectionService {
     }
   }
 
-  // Removes a root folder path from the *active local* collection's DB
   Future<void> removeRootFolder(String folderPath) async {
     if (_activeCollectionDefinition?.type != CollectionType.local) {
       print('Cannot remove root folders from non-local collections.');
@@ -519,18 +567,15 @@ class CollectionService {
       print('Error: Database not open in removeRootFolder');
       return;
     }
-
     final normalizedPath = folderPath.replaceAll('\\', '/');
     try {
       final count = await _database!.delete(
-        'local_root_folders',
+        tableLocalRoots,
         where: 'path = ?',
         whereArgs: [normalizedPath],
       );
       if (count > 0) {
-        _localCollectionRootFolders.remove(
-          normalizedPath,
-        ); // Update in-memory list
+        _localCollectionRootFolders.remove(normalizedPath);
         print('Removed root folder from local collection: $normalizedPath');
       }
     } catch (e) {
@@ -538,60 +583,72 @@ class CollectionService {
     }
   }
 
-  // Gets root folders for the *active* collection
   List<String> getRootFolders() {
     if (_activeCollectionDefinition?.type == CollectionType.shared) {
-      // Shared collections have exactly one root
       return [_activeCollectionDefinition!.rootPath!];
     } else if (_activeCollectionDefinition?.type == CollectionType.local) {
-      // Return the list loaded for the active local collection
       return List<String>.unmodifiable(_localCollectionRootFolders);
     } else {
-      // No active collection or unknown type
       return [];
     }
   }
 
   // --- Track CRUD Operations (Revised for Path Handling) ---
-
-  // Helper to resolve path before returning Track object
+  // (Helpers: _resolveTrackPath, _prepareTrackForDb)
+  // (Methods: addTrack, updateTrack, deleteTrack, getTrack, getTrackByPath, getAllTracks, searchTracks)
+  // ... (Keep existing methods from previous step) ...
   Track _resolveTrackPath(Track track) {
     if (_activeCollectionDefinition?.type == CollectionType.shared &&
-        !track.isUrl && // Don't resolve URLs
+        !track.isUrl &&
         _activeCollectionDefinition?.rootPath != null) {
-      // Prepend root path to the stored relative path
-      final absolutePath = pathLib.join(
-        _activeCollectionDefinition!.rootPath!,
-        track.path,
-      );
-      // Return a new Track instance with the resolved absolute path
-      return track.copyWith(path: absolutePath);
+      try {
+        final absolutePath = pathLib.join(
+          _activeCollectionDefinition!.rootPath!,
+          track.path,
+        );
+        return track.copyWith(path: absolutePath);
+      } catch (e) {
+        print(
+          "Error resolving relative path ${track.path} with root ${_activeCollectionDefinition!.rootPath}: $e",
+        );
+        // Return original track if resolution fails
+        return track;
+      }
     }
-    // For local collections or URLs, the path is already absolute
     return track;
   }
 
-  // Helper to prepare track data for DB insertion/update
   Map<String, dynamic> _prepareTrackForDb(Track track) {
     String pathToStore = track.path;
     if (_activeCollectionDefinition?.type == CollectionType.shared &&
         !track.isUrl &&
         _activeCollectionDefinition?.rootPath != null) {
-      // Calculate and store relative path
       try {
-        pathToStore = pathLib.relative(
-          track.path,
-          from: _activeCollectionDefinition!.rootPath!,
-        );
+        // Ensure paths are absolute before making relative
+        if (!pathLib.isAbsolute(track.path)) {
+          print(
+            "Warning: Trying to make non-absolute path relative: ${track.path}",
+          );
+          // Decide on fallback: store as is, or throw error? Storing as is for now.
+        } else if (!pathLib.isAbsolute(
+          _activeCollectionDefinition!.rootPath!,
+        )) {
+          print(
+            "Warning: Root path is not absolute: ${_activeCollectionDefinition!.rootPath}",
+          );
+        } else {
+          pathToStore = pathLib.relative(
+            track.path,
+            from: _activeCollectionDefinition!.rootPath!,
+          );
+        }
       } catch (e) {
         print(
           "Warning: Could not make path relative for ${track.path} against root ${_activeCollectionDefinition!.rootPath}. Storing absolute path. Error: $e",
         );
-        // Fallback to absolute path if relative calculation fails (e.g., different drives on Windows)
         pathToStore = track.path;
       }
     }
-    // Create a temporary track with the path to store, then convert to JSON
     return track.copyWith(path: pathToStore).toJson();
   }
 
@@ -634,112 +691,96 @@ class CollectionService {
     );
     if (maps.isNotEmpty) {
       final track = Track.fromJson(maps.first);
-      return _resolveTrackPath(track); // Resolve path before returning
+      return _resolveTrackPath(track);
     }
     return null;
   }
 
-  // Get track by path - needs careful handling for shared collections
   Future<Track?> getTrackByPath(String absolutePath) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
-
     String pathQuery = absolutePath;
-    // If searching in a shared collection, convert the absolute path to relative for the query
     if (_activeCollectionDefinition?.type == CollectionType.shared &&
         _activeCollectionDefinition?.rootPath != null) {
       try {
-        // Ensure the input path is actually within the root
-        if (pathLib.isWithin(
-          _activeCollectionDefinition!.rootPath!,
-          absolutePath,
-        )) {
+        if (pathLib.isAbsolute(absolutePath) &&
+            pathLib.isWithin(
+              _activeCollectionDefinition!.rootPath!,
+              absolutePath,
+            )) {
           pathQuery = pathLib.relative(
             absolutePath,
             from: _activeCollectionDefinition!.rootPath!,
           );
+        } else if (!pathLib.isAbsolute(absolutePath)) {
+          // If input is already relative maybe? Less likely scenario. Query as is.
+          pathQuery = absolutePath;
+          print(
+            "Warning: getTrackByPath received potentially relative path for shared collection: $absolutePath",
+          );
         } else {
-          // Path is not within the shared root, it cannot exist in this DB
           return null;
         }
       } catch (e) {
         print(
           "Warning: Could not make search path relative. Querying absolute path. Error: $e",
         );
-        pathQuery = absolutePath; // Fallback
+        pathQuery = absolutePath;
       }
     }
-
     final List<Map<String, dynamic>> maps = await _database!.query(
       tableMusic,
-      where:
-          '$columnPath = ?', // Query the path stored in DB (relative or absolute)
+      where: '$columnPath = ?',
       whereArgs: [pathQuery],
     );
-
     if (maps.isNotEmpty) {
       final track = Track.fromJson(maps.first);
-      // Resolve path even if found via relative, so caller always gets absolute
       return _resolveTrackPath(track);
     }
     return null;
   }
 
   Future<List<Track>> getAllTracks() async {
-    if (_database == null || !_database!.isOpen)
-      return []; // Return empty if DB not open
+    if (_database == null || !_database!.isOpen) return [];
     final List<Map<String, dynamic>> maps = await _database!.query(tableMusic);
-    // Resolve paths for all tracks before returning
     return maps.map((map) => _resolveTrackPath(Track.fromJson(map))).toList();
   }
 
-  // Modified search to handle path resolution and potentially relative paths
   Future<List<Track>> searchTracks(String query) async {
     if (_database == null || !_database!.isOpen) return [];
-
     final String lowercaseQuery = query.toLowerCase();
     final String wildcardQuery = '%$lowercaseQuery%';
-
-    // Base WHERE clause
     String whereClause = '''
       LOWER($columnTitle) LIKE ? OR
       LOWER($columnArtist) LIKE ? OR
       LOWER($columnAlbum) LIKE ? OR
       LOWER($columnComment) LIKE ? OR
-      LOWER($columnGeneralTags) LIKE ?
+      LOWER($columnGeneralTags) LIKE ? OR
+      LOWER($columnPath) LIKE ?
     ''';
     List<dynamic> whereArgs = [
-      wildcardQuery, // title
-      wildcardQuery, // artist
-      wildcardQuery, // album
-      wildcardQuery, // comment
-      wildcardQuery, // generalTags
+      wildcardQuery,
+      wildcardQuery,
+      wildcardQuery,
+      wildcardQuery,
+      wildcardQuery,
+      wildcardQuery,
     ];
-
-    // Add path search - slightly different for shared vs local
-    // For simplicity, we search the stored path (relative or absolute)
-    // A more advanced search might try resolving relative paths first.
-    whereClause += ' OR LOWER($columnPath) LIKE ?';
-    whereArgs.add(wildcardQuery); // Search stored path value
-
     final List<Map<String, dynamic>> maps = await _database!.query(
       tableMusic,
       where: whereClause,
       whereArgs: whereArgs,
     );
-
-    // Resolve paths for all found tracks
     return maps.map((map) => _resolveTrackPath(Track.fromJson(map))).toList();
   }
 
-  // --- Metadata Update Methods (Mostly Unchanged Logic, operate on active DB) ---
-
+  // --- Metadata Update Methods ---
+  // (Methods: updateRating, updateComment, addGeneralTag, removeGeneralTag)
+  // ... (Keep existing methods from previous step) ...
   Future<void> updateRating(int trackId, int rating) async {
-    final track = await getTrack(trackId); // getTrack already resolves path
+    final track = await getTrack(trackId);
     if (track != null) {
-      // Use copyWith which doesn't affect the path resolution
       final updatedTrack = track.copyWith(rating: rating);
-      // updateTrack handles storing relative/absolute path correctly
       await updateTrack(updatedTrack);
     }
   }
@@ -753,7 +794,6 @@ class CollectionService {
   }
 
   Future<void> addGeneralTag(int trackId, String tag) async {
-    // Need to get the track *without* resolved path to update DB correctly
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
     final List<Map<String, dynamic>> maps = await _database!.query(
@@ -762,20 +802,16 @@ class CollectionService {
       whereArgs: [trackId],
     );
     if (maps.isEmpty) return;
-    final trackFromDb = Track.fromJson(maps.first); // Path is as stored in DB
-
+    final trackFromDb = Track.fromJson(maps.first);
     final tags = List<String>.from(trackFromDb.generalTags);
     if (!tags.contains(tag)) {
       tags.add(tag);
-      // Use copyWith on the track fetched directly from DB
       final updatedTrack = trackFromDb.copyWith(generalTags: tags);
-      // updateTrack expects a Track object, it will handle path prep internally
-      await updateTrack(updatedTrack);
+      await updateTrack(updatedTrack); // Handles path prep
     }
   }
 
   Future<void> removeGeneralTag(int trackId, String tag) async {
-    // Need to get the track *without* resolved path to update DB correctly
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
     final List<Map<String, dynamic>> maps = await _database!.query(
@@ -784,16 +820,16 @@ class CollectionService {
       whereArgs: [trackId],
     );
     if (maps.isEmpty) return;
-    final trackFromDb = Track.fromJson(maps.first); // Path is as stored in DB
-
+    final trackFromDb = Track.fromJson(maps.first);
     final tags = List<String>.from(trackFromDb.generalTags);
     tags.remove(tag);
     final updatedTrack = trackFromDb.copyWith(generalTags: tags);
-    await updateTrack(updatedTrack);
+    await updateTrack(updatedTrack); // Handles path prep
   }
 
   // --- Tag Definition Management (Global via SharedPreferences - Unchanged) ---
-
+  // (Methods: getAllTags, _saveAllTags, addTag, removeTag, updateTag)
+  // ... (Keep existing methods from previous step) ...
   Future<List<Tag>> getAllTags() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -841,9 +877,6 @@ class CollectionService {
     if (currentTags.length < originalLength) {
       await _saveAllTags(currentTags);
       print('Removed general tag: $tagName');
-      // TODO: Need BLoC/UI logic to remove this tag from all tracks across *all collections*
-      // This becomes much harder now. Maybe tag removal should only affect the active collection?
-      // For now, it just removes the definition globally.
     } else {
       print('General tag "$tagName" not found for removal.');
     }
@@ -862,7 +895,8 @@ class CollectionService {
   }
 
   // --- Utility Methods ---
-
+  // (Methods: setLoading, isLoading, dispose)
+  // ... (Keep existing methods from previous step) ...
   void setLoading(bool loading) {
     if (_isLoading != loading) {
       _isLoading = loading;
@@ -871,61 +905,44 @@ class CollectionService {
   }
 
   bool get isLoading => _isLoading;
-
   Future<void> dispose() async {
-    await closeCollection(); // Ensure active DB is closed
+    await closeCollection();
     await _loadingController.close();
-    // await _audioService.dispose(); // If used
     print("CollectionService disposed.");
   }
 
   // --- Methods needing review/implementation based on AudioService ---
-  // addUrl, updateWaveformForTrack, needsWaveformLoading, addMultipleFiles
-  // These need to be adapted to use the active collection context (type, rootPath)
-  // and the _prepareTrackForDb / _resolveTrackPath helpers.
-  // Example for addLocalFile:
+  // (Methods: addLocalFile, addUrl, importFromFile, exportToFile)
+  // ... (Keep existing methods from previous step, ensure they use helpers) ...
   Future<Track> addLocalFile(String filePath) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
     if (_activeCollectionDefinition == null)
       throw Exception("No active collection");
-
-    // Check if track already exists (using absolute path for check)
     final existingTrack = await getTrackByPath(filePath);
     if (existingTrack != null) {
       print('Track already exists in database: ${existingTrack.title}');
-      // TODO: Add waveform update logic if needed, similar to original code
-      return existingTrack; // Return the resolved track
+      return existingTrack;
     }
-
-    // TODO: Extract metadata (title, artist, duration) - Placeholder:
     final filename = pathLib.basename(filePath);
     final title = pathLib.basenameWithoutExtension(filePath);
-
-    // TODO: Extract waveform data (using AudioService?) - Placeholder:
-    List<double>? waveformData; // = await _loadWaveformData(filePath, false);
-
-    // Create track with ABSOLUTE path initially
+    List<double>? waveformData; // Placeholder
     final track = Track(
       title: title,
       artist: 'Unknown',
       album: 'Unknown',
-      path: filePath, // Absolute path
+      path: filePath,
       isUrl: false,
-      duration: 0, // Placeholder
+      duration: 0,
       waveformData: waveformData,
       rating: 0,
       comment: '',
       generalTags: [],
     );
-
-    // addTrack handles storing relative/absolute path based on active collection
-    final id = await addTrack(track);
-    // Return the track with ID, resolving path if necessary for the caller
+    final id = await addTrack(track); // Handles path prep
     return _resolveTrackPath(track.copyWith(id: id));
   }
 
-  // --- ADDED addUrl Method ---
   Future<Track> addUrl(String url) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
@@ -933,77 +950,53 @@ class CollectionService {
       throw Exception("No active collection");
     setLoading(true);
     try {
-      // Check if URL already exists (URLs are always absolute)
       final existingTrack = await getTrackByPath(url);
       if (existingTrack != null) {
         print('URL already exists in database: ${existingTrack.title}');
-        // TODO: Add waveform update logic if needed
-        return existingTrack; // Return resolved track
+        return existingTrack;
       }
-
-      // Extract basic info from URL as placeholder
       final uri = Uri.parse(url);
       final filename = pathLib.basename(uri.path);
-      final title =
-          filename.isNotEmpty ? filename : url; // Use URL if path is empty
-
-      // TODO: Extract waveform data (using AudioService?) - Placeholder:
-      List<double>? waveformData; // = await _loadWaveformData(url, true);
-
-      // Create track with URL as path
+      final title = filename.isNotEmpty ? filename : url;
+      List<double>? waveformData; // Placeholder
       final track = Track(
         title: title,
-        artist: 'Unknown', // Placeholder
-        album: 'Unknown', // Placeholder
-        path: url, // Store the URL directly
+        artist: 'Unknown',
+        album: 'Unknown',
+        path: url,
         isUrl: true,
-        duration: 0, // Placeholder - might get from stream later
+        duration: 0,
         waveformData: waveformData,
         rating: 0,
         comment: '',
         generalTags: [],
       );
-
-      // addTrack handles URLs correctly (doesn't try to make relative)
-      final id = await addTrack(track);
-      // Return the track with ID, resolving path (which does nothing for URLs)
-      return _resolveTrackPath(track.copyWith(id: id));
+      final id = await addTrack(track); // Handles path prep (no-op for URL)
+      return _resolveTrackPath(
+        track.copyWith(id: id),
+      ); // Resolves path (no-op for URL)
     } catch (e) {
       print('Error adding URL: $e');
-      rethrow; // Rethrow the error to be handled by the caller (e.g., BLoC)
+      rethrow;
     } finally {
       setLoading(false);
     }
   }
 
-  // Placeholder - needs implementation detail based on AudioService interaction
-  // Future<List<double>?> _loadWaveformData(String source, bool isUrl) async { return null; }
-
-  // --- Import/Export (Needs adaptation) ---
-  // Export needs to resolve paths to absolute before saving JSON
-  // Import needs to make paths relative if importing into a shared collection
-
   Future<void> importFromFile(String jsonFilePath) async {
-    // TODO: Implement - Read JSON, check active collection type,
-    // make paths relative if importing to 'shared', add tracks.
     print("Import not fully implemented for hybrid collections.");
+    // TODO: Read JSON, check active collection type, make paths relative if importing to 'shared', add tracks.
   }
 
   Future<void> exportToFile(String jsonFilePath) async {
-    // TODO: Implement - Get all tracks (paths will be resolved to absolute),
-    // convert to JSON, write file.
-    print("Export not fully implemented for hybrid collections.");
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
     try {
       final tracks =
           await getAllTracks(); // Gets tracks with resolved absolute paths
-      final jsonData =
-          tracks
-              .map((track) => track.toJson())
-              .toList(); // toJson uses the path field
+      // Convert to JSON using the absolute paths suitable for export
+      final jsonData = tracks.map((track) => track.toJson()).toList();
       final jsonString = jsonEncode(jsonData);
-
       final file = File(jsonFilePath);
       await file.writeAsString(jsonString);
       print("Exported active collection to $jsonFilePath");

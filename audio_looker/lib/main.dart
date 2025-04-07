@@ -79,6 +79,7 @@ class MyApp extends StatelessWidget {
             create:
                 (context) => PlaylistBloc(
                   playlistService: context.read<PlaylistService>(),
+                  collectionService: collectionService,
                 )..add(LoadPlaylists()), // Load initial playlists
           ),
           // Add other BLoCs if needed

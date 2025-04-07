@@ -1,198 +1,336 @@
-// lib/services/playlist_service.dart
+import 'dart:async';
+import 'package:sqflite/sqflite.dart'; // Required for DB operations
+import 'package:path/path.dart' as pathLib; // Use alias
+import 'package:uuid/uuid.dart'; // For generating playlist IDs
 
-import 'dart:convert'; // Required for jsonEncode/jsonDecode
-import 'package:shared_preferences/shared_preferences.dart'; // Import shared_preferences
+// Import models and the CollectionService
 import '../models/playlist.dart';
+import 'collection_service.dart'; // To get active DB and collection info
 
-/// Service responsible for managing playlist data (CRUD operations).
-/// Uses SharedPreferences for persistence.
+/// Service responsible for managing playlist data within the active collection's database.
 class PlaylistService {
-  // Key for storing the playlist list in SharedPreferences
-  static const String _playlistsStorageKey = 'playlists_data';
+  // --- Database Table/Column Constants ---
+  static const String tablePlaylists = 'playlists';
+  static const String tablePlaylistTracks = 'playlist_tracks';
+  static const String columnPlaylistId = 'id';
+  static const String columnPlaylistName = 'name';
+  static const String columnPlaylistTracksPlaylistId = 'playlist_id';
+  static const String columnPlaylistTracksTrackPath = 'track_path';
+  static const String columnPlaylistTracksSortOrder = 'sort_order';
 
-  // In-memory cache of playlists. Loaded from storage on startup.
-  List<Playlist> _playlists = [];
-  bool _isInitialized = false; // Flag to prevent multiple initial loads
-
-  /// Ensures playlists are loaded from storage. Call before accessing playlists.
-  Future<void> _ensureInitialized() async {
-    if (!_isInitialized) {
-      await loadPlaylists();
-      _isInitialized = true;
-    }
-  }
-
-  /// Loads playlists from SharedPreferences.
-  ///
-  /// This is typically called once when the service/app starts.
-  Future<List<Playlist>> loadPlaylists() async {
-    // Simulate loading delay (optional)
-    // await Future.delayed(const Duration(milliseconds: 100));
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final String? playlistsJson = prefs.getString(_playlistsStorageKey);
-
-      if (playlistsJson != null) {
-        final List<dynamic> decodedList = jsonDecode(playlistsJson);
-        _playlists =
-            decodedList
-                .map(
-                  (jsonItem) =>
-                      Playlist.fromJson(jsonItem as Map<String, dynamic>),
-                )
-                .toList();
-        print(
-          "PlaylistService: Loaded ${_playlists.length} playlists from SharedPreferences.",
-        );
-      } else {
-        _playlists = []; // Initialize empty if nothing is saved yet
-        print(
-          "PlaylistService: No playlists found in SharedPreferences, initializing empty list.",
-        );
-      }
-    } catch (e) {
-      print(
-        "PlaylistService: Error loading playlists from SharedPreferences: $e",
-      );
-      _playlists = []; // Initialize empty on error
-    }
-    _isInitialized = true; // Mark as initialized even if loading failed
-    return List.unmodifiable(_playlists); // Return a copy
-  }
-
-  /// Saves the current list of playlists to SharedPreferences.
-  Future<void> _persistPlaylists() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      // Convert the list of Playlist objects to a list of JSON maps
-      final List<Map<String, dynamic>> playlistsJsonList =
-          _playlists.map((p) => p.toJson()).toList();
-      // Encode the list of maps into a single JSON string
-      final String encodedData = jsonEncode(playlistsJsonList);
-      // Save the JSON string
-      await prefs.setString(_playlistsStorageKey, encodedData);
-      print(
-        "PlaylistService: Persisted ${_playlists.length} playlists to SharedPreferences.",
-      );
-    } catch (e) {
-      print(
-        "PlaylistService: Error persisting playlists to SharedPreferences: $e",
-      );
-    }
-  }
-
-  /// Gets all playlists (ensures they are loaded first).
-  Future<List<Playlist>> getAllPlaylists() async {
-    await _ensureInitialized();
-    return List.unmodifiable(_playlists);
-  }
-
-  /// Saves a new playlist or updates an existing one, then persists.
-  Future<void> savePlaylist(Playlist playlist) async {
-    await _ensureInitialized();
-    final index = _playlists.indexWhere((p) => p.id == playlist.id);
-    if (index != -1) {
-      // Update existing playlist
-      _playlists[index] = playlist;
-      print("PlaylistService: Updated playlist '${playlist.name}'.");
-    } else {
-      // Add new playlist
-      _playlists.add(playlist);
-      print("PlaylistService: Created new playlist '${playlist.name}'.");
-    }
-    // Persist changes to storage
-    await _persistPlaylists();
-  }
-
-  /// Deletes a playlist by its ID, then persists.
-  Future<void> deletePlaylist(String playlistId) async {
-    await _ensureInitialized();
-    final initialLength = _playlists.length;
-    _playlists.removeWhere((p) => p.id == playlistId);
-    if (_playlists.length < initialLength) {
-      print("PlaylistService: Deleted playlist with ID '$playlistId'.");
-      // Persist changes to storage
-      await _persistPlaylists();
-    } else {
-      print(
-        "PlaylistService: Playlist with ID '$playlistId' not found for deletion.",
-      );
-    }
-  }
-
-  /// Adds a track path to a specific playlist, then persists.
-  Future<void> addTrackToPlaylist(String playlistId, String trackPath) async {
-    await _ensureInitialized();
-    final index = _playlists.indexWhere((p) => p.id == playlistId);
-    if (index != -1) {
-      final playlist = _playlists[index];
-      if (!playlist.trackPaths.contains(trackPath)) {
-        final updatedPaths = List<String>.from(playlist.trackPaths)
-          ..add(trackPath);
-        _playlists[index] = playlist.copyWith(trackPaths: updatedPaths);
-        print(
-          "PlaylistService: Added track '$trackPath' to playlist '${playlist.name}'.",
-        );
-        // Persist changes to storage
-        await _persistPlaylists();
-      } else {
-        print(
-          "PlaylistService: Track '$trackPath' already exists in playlist '${playlist.name}'.",
-        );
-      }
-    } else {
-      print(
-        "PlaylistService: Playlist with ID '$playlistId' not found for adding track.",
-      );
-    }
-  }
-
-  /// Removes a track path from a specific playlist, then persists.
-  Future<void> removeTrackFromPlaylist(
-    String playlistId,
-    String trackPath,
+  /// Loads playlists for the currently active collection.
+  /// Requires the [collectionService] to access the active database and collection info.
+  Future<List<Playlist>> loadPlaylists(
+    CollectionService collectionService,
   ) async {
-    await _ensureInitialized();
-    final index = _playlists.indexWhere((p) => p.id == playlistId);
-    if (index != -1) {
-      final playlist = _playlists[index];
-      if (playlist.trackPaths.contains(trackPath)) {
-        final updatedPaths = List<String>.from(playlist.trackPaths)
-          ..remove(trackPath);
-        _playlists[index] = playlist.copyWith(trackPaths: updatedPaths);
-        print(
-          "PlaylistService: Removed track '$trackPath' from playlist '${playlist.name}'.",
+    final db = collectionService.getActiveDatabase();
+    final activeCollection = collectionService.getActiveCollection();
+    if (db == null || activeCollection == null) {
+      print("PlaylistService: Cannot load playlists, no active collection/DB.");
+      return [];
+    }
+
+    try {
+      final List<Map<String, dynamic>> playlistMaps = await db.query(
+        tablePlaylists,
+      );
+      final List<Playlist> playlists = [];
+
+      for (var map in playlistMaps) {
+        final playlistId = map[columnPlaylistId] as String;
+        final playlistName = map[columnPlaylistName] as String;
+
+        // Fetch tracks for this playlist
+        final List<Map<String, dynamic>> trackMaps = await db.query(
+          tablePlaylistTracks,
+          where: '$columnPlaylistTracksPlaylistId = ?',
+          whereArgs: [playlistId],
+          orderBy:
+              '$columnPlaylistTracksSortOrder ASC', // Optional: Load in order
         );
-        // Persist changes to storage
-        await _persistPlaylists();
-      } else {
-        print(
-          "PlaylistService: Track '$trackPath' not found in playlist '${playlist.name}'.",
+
+        // Extract and resolve paths
+        final List<String> trackPaths =
+            trackMaps.map((trackMap) {
+              final storedPath =
+                  trackMap[columnPlaylistTracksTrackPath] as String;
+              // Resolve relative paths for shared collections
+              if (activeCollection.type == CollectionType.shared &&
+                  activeCollection.rootPath != null &&
+                  !Uri.tryParse(storedPath)!.isAbsolute) {
+                // Check if not already absolute/URL
+                try {
+                  return pathLib.join(activeCollection.rootPath!, storedPath);
+                } catch (e) {
+                  print(
+                    "Error resolving playlist track path $storedPath with root ${activeCollection.rootPath}: $e",
+                  );
+                  return storedPath; // Return unresolved path on error
+                }
+              }
+              return storedPath; // Return absolute path for local or URLs
+            }).toList();
+
+        playlists.add(
+          Playlist(id: playlistId, name: playlistName, trackPaths: trackPaths),
         );
       }
-    } else {
       print(
-        "PlaylistService: Playlist with ID '$playlistId' not found for removing track.",
+        "PlaylistService: Loaded ${playlists.length} playlists for collection '${activeCollection.name}'.",
+      );
+      return playlists;
+    } catch (e, stackTrace) {
+      print("PlaylistService: Error loading playlists: $e\n$stackTrace");
+      return []; // Return empty list on error
+    }
+  }
+
+  /// Creates a new playlist in the active collection's database.
+  Future<Playlist?> createPlaylist(
+    CollectionService collectionService,
+    String name,
+  ) async {
+    final db = collectionService.getActiveDatabase();
+    final activeCollection = collectionService.getActiveCollection();
+    if (db == null || activeCollection == null) {
+      print(
+        "PlaylistService: Cannot create playlist, no active collection/DB.",
+      );
+      return null;
+    }
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      print("PlaylistService: Playlist name cannot be empty.");
+      return null; // Or throw
+    }
+
+    final newPlaylist = Playlist(name: trimmedName); // Generates ID
+
+    try {
+      await db.insert(tablePlaylists, {
+        columnPlaylistId: newPlaylist.id,
+        columnPlaylistName: newPlaylist.name,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      print(
+        "PlaylistService: Created playlist '${newPlaylist.name}' in collection '${activeCollection.name}'.",
+      );
+      return newPlaylist;
+    } catch (e, stackTrace) {
+      print("PlaylistService: Error creating playlist: $e\n$stackTrace");
+      return null;
+    }
+  }
+
+  /// Deletes a playlist from the active collection's database.
+  Future<void> deletePlaylist(
+    CollectionService collectionService,
+    String playlistId,
+  ) async {
+    final db = collectionService.getActiveDatabase();
+    final activeCollection = collectionService.getActiveCollection();
+    if (db == null || activeCollection == null) {
+      print(
+        "PlaylistService: Cannot delete playlist, no active collection/DB.",
+      );
+      return;
+    }
+
+    try {
+      // Foreign key constraint with ON DELETE CASCADE should handle deleting tracks
+      final count = await db.delete(
+        tablePlaylists,
+        where: '$columnPlaylistId = ?',
+        whereArgs: [playlistId],
+      );
+      if (count > 0) {
+        print(
+          "PlaylistService: Deleted playlist ID '$playlistId' from collection '${activeCollection.name}'.",
+        );
+      } else {
+        print(
+          "PlaylistService: Playlist ID '$playlistId' not found for deletion.",
+        );
+      }
+    } catch (e, stackTrace) {
+      print("PlaylistService: Error deleting playlist: $e\n$stackTrace");
+    }
+  }
+
+  /// Adds a track to a specific playlist in the active collection's database.
+  /// Expects [absoluteTrackPath] and converts it to relative if needed.
+  Future<void> addTrackToPlaylist(
+    CollectionService collectionService,
+    String playlistId,
+    String absoluteTrackPath,
+  ) async {
+    final db = collectionService.getActiveDatabase();
+    final activeCollection = collectionService.getActiveCollection();
+    if (db == null || activeCollection == null) {
+      print("PlaylistService: Cannot add track, no active collection/DB.");
+      return;
+    }
+
+    String pathToAdd = absoluteTrackPath;
+    // Convert to relative path if it's a shared collection and the path is within its root
+    if (activeCollection.type == CollectionType.shared &&
+        activeCollection.rootPath != null &&
+        !Uri.tryParse(absoluteTrackPath)!.isAbsolute) {
+      // Don't make URLs relative
+      try {
+        if (pathLib.isAbsolute(absoluteTrackPath) &&
+            pathLib.isWithin(activeCollection.rootPath!, absoluteTrackPath)) {
+          pathToAdd = pathLib.relative(
+            absoluteTrackPath,
+            from: activeCollection.rootPath!,
+          );
+        } else {
+          print(
+            "Warning: Track path '$absoluteTrackPath' is not within shared root '${activeCollection.rootPath}'. Storing absolute path in playlist.",
+          );
+          pathToAdd = absoluteTrackPath; // Fallback to absolute
+        }
+      } catch (e) {
+        print(
+          "Warning: Could not make track path relative. Storing absolute path in playlist. Error: $e",
+        );
+        pathToAdd = absoluteTrackPath; // Fallback
+      }
+    }
+
+    try {
+      // Check if track already exists in this playlist to avoid duplicates
+      final existing = await db.query(
+        tablePlaylistTracks,
+        where:
+            '$columnPlaylistTracksPlaylistId = ? AND $columnPlaylistTracksTrackPath = ?',
+        whereArgs: [playlistId, pathToAdd],
+        limit: 1,
+      );
+
+      if (existing.isEmpty) {
+        // TODO: Determine sort order (e.g., count existing tracks)
+        final countResult = await db.rawQuery(
+          'SELECT COUNT(*) as count FROM $tablePlaylistTracks WHERE $columnPlaylistTracksPlaylistId = ?',
+          [playlistId],
+        );
+        final sortOrder = Sqflite.firstIntValue(countResult) ?? 0;
+
+        await db.insert(tablePlaylistTracks, {
+          columnPlaylistTracksPlaylistId: playlistId,
+          columnPlaylistTracksTrackPath: pathToAdd,
+          columnPlaylistTracksSortOrder: sortOrder,
+        });
+        print(
+          "PlaylistService: Added track '$pathToAdd' to playlist '$playlistId'.",
+        );
+      } else {
+        print(
+          "PlaylistService: Track '$pathToAdd' already in playlist '$playlistId'.",
+        );
+      }
+    } catch (e, stackTrace) {
+      print("PlaylistService: Error adding track to playlist: $e\n$stackTrace");
+    }
+  }
+
+  /// Removes a track from a specific playlist in the active collection's database.
+  /// Expects [absoluteTrackPath] and converts it to relative if needed.
+  Future<void> removeTrackFromPlaylist(
+    CollectionService collectionService,
+    String playlistId,
+    String absoluteTrackPath,
+  ) async {
+    final db = collectionService.getActiveDatabase();
+    final activeCollection = collectionService.getActiveCollection();
+    if (db == null || activeCollection == null) {
+      print("PlaylistService: Cannot remove track, no active collection/DB.");
+      return;
+    }
+
+    String pathToRemove = absoluteTrackPath;
+    // Convert to relative path if it's a shared collection
+    if (activeCollection.type == CollectionType.shared &&
+        activeCollection.rootPath != null &&
+        !Uri.tryParse(absoluteTrackPath)!.isAbsolute) {
+      try {
+        if (pathLib.isAbsolute(absoluteTrackPath) &&
+            pathLib.isWithin(activeCollection.rootPath!, absoluteTrackPath)) {
+          pathToRemove = pathLib.relative(
+            absoluteTrackPath,
+            from: activeCollection.rootPath!,
+          );
+        } else {
+          pathToRemove = absoluteTrackPath;
+        }
+      } catch (e) {
+        pathToRemove = absoluteTrackPath;
+      }
+    }
+
+    try {
+      final count = await db.delete(
+        tablePlaylistTracks,
+        where:
+            '$columnPlaylistTracksPlaylistId = ? AND $columnPlaylistTracksTrackPath = ?',
+        whereArgs: [playlistId, pathToRemove],
+      );
+      if (count > 0) {
+        print(
+          "PlaylistService: Removed track '$pathToRemove' from playlist '$playlistId'.",
+        );
+        // TODO: Optionally re-order remaining tracks?
+      } else {
+        print(
+          "PlaylistService: Track '$pathToRemove' not found in playlist '$playlistId'.",
+        );
+      }
+    } catch (e, stackTrace) {
+      print(
+        "PlaylistService: Error removing track from playlist: $e\n$stackTrace",
       );
     }
   }
 
-  /// Renames a playlist, then persists.
-  Future<void> renamePlaylist(String playlistId, String newName) async {
-    await _ensureInitialized();
-    final index = _playlists.indexWhere((p) => p.id == playlistId);
-    if (index != -1) {
-      _playlists[index] = _playlists[index].copyWith(name: newName);
+  /// Renames a playlist in the active collection's database.
+  Future<void> renamePlaylist(
+    CollectionService collectionService,
+    String playlistId,
+    String newName,
+  ) async {
+    final db = collectionService.getActiveDatabase();
+    final activeCollection = collectionService.getActiveCollection();
+    if (db == null || activeCollection == null) {
       print(
-        "PlaylistService: Renamed playlist ID '$playlistId' to '$newName'.",
+        "PlaylistService: Cannot rename playlist, no active collection/DB.",
       );
-      // Persist changes to storage
-      await _persistPlaylists();
-    } else {
-      print(
-        "PlaylistService: Playlist with ID '$playlistId' not found for renaming.",
+      return;
+    }
+    final trimmedName = newName.trim();
+    if (trimmedName.isEmpty) {
+      print("PlaylistService: Playlist name cannot be empty.");
+      return; // Or throw
+    }
+
+    try {
+      final count = await db.update(
+        tablePlaylists,
+        {columnPlaylistName: trimmedName},
+        where: '$columnPlaylistId = ?',
+        whereArgs: [playlistId],
       );
+      if (count > 0) {
+        print(
+          "PlaylistService: Renamed playlist ID '$playlistId' to '$trimmedName'.",
+        );
+      } else {
+        print(
+          "PlaylistService: Playlist ID '$playlistId' not found for renaming.",
+        );
+      }
+    } catch (e, stackTrace) {
+      print("PlaylistService: Error renaming playlist: $e\n$stackTrace");
     }
   }
+
+  // Add other methods as needed (e.g., reorder tracks in playlist)
 }
