@@ -380,12 +380,40 @@ class CollectionService {
   }
 
   Future<List<Track>> searchTracks(String query) async {
+    // Ensure the database is initialized
+    if (_database == null) {
+      await initialize();
+    }
+    if (_database == null) {
+      print('Error: Database not initialized in searchTracks');
+      return []; // Return empty list if DB is still null
+    }
+
+    final String lowercaseQuery =
+        query.toLowerCase(); // Search case-insensitively
+    final String wildcardQuery = '%$lowercaseQuery%'; // Add wildcards for LIKE
+
+    // Modify the WHERE clause to include path, comment, and generalTags
     final List<Map<String, dynamic>> maps = await _database!.query(
       tableMusic,
-      where:
-          '$columnTitle LIKE ? OR $columnArtist LIKE ? OR $columnAlbum LIKE ?',
-      whereArgs: ['%$query%', '%$query%', '%$query%'],
+      where: '''
+      LOWER($columnTitle) LIKE ? OR
+      LOWER($columnArtist) LIKE ? OR
+      LOWER($columnAlbum) LIKE ? OR
+      LOWER($columnPath) LIKE ? OR  -- Search in path (contains filename)
+      LOWER($columnComment) LIKE ? OR -- Search in comments
+      LOWER($columnGeneralTags) LIKE ? -- Search in tags JSON string
+    ''',
+      whereArgs: [
+        wildcardQuery, // title
+        wildcardQuery, // artist
+        wildcardQuery, // album
+        wildcardQuery, // path
+        wildcardQuery, // comment
+        wildcardQuery, // generalTags
+      ],
     );
+
     return List.generate(maps.length, (i) {
       return Track.fromJson(maps[i]);
     });
