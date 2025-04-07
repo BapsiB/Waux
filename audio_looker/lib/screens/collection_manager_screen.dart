@@ -1,6 +1,9 @@
+import 'dart:io'; // <<< Import needed for Directory/File access
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:file_picker/file_picker.dart'; // For picking shared folder path
+import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart'
+    as pathLib; // <<< Import needed for path manipulation
 
 // Import BLoC and Service/Models needed
 import '../blocs/collection/collection_bloc.dart';
@@ -133,6 +136,144 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
         );
       },
     ).then((_) => nameController.dispose());
+  }
+
+  // --- >>> NEW: Logic for Adding Existing Shared Collection <<< ---
+  Future<void> _addExistingSharedCollection() async {
+    // 1. Prompt user to select the ROOT FOLDER
+    String? selectedFolderPath = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Select Existing Shared Collection Folder',
+    );
+
+    if (selectedFolderPath == null) {
+      return; // User cancelled
+    }
+
+    // 2. Detect the database file within the selected folder
+    String? detectedDbPath;
+    String? suggestedName;
+    final directory = Directory(selectedFolderPath);
+    List<FileSystemEntity> dbFiles = [];
+
+    try {
+      if (await directory.exists()) {
+        dbFiles =
+            await directory
+                .list()
+                .where(
+                  (entity) =>
+                      entity is File &&
+                      pathLib
+                          .basename(entity.path)
+                          .startsWith('_collection_') &&
+                      pathLib.basename(entity.path).endsWith('.db'),
+                )
+                .toList();
+      }
+    } catch (e) {
+      print("Error scanning directory for DB file: $e");
+      if (!mounted) return; // Check mount status after async gap
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error scanning folder: $e')));
+      return;
+    }
+
+    if (dbFiles.length == 1) {
+      detectedDbPath = dbFiles.first.path;
+      // Extract suggested name from filename: _collection_MyName.db -> MyName
+      String baseName = pathLib.basenameWithoutExtension(
+        detectedDbPath,
+      ); // _collection_MyName
+      if (baseName.startsWith('_collection_')) {
+        suggestedName = baseName
+            .substring('_collection_'.length)
+            .replaceAll('_', ' ');
+      } else {
+        suggestedName = baseName.replaceAll(
+          '_',
+          ' ',
+        ); // Fallback if prefix missing
+      }
+      print("Detected DB: $detectedDbPath, Suggested Name: $suggestedName");
+    } else if (dbFiles.isEmpty) {
+      print("No collection DB file found in $selectedFolderPath");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No collection database (_collection_*.db) found in the selected folder.',
+          ),
+        ),
+      );
+      return;
+    } else {
+      print("Multiple collection DB files found in $selectedFolderPath");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Multiple collection databases found. Please ensure only one exists.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 3. Confirm/Get Name via Dialog
+    final TextEditingController nameController = TextEditingController(
+      text: suggestedName ?? '',
+    );
+    // Check mount status before showing dialog
+    if (!mounted) return;
+    final String? confirmedName = await showDialog<String>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('Confirm Collection Name'),
+            content: TextField(
+              controller: nameController,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Collection Name'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  final name = nameController.text.trim();
+                  if (name.isNotEmpty) {
+                    Navigator.pop(dialogContext, name);
+                  } else {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      const SnackBar(content: Text('Name cannot be empty.')),
+                    );
+                  }
+                },
+                child: const Text('Add'),
+              ),
+            ],
+          ),
+    );
+
+    nameController.dispose(); // Dispose controller
+
+    // 4. Dispatch Event if name confirmed
+    if (confirmedName != null && confirmedName.isNotEmpty) {
+      if (!mounted) return; // Check mount status again
+      context.read<CollectionBloc>().add(
+        AddExistingSharedCollection(
+          name: confirmedName,
+          rootPath: selectedFolderPath, // The folder user selected
+          dbPath: detectedDbPath!, // The detected DB file path
+        ),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added collection: $confirmedName')),
+      );
+    }
   }
 
   // --- Dialog for Deleting Collection ---
@@ -314,12 +455,16 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
                       _showCreateCollectionDialog(isShared: true);
                     },
                   ),
-                  // Optional: Add Existing Shared Collection
-                  // ListTile(
-                  //   leading: Icon(Icons.drive_folder_upload),
-                  //   title: Text('Add Existing Shared Collection'),
-                  //   onTap: () { /* ... */ },
-                  // ),
+                  ListTile(
+                    leading: const Icon(
+                      Icons.drive_folder_upload_outlined,
+                    ), // Example Icon
+                    title: const Text('Add Existing Shared Collection'),
+                    onTap: () {
+                      Navigator.pop(sheetContext); // Close bottom sheet
+                      _addExistingSharedCollection(); // Call the new handler logic
+                    },
+                  ),
                 ],
               );
             },

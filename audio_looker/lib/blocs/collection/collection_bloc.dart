@@ -205,6 +205,21 @@ class CollectionLoading extends CollectionState {
   ];
 }
 
+class AddExistingSharedCollection extends CollectionEvent {
+  final String name;
+  final String rootPath;
+  final String dbPath; // Full path to the existing DB file
+
+  const AddExistingSharedCollection({
+    required this.name,
+    required this.rootPath,
+    required this.dbPath,
+  });
+
+  @override
+  List<Object> get props => [name, rootPath, dbPath];
+}
+
 class CollectionLoaded extends CollectionState {
   final CollectionDefinition activeCollectionDefinition;
   final List<CollectionDefinition> availableCollections;
@@ -324,6 +339,7 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
     on<CreateGeneralTag>(_onCreateGeneralTag);
     on<DeleteGeneralTag>(_onDeleteGeneralTag);
     on<SetGeneralTagColor>(_onSetGeneralTagColor);
+    on<AddExistingSharedCollection>(_onAddExistingSharedCollection);
 
     _collectionService.loadingStream.listen((isLoading) {
       if (isLoading && state is CollectionLoaded) {
@@ -523,6 +539,93 @@ class CollectionBloc extends Bloc<CollectionEvent, CollectionState> {
         CollectionError(
           "Failed to load collection list: $e",
           availableCollections: _availableCollections,
+        ),
+      );
+    }
+  }
+
+  Future<void> _onAddExistingSharedCollection(
+    AddExistingSharedCollection event,
+    Emitter<CollectionState> emit,
+  ) async {
+    print(
+      "BLOC: Adding existing shared collection '${event.name}' at ${event.rootPath} using DB ${event.dbPath}",
+    );
+    // Preserve current state details
+    final previousState = state;
+    final previousActiveDef = _getActiveDefFromState();
+    final previousAvailable = _getAvailableCollectionsFromState();
+    final previousTracks = _getTracksFromState();
+    final previousTags = _getTagsFromState();
+    final previousRoots = _getRootFoldersFromState();
+
+    // Optionally emit loading state while adding definition
+    // emit(CollectionLoading(... with previous state ...));
+
+    try {
+      final id = const Uuid().v4(); // Generate new unique ID for the definition
+
+      final definition = CollectionDefinition(
+        id: id,
+        name: event.name,
+        type: CollectionType.shared,
+        dbPath: event.dbPath, // Use the provided existing DB path
+        rootPath: event.rootPath,
+      );
+
+      // 1. Add definition to storage
+      await _collectionService.addCollectionDefinition(definition);
+
+      // 2. DO NOT open/initialize DB - it already exists.
+
+      // 3. Reload the list of collections
+      _availableCollections =
+          await _collectionService.loadCollectionDefinitions();
+      print(
+        "BLOC: Existing shared collection added. New list size: ${_availableCollections.length}",
+      );
+
+      // 4. Emit an appropriate state with the updated list
+      // Stay on the *previous* active collection after adding.
+      if (previousState is CollectionLoaded) {
+        emit(
+          previousState.copyWith(availableCollections: _availableCollections),
+        );
+      } else if (previousState is CollectionLoading) {
+        emit(
+          CollectionLoading(
+            activeCollectionDefinition: previousActiveDef,
+            availableCollections: _availableCollections, // Updated list
+            currentTracks: previousTracks,
+            currentAllTags: previousTags,
+            currentRootFolders: previousRoots,
+          ),
+        );
+      } else if (previousState is CollectionError) {
+        emit(
+          CollectionError(
+            previousState.message,
+            activeCollectionDefinition: previousActiveDef,
+            availableCollections: _availableCollections, // Updated list
+            tracks: previousTracks,
+            rootFolders: previousRoots,
+          ),
+        );
+      } else {
+        // E.g., CollectionInitial
+        emit(
+          CollectionLoading(availableCollections: _availableCollections),
+        ); // Emit loading with list
+      }
+    } catch (e, stackTrace) {
+      print("BLOC ERROR adding existing shared collection: $e\n$stackTrace");
+      emit(
+        CollectionError(
+          "Failed to add existing shared collection: $e",
+          activeCollectionDefinition: previousActiveDef, // Revert
+          availableCollections: previousAvailable,
+          tracks: previousTracks,
+          rootFolders: previousRoots,
         ),
       );
     }
