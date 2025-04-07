@@ -36,7 +36,7 @@ class _HomeScreenState extends State<HomeScreen>
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _urlController = TextEditingController();
   Track? _selectedTrackForPlayer;
-  bool _isPlayerMinimized = false;
+  bool _isPlayerMinimized = true;
   ViewMode _viewMode = ViewMode.list;
   bool _isDragging = false;
   final List<String> _supportedExtensions = [
@@ -80,6 +80,8 @@ class _HomeScreenState extends State<HomeScreen>
     ).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     )..addListener(() => setState(() {}));
+
+    _animationController.value = 1.0;
 
     // *** ADDED: Listen to AudioPlayerBloc to get the loaded path ***
     // (Alternatively, integrate this logic into the BlocListener below if preferred)
@@ -183,6 +185,57 @@ class _HomeScreenState extends State<HomeScreen>
       else
         _animationController.reverse();
     });
+  }
+
+  void _handlePlayerExpand(Track track) {
+    print("Handling Play Preview and Minimize for: ${track.title}");
+    final bloc = context.read<AudioPlayerBloc>();
+    final currentBlocState = bloc.state;
+
+    bool needsLoad = true;
+    if (currentBlocState is AudioPlayerLoaded &&
+        currentBlocState.currentSource == track.path) {
+      needsLoad = false;
+      print("Track already loaded.");
+    }
+
+    setState(() {
+      _selectedTrackForPlayer = track;
+      // Ensure the correct track is selected in the table visually
+      _selectedTrackIds.clear();
+      if (track.id != null) {
+        _selectedTrackIds.add(track.id!);
+      }
+      _anchorTrackId = track.id; // Update anchor for shift-select consistency
+
+      // --- Ensure player minimizes ---
+      _isPlayerMinimized = false;
+      // if (!_animationController.isCompleted) {
+      _animationController.reverse(from: 0.0); // Go directly to minimized state
+      // }
+      // -----------------------------
+
+      // *** Update the currently loaded path immediately for tree view ***
+      // (The listener above will also catch this, but setting it here ensures
+      // it's available if the tree view is built right after this)
+      _currentlyLoadedPath = track.path;
+    });
+
+    if (needsLoad) {
+      bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (!mounted) return;
+        final postDelayState = bloc.state;
+        if (postDelayState is AudioPlayerLoaded &&
+            postDelayState.currentSource == track.path) {
+          print("Dispatched PlayAudio after loading.");
+        } else {
+          print(
+            "Skipped PlayAudio: State mismatch after delay or widget unmounted.",
+          );
+        }
+      });
+    }
   }
 
   void _handlePlayPreviewAndMinimize(Track track) {
@@ -1482,7 +1535,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                     initialSortDirection:
                                                         _sortDirectionSf,
                                                     onPlayPreviewAndMinimize:
-                                                        _handlePlayPreviewAndMinimize,
+                                                        _handlePlayerExpand,
                                                   )
                                                   : FolderTreeView(
                                                     tracks:

@@ -70,9 +70,6 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   final double _initialRatingWidth = 100;
   final double _defaultTextColumnWidth = 150;
 
-  // Removed hover state tracking from here, it's handled in TrackDataSource
-  // int _hoveredRowIndex = -1;
-
   @override
   void initState() {
     super.initState();
@@ -237,30 +234,36 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     super.dispose();
   }
 
-  // --- Selection Handling (remains the same) ---
+  // --- Selection Handling ---
+  // This method now primarily informs the parent about the selection attempt.
+  // The grid itself handles enforcing single selection due to the mode change.
   void _handleGridSelectionChange(
     List<DataGridRow> addedRows,
     List<DataGridRow> removedRows,
   ) {
+    // Read modifier keys (though they won't enable multi-select in single mode)
     final keyState = HardwareKeyboard.instance;
     final bool isShiftPressed = keyState.isShiftPressed;
     final bool isCtrlPressed =
         keyState.isControlPressed || keyState.isMetaPressed;
 
-    // Important: Update the *widget's* state (selectedTrackIds) via the callback
-    // The controller's state will be updated in the next build cycle via didUpdateWidget
-    for (var row in addedRows) {
+    // Report the newly added row (if any) to the parent
+    if (addedRows.isNotEmpty) {
+      final row = addedRows.first; // In single mode, only one row can be added
       final idCell = row.getCells().firstWhere((c) => c.columnName == 'id');
       if (idCell.value != null && idCell.value != -1) {
         widget.onSelectionChanged(
           idCell.value as int,
           true, // isSelected = true
-          isShiftPressed: isShiftPressed,
+          isShiftPressed:
+              isShiftPressed, // Pass modifiers even if unused by grid
           isCtrlPressed: isCtrlPressed,
         );
       }
-    }
-    for (var row in removedRows) {
+    } else if (removedRows.isNotEmpty) {
+      // If a row was deselected (e.g., by clicking it again or programmatically)
+      // report the removal. In single mode, clicking another row handles deselection implicitly.
+      final row = removedRows.first;
       final idCell = row.getCells().firstWhere((c) => c.columnName == 'id');
       if (idCell.value != null && idCell.value != -1) {
         widget.onSelectionChanged(
@@ -271,6 +274,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         );
       }
     }
+
     // Refocus after selection change if needed
     if (mounted && (addedRows.isNotEmpty || removedRows.isNotEmpty)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -281,8 +285,6 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     }
   }
 
-  // Removed _getTrackIdFromIndex as hover logic is now in DataSource
-
   @override
   Widget build(BuildContext context) {
     if (!_isColumnsInitialized) {
@@ -290,9 +292,6 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     }
 
     final colorScheme = Theme.of(context).colorScheme;
-
-    // --- Controller is no longer created here ---
-    // final controller = DataGridController(...)
 
     return Focus(
       focusNode: _focusNode,
@@ -385,7 +384,8 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
               widget.onSort('title', DataGridSortDirection.ascending);
             }
           },
-          selectionMode: SelectionMode.multiple,
+          // *** CHANGE SELECTION MODE HERE ***
+          selectionMode: SelectionMode.single, // Changed from multiple
           navigationMode: GridNavigationMode.row,
           onSelectionChanged: _handleGridSelectionChange,
           controller: _dataGridController, // Use the controller from state
