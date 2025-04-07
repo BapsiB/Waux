@@ -155,11 +155,15 @@ class AudioPlayerLoaded extends AudioPlayerState {
 
 class AudioPlayerError extends AudioPlayerState {
   final String message;
+  final String? source; // <<< ADDED: Optional source of the error
 
-  const AudioPlayerError(this.message);
+  const AudioPlayerError(
+    this.message, {
+    this.source,
+  }); // <<< MODIFIED: Add optional source parameter
 
   @override
-  List<Object?> get props => [message];
+  List<Object?> get props => [message, source]; // <<< MODIFIED: Include source in props
 }
 
 // BLoC
@@ -189,57 +193,44 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     Emitter<AudioPlayerState> emit,
   ) async {
     print('🔄 Bloc: Received LoadAudio event for source: ${event.source}');
-    // Reset state before loading new audio
     emit(AudioPlayerLoading());
-    await _cancelSubscriptions(); // Cancel previous subs before loading new
-    // _currentSource = event.source; // Set current source *before* loading - REMOVED
+    await _cancelSubscriptions();
 
-    // Set timeout to prevent infinite loading
     _loadingTimeout?.cancel();
     _loadingTimeout = Timer(const Duration(seconds: 20), () {
-      // Increased timeout
       print('⏱️ Bloc: Loading timed out after 20 seconds for ${event.source}');
       if (state is AudioPlayerLoading) {
         print('⚠️ Bloc: Forcing transition from loading state due to timeout');
-        // Emit error state on timeout
-        emit(const AudioPlayerError('Audio loading timed out.'));
+        // <<< MODIFIED: Include source in timeout error >>>
+        emit(
+          AudioPlayerError('Audio loading timed out.', source: event.source),
+        );
       }
-      _loadingTimeout = null; // Clear timer reference
+      _loadingTimeout = null;
     });
 
     try {
       print(
         '🔄 Bloc: Loading audio from: ${event.source}, isUrl: ${event.isUrl}',
       );
-      // Load the audio (this might take time, especially for URLs or large files)
       await _audioService.loadAudio(event.source, isUrl: event.isUrl);
       print('✅ Bloc: Successfully initiated audio loading for ${event.source}');
 
-      // Set up new subscriptions *after* initiating load
       print('🔄 Bloc: Setting up stream subscriptions for ${event.source}');
       _setupSubscriptions();
 
-      // Get initial values immediately available from the service
-      final initialDuration =
-          _audioService.durationStream; // This might be null initially
-      final initialWaveform =
-          _audioService.waveformData; // Might be null or cached
-
-      // Get tags (requires source)
+      final initialDuration = _audioService.durationStream;
+      final initialWaveform = _audioService.waveformData;
       final initialTags = _audioService.getTagsForAudio(event.source);
 
-      // Emit an initial loaded state with available data
-      // We expect duration and position streams to update this later
       print('🔄 Bloc: Emitting initial loaded state for ${event.source}');
       emit(
         AudioPlayerLoaded(
-          currentSource: event.source, // *** SET currentSource in state ***
-          isPlaying: false, // Assume not playing initially
+          currentSource: event.source,
+          isPlaying: false,
           position: Duration.zero,
-          // Wait for duration stream, default to zero
           duration: await initialDuration.first ?? Duration.zero,
-          waveformData:
-              initialWaveform, // Use cached/initial waveform if available
+          waveformData: initialWaveform,
           tags: List<AudioTag>.from(initialTags),
         ),
       );
@@ -247,16 +238,20 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
         '✅ Bloc: Successfully emitted initial loaded state for ${event.source}',
       );
 
-      // Cancel timeout *only if* loading completes successfully within the timeframe
-      // Note: loadAudio itself might complete before streams emit final values
       _loadingTimeout?.cancel();
       _loadingTimeout = null;
       print('✅ Bloc: Loading process completed for ${event.source}');
     } catch (e, stackTrace) {
       print('❌ Bloc: Error loading audio for ${event.source}: $e');
-      print(stackTrace); // Log stack trace for debugging
-      emit(AudioPlayerError('Failed to load audio: ${e.toString()}'));
-      _loadingTimeout?.cancel(); // Cancel timeout on error
+      print(stackTrace);
+      // <<< MODIFIED: Include source in caught error >>>
+      emit(
+        AudioPlayerError(
+          'Failed to load audio: ${e.toString()}',
+          source: event.source,
+        ),
+      );
+      _loadingTimeout?.cancel();
       _loadingTimeout = null;
     }
   }
