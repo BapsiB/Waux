@@ -1,19 +1,52 @@
 import 'package:flutter/material.dart';
-import 'package:audio_looker/services/audio_service.dart'; // Assuming AudioTag is here or imported
+import 'package:audio_looker/services/audio_service.dart';
+import 'dart:math' as math;
 
 class WaveformPainter extends CustomPainter {
   final List<double> waveformData;
   final double playbackProgress;
-  final double? dragProgress; // Represents drag position (0.0 to 1.0)
+  final double? dragProgress;
   final Color activeColor;
   final Color inactiveColor;
   final double? tagPosition;
   final List<AudioTag> tags;
 
+  // Cache for performance
+  Path? _waveformPathInactive;
+  Path? _waveformPathActive;
+  List<double>? _downsampledData;
+  Size? _lastSize;
+  final Paint _baselinePaint =
+      Paint()
+        ..color = Colors.grey[300]!
+        ..strokeWidth = 1;
+  final Paint _playbackLinePaint =
+      Paint()
+        ..color = Colors.red
+        ..strokeWidth = 2;
+  final Paint _scrubPaint =
+      Paint()
+        ..color = Colors.orangeAccent
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round;
+  final Paint _tagPaint =
+      Paint()
+        ..color = Colors.red
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round;
+  final Paint _currentTagPaint =
+      Paint()
+        ..color = Colors.green
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round;
+  final Paint _tagRectPaint = Paint()..color = Colors.red.withOpacity(0.7);
+  final Paint _newTagRectPaint = Paint()..color = Colors.green.withOpacity(0.7);
+
+  // Constructor
   WaveformPainter({
     required this.waveformData,
     required this.playbackProgress,
-    this.dragProgress, // Include in constructor
+    this.dragProgress,
     this.activeColor = Colors.blue,
     this.inactiveColor = Colors.grey,
     this.tagPosition,
@@ -22,185 +55,259 @@ class WaveformPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Waveform paint setup
+    if (waveformData.isEmpty) return;
+
+    // Keep the optimized paint objects
     final wavePaint =
         Paint()
           ..color = inactiveColor
-          ..strokeWidth = 1.5
-          ..strokeCap = StrokeCap.round;
+          ..strokeWidth =
+              2.5 // Adjusted stroke width slightly
+          ..strokeCap =
+              StrokeCap.square; // Use round caps for potentially better look
 
-    // Played part paint setup
     final playedPaint =
         Paint()
           ..color = activeColor
-          ..strokeWidth = 1.5
-          ..strokeCap = StrokeCap.round;
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.square;
 
-    // Scrubbing line paint setup (for drag visualization)
-    final scrubPaint =
-        Paint()
-          ..color =
-              Colors
-                  .orangeAccent // Or another distinct color
-          ..strokeWidth = 2.0
-          ..strokeCap = StrokeCap.round;
-
-    // Tag markers paint
-    final tagPaint =
-        Paint()
-          ..color = Colors.red
-          ..strokeWidth = 2
-          ..strokeCap = StrokeCap.round;
-
-    // Current tag position paint (when adding a new tag)
-    final currentTagPaint =
-        Paint()
-          ..color = Colors.green
-          ..strokeWidth = 2
-          ..strokeCap = StrokeCap.round;
-
-    // Calculate spacing
-    if (waveformData.isEmpty) return; // Prevent division by zero if empty
-
-    final spacing = size.width / (waveformData.length - 1);
     final centerY = size.height / 2;
     final maxAmplitude =
-        size.height * 0.35; // Max waveform height (35% of total height)
+        size.height * 0.4; // Slightly increase amplitude visibility
 
-    // --- Draw the waveform bars ---
-    for (int i = 0; i < waveformData.length - 1; i++) {
+    // Keep the downsampling logic
+    _updateDownsampledData(size);
+    final dataToRender = _downsampledData!;
+    if (dataToRender.isEmpty) return; // Check after downsampling
+
+    final spacing =
+        size.width /
+        math.max(1, dataToRender.length - 1); // Ensure divisor is at least 1
+
+    final progressPosition = (dragProgress ?? playbackProgress).clamp(0.0, 1.0);
+    // Calculate split point based on the number of *segments* if using length-1 for spacing,
+    // or based on *points* if using length. Let's stick to points for simplicity.
+    final splitIndex = (progressPosition * dataToRender.length).floor();
+
+    // Draw baseline first
+    canvas.drawLine(
+      Offset(0, centerY),
+      Offset(size.width, centerY),
+      _baselinePaint,
+    );
+
+    // *** Revert to canvas.drawLine ***
+    for (int i = 0; i < dataToRender.length; i++) {
       final x = i * spacing;
-      final amplitude = waveformData[i].clamp(0.0, 1.0);
-      final y1 = centerY - amplitude * maxAmplitude;
+      // Use the downsampled value, ensure it's clamped
+      final amplitude = dataToRender[i].clamp(0.0, 1.0) * maxAmplitude;
+      final topY = centerY - amplitude;
+      final bottomY = centerY + amplitude;
 
-      final x2 = (i + 1) * spacing;
+      // Determine paint based on split index
+      final currentPaint = i < splitIndex ? playedPaint : wavePaint;
 
-      // Draw baseline (middle line) - Drawn first so waveform lines are on top
-      canvas.drawLine(
-        Offset(x, centerY),
-        Offset(x2, centerY),
-        Paint()
-          ..color = Colors.grey[300]!
-          ..strokeWidth = 1,
-      );
+      // Draw the vertical line representing the amplitude for this point
+      canvas.drawLine(Offset(x, topY), Offset(x, bottomY), currentPaint);
+    }
+    // *** End reverted drawing logic ***
 
-      // Determine paint based on playback progress *or* drag progress if dragging
-      final currentProgress =
-          dragProgress ?? playbackProgress; // Use drag if available
-      final Paint currentPaint =
-          i / waveformData.length < currentProgress ? playedPaint : wavePaint;
+    // Draw progress line (keep this helper)
+    _drawProgressLine(canvas, size, progressPosition);
 
-      // Draw upward part of waveform
-      canvas.drawLine(Offset(x, centerY), Offset(x, y1), currentPaint);
+    // Draw tags (keep this helper)
+    _drawTags(canvas, size);
 
-      // Draw downward part (mirrored)
-      canvas.drawLine(
-        Offset(x, centerY),
-        Offset(x, centerY + (centerY - y1)), // Mirror the amplitude
-        currentPaint,
-      );
+    // Draw current tag position (keep this helper)
+    _drawCurrentTagPosition(canvas, size);
+  }
+
+  void _updateDownsampledData(Size size) {
+    // Check if we need to recompute the downsampled data
+    if (_downsampledData == null ||
+        _lastSize == null ||
+        _lastSize!.width != size.width) {
+      _lastSize = size;
+
+      // Calculate target number of points (1 point per 2 pixels)
+      final targetPoints = (size.width / 2).ceil();
+
+      // Downsample the data
+      _downsampledData = _downsampleWaveform(waveformData, targetPoints);
+    }
+  }
+
+  // Downsample waveform data to the target number of points
+  // Uses max value in each segment to preserve peaks
+  List<double> _downsampleWaveform(List<double> sourceData, int targetPoints) {
+    if (sourceData.isEmpty) return [0.0];
+    if (sourceData.length <= targetPoints) return List.from(sourceData);
+
+    List<double> result = List.filled(targetPoints, 0.0);
+    double ratio = sourceData.length / targetPoints;
+
+    for (int i = 0; i < targetPoints; i++) {
+      int start = (i * ratio).floor();
+      int end = math.min(((i + 1) * ratio).floor(), sourceData.length);
+
+      // Find maximum amplitude in this segment
+      double maxValue = 0.0;
+      for (int j = start; j < end; j++) {
+        maxValue = math.max(maxValue, sourceData[j].abs());
+      }
+
+      result[i] = maxValue;
     }
 
-    // --- Draw Progress/Scrub Lines ---
+    return result;
+  }
 
-    // Draw the regular playback progress line (red) *ONLY* if NOT dragging
+  void _createWaveformPaths(
+    Size size,
+    double centerY,
+    double maxAmplitude,
+    double spacing,
+    int splitIndex,
+    List<double> dataToRender,
+  ) {
+    _waveformPathActive = Path();
+    _waveformPathInactive = Path();
+
+    for (int i = 0; i < dataToRender.length; i++) {
+      final x = i * spacing;
+      final amplitude = dataToRender[i].clamp(0.0, 1.0) * maxAmplitude;
+      final topY = centerY - amplitude;
+      final bottomY = centerY + amplitude;
+
+      final currentPath =
+          i <= splitIndex ? _waveformPathActive! : _waveformPathInactive!;
+
+      // Problem Area: Creates many disconnected lines
+      currentPath.moveTo(x, centerY); // Move to center
+      currentPath.lineTo(x, topY); // Draw up
+      currentPath.moveTo(x, centerY); // Move back to center
+      currentPath.lineTo(x, bottomY); // Draw down
+    }
+  }
+
+  void _drawProgressLine(Canvas canvas, Size size, double progressPosition) {
+    final progressX = progressPosition * size.width;
+
     if (dragProgress == null) {
-      final progressX = playbackProgress.clamp(0.0, 1.0) * size.width;
+      // Draw playback progress line
       canvas.drawLine(
         Offset(progressX, 0),
         Offset(progressX, size.height),
-        Paint()
-          ..color =
-              Colors
-                  .red // Playback color
-          ..strokeWidth = 2,
+        _playbackLinePaint,
       );
-    }
-
-    // Draw the scrubbing line (orange) *ONLY* if dragging
-    if (dragProgress != null) {
-      final dragX = dragProgress!.clamp(0.0, 1.0) * size.width;
+    } else {
+      // Draw scrubbing line
       canvas.drawLine(
-        Offset(dragX, 0),
-        Offset(dragX, size.height),
-        scrubPaint, // Use the distinct scrub paint
+        Offset(progressX, 0),
+        Offset(progressX, size.height),
+        _scrubPaint,
       );
     }
+  }
 
-    // --- Draw Tag Markers (Unaffected by drag state) ---
+  void _drawTags(Canvas canvas, Size size) {
     for (final tag in tags) {
       final x = tag.position.clamp(0.0, 1.0) * size.width;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), tagPaint);
 
-      // Draw tag indicator (optional visual enhancement)
-      final tagRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(x - 12, 0, 24, 20), // Adjust size/position as needed
-        const Radius.circular(4),
-      );
-      canvas.drawRRect(tagRect, Paint()..color = Colors.red.withOpacity(0.7));
+      // Draw tag line
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), _tagPaint);
 
-      // Draw tag text (e.g., index number)
-      final textSpan = TextSpan(
-        text: (tags.indexOf(tag) + 1).toString(), // Example: show tag index
-        style: const TextStyle(color: Colors.white, fontSize: 12),
-      );
-      final textPainter = TextPainter(
-        text: textSpan,
-        textDirection: TextDirection.ltr,
-        textAlign: TextAlign.center,
-      );
-      textPainter.layout();
-      textPainter.paint(canvas, Offset(x - textPainter.width / 2, 4));
-    }
-
-    // Draw current tag position marker (when adding new tag)
-    if (tagPosition != null) {
-      final x = tagPosition!.clamp(0.0, 1.0) * size.width;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), currentTagPaint);
-
-      // Draw tag indicator
+      // Draw tag rectangle
       final tagRect = RRect.fromRectAndRadius(
         Rect.fromLTWH(x - 12, 0, 24, 20),
         const Radius.circular(4),
       );
-      canvas.drawRRect(tagRect, Paint()..color = Colors.green.withOpacity(0.7));
+      canvas.drawRRect(tagRect, _tagRectPaint);
 
       // Draw tag text
-      final textSpan = TextSpan(
-        text: "+", // Indicate adding
-        style: const TextStyle(color: Colors.white, fontSize: 12),
-      );
-      final textPainter = TextPainter(
-        text: textSpan,
-        textDirection: TextDirection.ltr,
-        textAlign: TextAlign.center,
-      );
-      textPainter.layout();
-      textPainter.paint(canvas, Offset(x - textPainter.width / 2, 4));
+      _drawTagText(canvas, x, (tags.indexOf(tag) + 1).toString());
     }
+  }
+
+  void _drawCurrentTagPosition(Canvas canvas, Size size) {
+    if (tagPosition != null) {
+      final x = tagPosition!.clamp(0.0, 1.0) * size.width;
+
+      // Draw tag line
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), _currentTagPaint);
+
+      // Draw tag rectangle
+      final tagRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(x - 12, 0, 24, 20),
+        const Radius.circular(4),
+      );
+      canvas.drawRRect(tagRect, _newTagRectPaint);
+
+      // Draw tag text
+      _drawTagText(canvas, x, "+");
+    }
+  }
+
+  void _drawTagText(Canvas canvas, double x, String text) {
+    final textSpan = TextSpan(
+      text: text,
+      style: const TextStyle(color: Colors.white, fontSize: 12),
+    );
+
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    );
+
+    textPainter.layout();
+    textPainter.paint(canvas, Offset(x - textPainter.width / 2, 4));
   }
 
   @override
   bool shouldRepaint(WaveformPainter oldDelegate) {
-    // Check if any relevant property has changed
+    // Check only critical properties that would affect appearance
+    // Note: we don't need to check waveformData length anymore as we're using downsampled data
     return oldDelegate.playbackProgress != playbackProgress ||
-        oldDelegate.dragProgress != dragProgress || // Check dragProgress
+        oldDelegate.dragProgress != dragProgress ||
         oldDelegate.tagPosition != tagPosition ||
         oldDelegate.activeColor != activeColor ||
         oldDelegate.inactiveColor != inactiveColor ||
-        // More robust check for list changes
-        !listEquals(oldDelegate.waveformData, waveformData) ||
-        !listEquals(oldDelegate.tags, tags);
+        oldDelegate.tags.length != tags.length ||
+        _didTagsChange(oldDelegate.tags) ||
+        _didWaveformDataChange(oldDelegate.waveformData);
   }
-}
 
-// Helper function to compare lists (requires foundation import)
-bool listEquals<T>(List<T>? a, List<T>? b) {
-  if (a == null) return b == null;
-  if (b == null || a.length != b.length) return false;
-  if (identical(a, b)) return true;
-  for (int index = 0; index < a.length; index += 1) {
-    if (a[index] != b[index]) return false;
+  // More efficient tag change detection
+  bool _didTagsChange(List<AudioTag> oldTags) {
+    if (tags.length != oldTags.length) return true;
+
+    for (int i = 0; i < tags.length; i++) {
+      if (tags[i].position != oldTags[i].position) {
+        return true;
+      }
+    }
+
+    return false;
   }
-  return true;
+
+  // Check if waveform data has changed significantly
+  // Only checks a sample of points for performance
+  bool _didWaveformDataChange(List<double> oldData) {
+    if (waveformData.length != oldData.length) return true;
+
+    // Sample check - only check a few points
+    // Using prime number steps to get better coverage
+    const sampleStep = 17;
+    for (int i = 0; i < waveformData.length; i += sampleStep) {
+      if (i < waveformData.length && i < oldData.length) {
+        if ((waveformData[i] - oldData[i]).abs() > 0.01) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
 }
