@@ -54,6 +54,9 @@ class TrackManagementBloc
     on<SetGeneralTagColor>(_onSetGeneralTagColor);
     on<ImportCollectionFromFile>(_onImportCollectionFromFile);
     on<ExportCollectionToFile>(_onExportCollectionToFile);
+    on<SyncActiveCollectionFolders>(
+      _onSyncActiveCollectionFolders,
+    ); // Register handler
 
     // Listen to CollectionService loading state if needed (optional)
     _collectionService.loadingStream.listen((isLoading) {
@@ -66,6 +69,8 @@ class TrackManagementBloc
             currentTracks: currentState.tracks,
             currentAllTags: currentState.allTags,
             currentRootFolders: currentState.rootFolders,
+            currentSearchQuery:
+                currentState.searchQuery, // Preserve search query
           ),
         );
       }
@@ -73,7 +78,6 @@ class TrackManagementBloc
   }
 
   // --- Helper methods to get current data from state ---
-  // These help manage state transitions smoothly, especially for loading/error states
   List<Track> _getTracksFromState() {
     final currentState = state;
     if (currentState is TrackManagementLoaded) return currentState.tracks;
@@ -103,7 +107,7 @@ class TrackManagementBloc
     return [];
   }
 
-  // --- Recursive File Finder (from original CollectionBloc) ---
+  // --- Recursive File Finder ---
   Future<void> _findAudioFilesRecursively(
     Directory dir,
     List<String> audioFilePaths,
@@ -111,7 +115,7 @@ class TrackManagementBloc
   ) async {
     try {
       await for (final entity in dir.list(
-        recursive: false,
+        recursive: false, // Scan one level at a time
         followLinks: false,
       )) {
         FileSystemEntityType type = await FileSystemEntity.type(
@@ -127,6 +131,7 @@ class TrackManagementBloc
             audioFilePaths.add(entity.path);
           }
         } else if (type == FileSystemEntityType.directory) {
+          // Recurse into subdirectories
           await _findAudioFilesRecursively(
             Directory(entity.path),
             audioFilePaths,
@@ -163,6 +168,12 @@ class TrackManagementBloc
         currentTracks: _getTracksFromState(),
         currentAllTags: _getTagsFromState(),
         currentRootFolders: _getRootFoldersFromState(),
+        currentSearchQuery:
+            (state is TrackManagementLoaded)
+                ? (state as TrackManagementLoaded).searchQuery
+                : (state is TrackManagementLoading
+                    ? (state as TrackManagementLoading).currentSearchQuery
+                    : null), // Preserve search
       ),
     );
 
@@ -180,12 +191,8 @@ class TrackManagementBloc
       if (state is TrackManagementLoaded) {
         previousSearchQuery = (state as TrackManagementLoaded).searchQuery;
       } else if (state is TrackManagementLoading) {
-        // Type check first
-        // Explicitly cast 'state' before accessing the property
-        final loadingState = state as TrackManagementLoading;
-        if (loadingState.currentSearchQuery != null) {
-          previousSearchQuery = loadingState.currentSearchQuery;
-        }
+        previousSearchQuery =
+            (state as TrackManagementLoading).currentSearchQuery;
       }
 
       emit(
@@ -198,8 +205,23 @@ class TrackManagementBloc
         ),
       );
 
-      // TODO: Consider triggering waveform processing here if needed, based on loaded tracks
-      // _triggerWaveformProcessingIfNeeded(tracks);
+      // Trigger waveform processing for tracks missing data
+      final tracksNeedingWaveform =
+          tracks
+              .where(
+                (t) =>
+                    !t.isUrl &&
+                    (t.waveformData == null || t.waveformData!.isEmpty),
+              )
+              .toList();
+      if (tracksNeedingWaveform.isNotEmpty && !_isProcessingWaveforms) {
+        print(
+          "TrackManagementBloc: Triggering waveform processing for ${tracksNeedingWaveform.length} tracks after load.",
+        );
+        _startBackgroundWaveformExtraction(
+          tracksNeedingWaveform.map((t) => t.path).toList(),
+        );
+      }
     } catch (e, stackTrace) {
       print(
         "TrackManagementBloc: ERROR loading collection data: $e\n$stackTrace",
@@ -215,22 +237,140 @@ class TrackManagementBloc
     }
   }
 
+  // --- Handler for Syncing Folders (MODIFIED) ---
+  Future<void> _onSyncActiveCollectionFolders(
+    SyncActiveCollectionFolders event,
+    Emitter<TrackManagementState> emit,
+  ) async {
+    final activeDefinition = _collectionService.getActiveCollection();
+    if (activeDefinition == null) {
+      print("TrackManagementBloc: Skipping folder sync, no active collection.");
+      return;
+    }
+
+    // --- REMOVED THIS CHECK to allow sync for SHARED collections ---
+    // if (activeDefinition.type != CollectionType.local) {
+    //   print("TrackManagementBloc: Skipping folder sync for non-local collection.");
+    //   return;
+    // }
+    // --- END REMOVED CHECK ---
+
+    print(
+      "TrackManagementBloc: Starting folder sync for '${activeDefinition.name}'.",
+    );
+    // Optionally emit a specific "Syncing" state if needed
+    // emit(TrackManagementSyncing(...)); // Consider adding this state
+
+    try {
+      // 1. Get all root folders defined for this collection
+      // This works for both local (multiple) and shared (single)
+      final rootFolders = _collectionService.getRootFolders();
+      if (rootFolders.isEmpty) {
+        print("TrackManagementBloc: No root folders defined for sync.");
+        return;
+      }
+
+      // 2. Scan all root folders to find all audio files on the filesystem
+      final List<String> filesOnDisk = [];
+      for (final rootPath in rootFolders) {
+        final dir = Directory(rootPath);
+        if (await dir.exists()) {
+          await _findAudioFilesRecursively(
+            dir,
+            filesOnDisk,
+            _supportedExtensions,
+          );
+        } else {
+          print(
+            "TrackManagementBloc: Root folder '$rootPath' does not exist during sync.",
+          );
+        }
+      }
+      print(
+        "TrackManagementBloc: Found ${filesOnDisk.length} files on disk across ${rootFolders.length} root(s).",
+      );
+
+      // 3. Get all tracks currently in the database for this collection
+      // The paths returned by getAllTracks() are already resolved by the service.
+      final tracksInDb = await _collectionService.getAllTracks();
+      final Set<String> pathsInDb =
+          tracksInDb
+              .where((t) => !t.isUrl) // Exclude URLs
+              .map(
+                (t) => pathLib.normalize(t.path),
+              ) // Normalize the resolved path
+              .toSet();
+      print(
+        "TrackManagementBloc: Found ${pathsInDb.length} local tracks in DB.",
+      );
+
+      // 4. Compare and find files on disk that are NOT in the DB
+      final Set<String> normalizedFilesOnDisk =
+          filesOnDisk
+              .map((p) => pathLib.normalize(p)) // Normalize disk paths
+              .toSet();
+
+      final List<String> filesToAdd =
+          normalizedFilesOnDisk
+              .where((diskPath) => !pathsInDb.contains(diskPath))
+              .toList();
+
+      // 5. Dispatch AddTracksFromPaths for the missing files
+      if (filesToAdd.isNotEmpty) {
+        print(
+          "TrackManagementBloc: Found ${filesToAdd.length} new files to add.",
+        );
+        // Dispatch event to add them. This event already handles adding to DB
+        // and triggering waveform analysis via its own logic.
+        add(AddTracksFromPaths(filesToAdd));
+        // The AddTracksFromPaths handler will eventually emit a new Loaded state.
+        // No need to emit here, let the AddTracksFromPaths handler do it.
+      } else {
+        print("TrackManagementBloc: No new files found to add during sync.");
+        // If sync completes and nothing was added, ensure the UI isn't stuck
+        // in a potential "Syncing" state (if you added one).
+        // Re-emit the current loaded state if necessary.
+        // Example: if (state is TrackManagementSyncing) add(LoadTracksForActiveCollection());
+      }
+    } catch (e, stackTrace) {
+      print("TrackManagementBloc: ERROR during folder sync: $e\n$stackTrace");
+      // Emit an error state, preserving current data if possible
+      emit(
+        TrackManagementError(
+          "Failed to sync folders: ${e.toString()}",
+          tracks: _getTracksFromState(),
+          rootFolders: _getRootFoldersFromState(),
+        ),
+      );
+    }
+  }
+  // --- End Sync Handler ---
+
   Future<void> _onAddRootFolder(
     AddRootFolder event,
     Emitter<TrackManagementState> emit,
   ) async {
     final activeDef = _collectionService.getActiveCollection();
+    // This check remains correct: only LOCAL collections have manually added roots
     if (activeDef?.type != CollectionType.local) {
       print(
         "TrackManagementBloc: Skipping AddRootFolder - only applicable to local collections.",
       );
-      return; // Only local collections have manually added root folders
+      return;
     }
 
     // Get current state data
     final currentTracks = _getTracksFromState();
     final currentTags = _getTagsFromState();
     final currentRoots = _getRootFoldersFromState();
+    final currentState =
+        state; // Capture current state for search query preservation
+    String? currentSearchQuery;
+    if (currentState is TrackManagementLoaded) {
+      currentSearchQuery = currentState.searchQuery;
+    } else if (currentState is TrackManagementLoading) {
+      currentSearchQuery = currentState.currentSearchQuery;
+    }
 
     try {
       await _collectionService.addRootFolder(event.folderPath);
@@ -238,32 +378,14 @@ class TrackManagementBloc
           _collectionService.getRootFolders(); // Fetch updated list
 
       // Emit new loaded state with updated folders
-      if (state is TrackManagementLoaded || state is TrackManagementLoading) {
-        final currentState = state;
-        String? currentSearchQuery;
-        if (currentState is TrackManagementLoaded)
-          currentSearchQuery = currentState.searchQuery;
-        if (currentState is TrackManagementLoading)
-          currentSearchQuery = currentState.currentSearchQuery;
-
-        emit(
-          TrackManagementLoaded(
-            tracks: currentTracks,
-            rootFolders: updatedRootFolders,
-            allTags: currentTags,
-            searchQuery: currentSearchQuery,
-          ),
-        );
-      } else {
-        // If in initial or error state, transition to loaded
-        emit(
-          TrackManagementLoaded(
-            tracks: currentTracks, // Might be empty
-            rootFolders: updatedRootFolders,
-            allTags: currentTags, // Might be empty
-          ),
-        );
-      }
+      emit(
+        TrackManagementLoaded(
+          tracks: currentTracks,
+          rootFolders: updatedRootFolders,
+          allTags: currentTags,
+          searchQuery: currentSearchQuery, // Preserve search query
+        ),
+      );
 
       // --- Automatically scan the newly added folder for tracks ---
       print(
@@ -289,14 +411,9 @@ class TrackManagementBloc
         print(
           "TrackManagementBloc: Warning - Added root folder path does not exist: ${event.folderPath}",
         );
-        emit(
-          TrackManagementError(
-            "Added root folder path does not exist: ${event.folderPath}",
-            tracks: currentTracks,
-            rootFolders:
-                updatedRootFolders, // Show the added (but non-existent) folder
-          ),
-        );
+        // Keep the loaded state, but maybe show a non-fatal warning elsewhere?
+        // Or emit a specific state indicating a root folder issue?
+        // For now, just log the warning.
       }
       // --- End Auto-scan ---
     } catch (e) {
@@ -316,6 +433,7 @@ class TrackManagementBloc
     Emitter<TrackManagementState> emit,
   ) async {
     final activeDef = _collectionService.getActiveCollection();
+    // This check remains correct
     if (activeDef?.type != CollectionType.local) {
       print(
         "TrackManagementBloc: Skipping RemoveRootFolder - only applicable to local collections.",
@@ -327,42 +445,39 @@ class TrackManagementBloc
     final currentTracks = _getTracksFromState();
     final currentTags = _getTagsFromState();
     final currentRoots = _getRootFoldersFromState();
+    final currentState = state;
+    String? currentSearchQuery;
+    if (currentState is TrackManagementLoaded) {
+      currentSearchQuery = currentState.searchQuery;
+    } else if (currentState is TrackManagementLoading) {
+      currentSearchQuery = currentState.currentSearchQuery;
+    }
 
     try {
       await _collectionService.removeRootFolder(event.folderPath);
       final updatedRootFolders = _collectionService.getRootFolders();
 
-      // TODO: Decide whether to remove tracks belonging ONLY to this root folder.
-      // This can be complex. For now, we just remove the root folder definition.
+      // Decide whether to remove tracks belonging ONLY to this root folder.
+      // This is complex. For now, we just remove the root folder definition.
       // Tracks will remain but might appear under "Imported" if they don't belong
       // to any other root folder, or might become inaccessible if shared.
-      // A cleanup mechanism might be needed.
+      // A cleanup mechanism might be needed later.
 
-      if (state is TrackManagementLoaded || state is TrackManagementLoading) {
-        final currentState = state;
-        String? currentSearchQuery;
-        if (currentState is TrackManagementLoaded)
-          currentSearchQuery = currentState.searchQuery;
-        if (currentState is TrackManagementLoading)
-          currentSearchQuery = currentState.currentSearchQuery;
+      // TODO: Implement track cleanup logic if desired.
+      // Example idea:
+      // 1. Get all tracks.
+      // 2. For each track, check if its path starts with the removed folderPath.
+      // 3. If it does, check if it *also* starts with any *other* remaining root folder path.
+      // 4. If it only belonged to the removed root, dispatch RemoveTrack(track.id).
 
-        emit(
-          TrackManagementLoaded(
-            tracks: currentTracks, // Keep existing tracks for now
-            rootFolders: updatedRootFolders,
-            allTags: currentTags,
-            searchQuery: currentSearchQuery,
-          ),
-        );
-      } else {
-        emit(
-          TrackManagementLoaded(
-            tracks: currentTracks,
-            rootFolders: updatedRootFolders,
-            allTags: currentTags,
-          ),
-        );
-      }
+      emit(
+        TrackManagementLoaded(
+          tracks: currentTracks, // Keep existing tracks for now
+          rootFolders: updatedRootFolders,
+          allTags: currentTags,
+          searchQuery: currentSearchQuery, // Preserve search
+        ),
+      );
     } catch (e) {
       print('TrackManagementBloc: Error removing root folder: $e');
       emit(
@@ -388,6 +503,13 @@ class TrackManagementBloc
     final tracksBeforeAdd = _getTracksFromState();
     final tagsBeforeAdd = _getTagsFromState();
     final rootsBeforeAdd = _getRootFoldersFromState();
+    final currentState = state;
+    String? currentSearchQuery;
+    if (currentState is TrackManagementLoaded) {
+      currentSearchQuery = currentState.searchQuery;
+    } else if (currentState is TrackManagementLoading) {
+      currentSearchQuery = currentState.currentSearchQuery;
+    }
 
     // Emit loading state immediately
     emit(
@@ -395,10 +517,7 @@ class TrackManagementBloc
         currentTracks: tracksBeforeAdd,
         currentAllTags: tagsBeforeAdd,
         currentRootFolders: rootsBeforeAdd,
-        currentSearchQuery:
-            (state is TrackManagementLoaded)
-                ? (state as TrackManagementLoaded).searchQuery
-                : null,
+        currentSearchQuery: currentSearchQuery, // Preserve search
       ),
     );
 
@@ -411,15 +530,23 @@ class TrackManagementBloc
         'TrackManagementBloc: Added/found track: ${addedOrFoundTrack.title}',
       );
 
-      // Reload all tracks to reflect the addition
+      // Reload all tracks to reflect the addition AND get updated waveform data if processed quickly
       add(LoadTracksForActiveCollection());
 
       // Start background waveform processing for the single added track
-      if (!_isProcessingWaveforms && !addedOrFoundTrack.isUrl) {
+      // Check if waveform data is already present (might have been processed by addLocalFile)
+      final potentiallyUpdatedTrack = await _collectionService.getTrack(
+        addedOrFoundTrack.id!,
+      );
+      if (potentiallyUpdatedTrack != null &&
+          (potentiallyUpdatedTrack.waveformData == null ||
+              potentiallyUpdatedTrack.waveformData!.isEmpty) &&
+          !_isProcessingWaveforms &&
+          !potentiallyUpdatedTrack.isUrl) {
         print(
           "TrackManagementBloc: Starting background waveform extraction for single file.",
         );
-        _startBackgroundWaveformExtraction([addedOrFoundTrack.path]);
+        _startBackgroundWaveformExtraction([potentiallyUpdatedTrack.path]);
       }
     } catch (e, stackTrace) {
       print(
@@ -451,6 +578,13 @@ class TrackManagementBloc
     final tracksBeforeAdd = _getTracksFromState();
     final tagsBeforeAdd = _getTagsFromState();
     final rootsBeforeAdd = _getRootFoldersFromState();
+    final currentState = state;
+    String? currentSearchQuery;
+    if (currentState is TrackManagementLoaded) {
+      currentSearchQuery = currentState.searchQuery;
+    } else if (currentState is TrackManagementLoading) {
+      currentSearchQuery = currentState.currentSearchQuery;
+    }
 
     // Emit Loading state *before* starting the potentially long add process
     emit(
@@ -458,20 +592,24 @@ class TrackManagementBloc
         currentTracks: tracksBeforeAdd, // Show previous tracks while adding
         currentAllTags: tagsBeforeAdd,
         currentRootFolders: rootsBeforeAdd,
-        currentSearchQuery:
-            (state is TrackManagementLoaded)
-                ? (state as TrackManagementLoaded).searchQuery
-                : null,
+        currentSearchQuery: currentSearchQuery, // Preserve search
       ),
     );
 
     try {
       List<Track> addedOrFoundTracks = [];
+      List<String> pathsForWaveformProcessing = [];
+
       // Step 1: Add all tracks via service
       for (final filePath in event.filePaths) {
         try {
           final track = await _collectionService.addLocalFile(filePath);
           addedOrFoundTracks.add(track);
+          // Check if waveform needs processing right after adding
+          if (!track.isUrl &&
+              (track.waveformData == null || track.waveformData!.isEmpty)) {
+            pathsForWaveformProcessing.add(track.path);
+          }
         } catch (e) {
           print(
             'TrackManagementBloc ERROR: Failed to add file $filePath during AddTracksFromPaths: $e',
@@ -483,29 +621,25 @@ class TrackManagementBloc
         "TrackManagementBloc: Finished adding/checking ${addedOrFoundTracks.length} tracks in service.",
       );
 
-      // Step 2: Reload collection fully to get the updated state
+      // Step 2: Reload collection fully to get the updated state (including any waveforms processed by addLocalFile)
       add(LoadTracksForActiveCollection());
 
-      // Step 3: Start background waveform processing
-      final absolutePathsToProcess =
-          addedOrFoundTracks
-              .where((t) => !t.isUrl)
-              .map(
-                (t) => t.path,
-              ) // Assuming addLocalFile returns tracks with absolute paths
-              .toList();
-
+      // Step 3: Start background waveform processing for those identified earlier
       print(
-        "TrackManagementBloc: Checking waveform processing for ${absolutePathsToProcess.length} files after AddTracksFromPaths.",
+        "TrackManagementBloc: Checking waveform processing for ${pathsForWaveformProcessing.length} files after AddTracksFromPaths.",
       );
-      if (!_isProcessingWaveforms && absolutePathsToProcess.isNotEmpty) {
+      if (!_isProcessingWaveforms && pathsForWaveformProcessing.isNotEmpty) {
         print(
           "TrackManagementBloc: Starting background waveform extraction from AddTracksFromPaths.",
         );
-        _startBackgroundWaveformExtraction(absolutePathsToProcess);
+        _startBackgroundWaveformExtraction(pathsForWaveformProcessing);
+      } else if (pathsForWaveformProcessing.isNotEmpty) {
+        print(
+          "TrackManagementBloc: Waveform processing already running, skipping immediate start.",
+        );
       } else {
         print(
-          "TrackManagementBloc: Waveform processing already running or no files needed processing.",
+          "TrackManagementBloc: No files needed waveform processing after add.",
         );
       }
     } catch (e, stackTrace) {
@@ -535,16 +669,20 @@ class TrackManagementBloc
     final tracksBeforeAdd = _getTracksFromState();
     final tagsBeforeAdd = _getTagsFromState();
     final rootsBeforeAdd = _getRootFoldersFromState();
+    final currentState = state;
+    String? currentSearchQuery;
+    if (currentState is TrackManagementLoaded) {
+      currentSearchQuery = currentState.searchQuery;
+    } else if (currentState is TrackManagementLoading) {
+      currentSearchQuery = currentState.currentSearchQuery;
+    }
 
     emit(
       TrackManagementLoading(
         currentTracks: tracksBeforeAdd,
         currentAllTags: tagsBeforeAdd,
         currentRootFolders: rootsBeforeAdd,
-        currentSearchQuery:
-            (state is TrackManagementLoaded)
-                ? (state as TrackManagementLoaded).searchQuery
-                : null,
+        currentSearchQuery: currentSearchQuery, // Preserve search
       ),
     );
 
@@ -573,22 +711,24 @@ class TrackManagementBloc
     final tracksBeforeDelete = _getTracksFromState();
     final tagsBeforeDelete = _getTagsFromState();
     final rootsBeforeDelete = _getRootFoldersFromState();
+    final currentState = state;
+    String? currentSearchQuery;
+    if (currentState is TrackManagementLoaded) {
+      currentSearchQuery = currentState.searchQuery;
+    } else if (currentState is TrackManagementLoading) {
+      currentSearchQuery = currentState.currentSearchQuery;
+    }
 
     // Optimistic UI update (optional but good UX)
     List<Track> optimisticTracks =
         tracksBeforeDelete.where((t) => t.id != event.trackId).toList();
-    String? currentSearchQuery;
-    if (state is TrackManagementLoaded)
-      currentSearchQuery = (state as TrackManagementLoaded).searchQuery;
-    if (state is TrackManagementLoading)
-      currentSearchQuery = (state as TrackManagementLoading).currentSearchQuery;
 
     emit(
       TrackManagementLoaded(
         tracks: optimisticTracks,
         rootFolders: rootsBeforeDelete,
         allTags: tagsBeforeDelete,
-        searchQuery: currentSearchQuery,
+        searchQuery: currentSearchQuery, // Preserve search
       ),
     );
 
@@ -785,42 +925,43 @@ class TrackManagementBloc
     LoadAllTags event,
     Emitter<TrackManagementState> emit,
   ) async {
-    if (state is TrackManagementLoaded || state is TrackManagementLoading) {
-      final currentState = state;
-      try {
-        print("TrackManagementBloc: Refreshing global tags...");
-        final allTags = await _collectionService.getAllTags();
-        print("TrackManagementBloc: Refreshed ${allTags.length} global tags.");
+    final currentState = state; // Capture current state
 
-        if (currentState is TrackManagementLoaded) {
-          emit(currentState.copyWith(allTags: allTags));
-        } else if (currentState is TrackManagementLoading) {
-          emit(
-            TrackManagementLoading(
-              currentTracks: currentState.currentTracks,
-              currentRootFolders: currentState.currentRootFolders,
-              currentAllTags: allTags, // Update tags in loading state
-              currentSearchQuery: currentState.currentSearchQuery,
-            ),
-          );
-        }
-      } catch (e) {
-        print('TrackManagementBloc Error refreshing global tags: $e');
-        // Optionally emit error or just log
-      }
-    } else {
-      // If initial or error state, load tags and potentially transition to loaded
-      try {
-        emit(TrackManagementLoading()); // Indicate loading
-        final allTags = await _collectionService.getAllTags();
-        // Need tracks and roots too, maybe trigger LoadTracksForActiveCollection instead?
-        // For now, emit loaded with only tags (might be incomplete state)
-        emit(
-          TrackManagementLoaded(tracks: [], rootFolders: [], allTags: allTags),
-        );
-      } catch (e) {
-        emit(TrackManagementError("Failed to load global tags: $e"));
-      }
+    // Get current tracks, roots, and search query to preserve them
+    List<Track> currentTracks = _getTracksFromState();
+    List<String> currentRoots = _getRootFoldersFromState();
+    String? currentSearchQuery;
+    if (currentState is TrackManagementLoaded) {
+      currentSearchQuery = currentState.searchQuery;
+    } else if (currentState is TrackManagementLoading) {
+      currentSearchQuery = currentState.currentSearchQuery;
+    }
+
+    try {
+      print("TrackManagementBloc: Refreshing global tags...");
+      final allTags = await _collectionService.getAllTags();
+      print("TrackManagementBloc: Refreshed ${allTags.length} global tags.");
+
+      // Emit a new Loaded state with the updated tags and preserved other data
+      emit(
+        TrackManagementLoaded(
+          tracks: currentTracks,
+          rootFolders: currentRoots,
+          allTags: allTags,
+          searchQuery: currentSearchQuery,
+        ),
+      );
+    } catch (e) {
+      print('TrackManagementBloc Error refreshing global tags: $e');
+      // Optionally emit error or just log
+      // If emitting error, preserve existing data
+      emit(
+        TrackManagementError(
+          "Failed to load global tags: $e",
+          tracks: currentTracks,
+          rootFolders: currentRoots,
+        ),
+      );
     }
   }
 
@@ -839,7 +980,15 @@ class TrackManagementBloc
         if (currentState is TrackManagementLoaded) {
           emit(currentState.copyWith(allTags: updatedAllTags));
         } else if (currentState is TrackManagementLoading) {
-          emit(currentState.copyWith(currentAllTags: updatedAllTags));
+          // Preserve other loading state data
+          emit(
+            TrackManagementLoading(
+              currentTracks: currentState.currentTracks,
+              currentRootFolders: currentState.currentRootFolders,
+              currentAllTags: updatedAllTags, // Update tags
+              currentSearchQuery: currentState.currentSearchQuery,
+            ),
+          );
         }
       } catch (e) {
         print('TrackManagementBloc Error creating general tag: $e');
@@ -859,18 +1008,26 @@ class TrackManagementBloc
         final updatedAllTags = await _collectionService.getAllTags();
 
         // We might need to trigger an update across all tracks in the *active* collection
-        // if the deleted tag was used there. This requires iterating or a specific service call.
-        // For now, just update the global list and the UI will eventually reflect changes.
-        // Consider reloading tracks if immediate consistency is crucial.
-        // add(LoadTracksForActiveCollection()); // Uncomment to force refresh
+        // if the deleted tag was used there. Reloading tracks ensures consistency.
+        add(LoadTracksForActiveCollection()); // Force refresh tracks
 
+        // Update the global tag list in the current state type
         if (currentState is TrackManagementLoaded) {
+          // Note: LoadTracksForActiveCollection will eventually emit a new Loaded state
+          // so emitting here might be redundant, but can provide quicker feedback on the tag list itself.
           emit(currentState.copyWith(allTags: updatedAllTags));
         } else if (currentState is TrackManagementLoading) {
-          emit(currentState.copyWith(currentAllTags: updatedAllTags));
+          emit(
+            TrackManagementLoading(
+              currentTracks: currentState.currentTracks,
+              currentRootFolders: currentState.currentRootFolders,
+              currentAllTags: updatedAllTags, // Update tags
+              currentSearchQuery: currentState.currentSearchQuery,
+            ),
+          );
         }
         print(
-          "TrackManagementBloc: Deleted global tag definition '${event.tagName}'. Tracks may need refresh.",
+          "TrackManagementBloc: Deleted global tag definition '${event.tagName}'. Reloading tracks.",
         );
       } catch (e) {
         print('TrackManagementBloc Error deleting general tag: $e');
@@ -909,7 +1066,14 @@ class TrackManagementBloc
         if (currentState is TrackManagementLoaded) {
           emit(currentState.copyWith(allTags: updatedAllTags));
         } else if (currentState is TrackManagementLoading) {
-          emit(currentState.copyWith(currentAllTags: updatedAllTags));
+          emit(
+            TrackManagementLoading(
+              currentTracks: currentState.currentTracks,
+              currentRootFolders: currentState.currentRootFolders,
+              currentAllTags: updatedAllTags, // Update tags
+              currentSearchQuery: currentState.currentSearchQuery,
+            ),
+          );
         }
       } catch (e) {
         print('TrackManagementBloc Error setting tag color: $e');
@@ -935,6 +1099,12 @@ class TrackManagementBloc
         currentTracks: _getTracksFromState(),
         currentAllTags: _getTagsFromState(),
         currentRootFolders: _getRootFoldersFromState(),
+        currentSearchQuery:
+            (state is TrackManagementLoaded)
+                ? (state as TrackManagementLoaded).searchQuery
+                : (state is TrackManagementLoading
+                    ? (state as TrackManagementLoading).currentSearchQuery
+                    : null), // Preserve search
       ),
     );
     try {
@@ -983,88 +1153,257 @@ class TrackManagementBloc
     }
   }
 
-  // --- Waveform Extraction Logic (Moved from CollectionBloc) ---
-  // TODO: Review if this should live in CollectionService instead
+  // --- Waveform Extraction Logic ---
+  // lib/blocs/track_management/track_management_bloc.dart
+
+  // --- Waveform Extraction Logic ---
+  // --- Waveform Extraction Logic (Corrected) ---
   Future<void> _startBackgroundWaveformExtraction(
     List<String> absoluteFilePaths,
   ) async {
+    // Prevent multiple concurrent processing runs
     if (_isProcessingWaveforms) {
       print(
-        'TrackManagementBloc WAVEFORM: Already processing waveforms, skipping',
+        "TrackManagementBloc WAVEFORM: Processing already in progress. Skipping new request.",
       );
       return;
     }
+    if (absoluteFilePaths.isEmpty) {
+      print("TrackManagementBloc WAVEFORM: No files provided for processing.");
+      return;
+    }
+
     _isProcessingWaveforms = true;
     print(
-      'TrackManagementBloc WAVEFORM: Starting extraction for ${absoluteFilePaths.length} files',
+      'TrackManagementBloc WAVEFORM: Starting background extraction for ${absoluteFilePaths.length} files.',
     );
 
+    // --- Emit Initial Processing State ---
+    // Get current state data to preserve it
+    final currentStateBeforeProcessing = state;
+    List<Track> tracksToShowDuringProcessing = [];
+    List<Tag> tagsToShowDuringProcessing = [];
+    List<String> rootsToShowDuringProcessing = [];
+    String? searchToShowDuringProcessing;
+
+    if (currentStateBeforeProcessing is TrackManagementLoaded) {
+      tracksToShowDuringProcessing = currentStateBeforeProcessing.tracks;
+      tagsToShowDuringProcessing = currentStateBeforeProcessing.allTags;
+      rootsToShowDuringProcessing = currentStateBeforeProcessing.rootFolders;
+      searchToShowDuringProcessing = currentStateBeforeProcessing.searchQuery;
+    } else if (currentStateBeforeProcessing is TrackManagementLoading) {
+      tracksToShowDuringProcessing =
+          currentStateBeforeProcessing.currentTracks ?? [];
+      tagsToShowDuringProcessing =
+          currentStateBeforeProcessing.currentAllTags ?? [];
+      rootsToShowDuringProcessing =
+          currentStateBeforeProcessing.currentRootFolders ?? [];
+      searchToShowDuringProcessing =
+          currentStateBeforeProcessing.currentSearchQuery;
+    }
+    // Add other states if necessary
+
+    emit(
+      TrackManagementProcessingWaveforms(
+        tracks: tracksToShowDuringProcessing,
+        allTags: tagsToShowDuringProcessing,
+        rootFolders: rootsToShowDuringProcessing,
+        searchQuery: searchToShowDuringProcessing,
+        processedCount: 0, // Start count at 0
+        totalCount: absoluteFilePaths.length,
+      ),
+    );
+    // --- End Emit Initial Processing State ---
+
+    bool loopCompletedNaturally = false; // Flag to track if loop finished
+
     try {
-      await _ensureAudioServiceInitialized(); // Ensure AudioService is ready
+      await _ensureAudioServiceInitialized();
+
+      int attemptedCount = 0;
 
       for (int i = 0; i < absoluteFilePaths.length; i++) {
+        // --- Check cancellation condition more robustly ---
+        // Ensure the state is STILL TrackManagementProcessingWaveforms before proceeding
+        if (!_isProcessingWaveforms ||
+            state is! TrackManagementProcessingWaveforms) {
+          print(
+            "TrackManagementBloc WAVEFORM: Processing canceled or state changed (${state.runtimeType}). Exiting loop.",
+          );
+          loopCompletedNaturally = false; // Loop did not complete naturally
+          break; // Exit the loop
+        }
+        // --- End cancellation check ---
+
         final filePath = absoluteFilePaths[i];
         final fileName = pathLib.basename(filePath);
+        attemptedCount++;
         print(
-          'TrackManagementBloc WAVEFORM: Processing file ${i + 1}/${absoluteFilePaths.length}: $fileName',
+          'TrackManagementBloc WAVEFORM: Processing file $attemptedCount/${absoluteFilePaths.length}: $fileName',
         );
 
+        Track? track;
+        bool success = false;
         try {
-          // Get track ID from service using the absolute path
-          final track = await _collectionService.getTrackByPath(filePath);
+          track = await _collectionService.getTrackByPath(filePath);
           if (track?.id != null) {
-            print(
-              'TrackManagementBloc WAVEFORM: Found track ID: ${track!.id} for file: $fileName',
-            );
-            // Extract and update waveform data
-            final success = await _extractWaveformData(track.id!, filePath);
-            print(
-              'TrackManagementBloc WAVEFORM: Extraction ${success ? "succeeded" : "failed"} for $fileName',
-            );
-
-            // --- Update UI Optimistically (or reload) ---
-            if (success && state is TrackManagementLoaded) {
-              // Fetch the single updated track
-              final updatedTrack = await _collectionService.getTrack(track.id!);
-              if (updatedTrack != null) {
-                final currentState = state as TrackManagementLoaded;
-                // Update the track list in the current state
-                final newTrackList =
-                    currentState.tracks.map((t) {
-                      return t.id == updatedTrack.id ? updatedTrack : t;
-                    }).toList();
-                emit(currentState.copyWith(tracks: newTrackList));
-                print(
-                  'TrackManagementBloc WAVEFORM: Updated UI for track ${track.id}',
-                );
-              }
+            // Re-fetch track to ensure we have the latest data (including potentially updated waveform)
+            final existingTrack = await _collectionService.getTrack(track!.id!);
+            if (existingTrack != null &&
+                !existingTrack.isUrl && // Don't process URLs
+                (existingTrack.waveformData == null ||
+                    existingTrack.waveformData!.isEmpty)) {
+              print(
+                'TrackManagementBloc WAVEFORM: Extracting for track ID: ${track.id}',
+              );
+              // --- Actual extraction ---
+              success = await _extractWaveformData(track.id!, filePath);
+              print(
+                'TrackManagementBloc WAVEFORM: Extraction ${success ? "succeeded" : "failed"} for $fileName',
+              );
+            } else if (existingTrack != null && existingTrack.isUrl) {
+              print(
+                'TrackManagementBloc WAVEFORM: Skipping URL track ID: ${track.id}',
+              );
+              success = true; // Mark as success to update progress correctly
+            } else if (existingTrack != null) {
+              print(
+                'TrackManagementBloc WAVEFORM: Waveform data already exists for track ID: ${track.id}. Skipping extraction.',
+              );
+              success = true; // Consider skip as success for UI update purpose
+            } else {
+              print(
+                'TrackManagementBloc WAVEFORM: Could not re-fetch track ID ${track.id} after finding by path.',
+              );
             }
-            // --- End UI Update ---
           } else {
             print(
-              'TrackManagementBloc WAVEFORM: Could not find track ID for $fileName',
+              'TrackManagementBloc WAVEFORM: Could not find track ID for path $fileName',
             );
           }
-        } catch (e) {
+        } catch (e, stackTrace) {
           print(
-            'TrackManagementBloc WAVEFORM ERROR: Exception processing $fileName: $e',
+            'TrackManagementBloc WAVEFORM ERROR: Exception processing $fileName: $e\n$stackTrace',
           );
+          success = false;
         }
-        // Add a small delay between processing files to avoid overwhelming system? Optional.
-        // await Future.delayed(const Duration(milliseconds: 50));
+
+        // --- Update State After Each Attempt ---
+        // Check state again before emitting, as it might have changed during extraction
+        if (state is TrackManagementProcessingWaveforms) {
+          final currentState = state as TrackManagementProcessingWaveforms;
+          Track? updatedTrackData;
+          if (success && track?.id != null) {
+            // Re-fetch the track data ONLY if extraction was successful
+            // to get the newly saved waveform data.
+            updatedTrackData = await _collectionService.getTrack(track!.id!);
+          }
+
+          // Update track list optimistically ONLY IF extraction succeeded AND we got updated data
+          final newTrackList =
+              (success && updatedTrackData != null)
+                  ? currentState.tracks.map((t) {
+                    // Replace the old track data with the updated one
+                    return t.id == updatedTrackData!.id ? updatedTrackData : t;
+                  }).toList()
+                  : currentState
+                      .tracks; // Otherwise, keep the current track list
+
+          // Emit progress update with the ATTEMPTED count
+          emit(
+            currentState.copyWith(
+              tracks:
+                  newTrackList, // Update track list with new data if available
+              processedCount: attemptedCount, // Use ATTEMPTED count
+            ),
+          );
+          // print(
+          //   'TrackManagementBloc WAVEFORM: Updated Progress (Attempted: $attemptedCount/${absoluteFilePaths.length})',
+          // );
+        } else {
+          // If state changed while processing this file, break the loop
+          print(
+            "TrackManagementBloc WAVEFORM: State changed during file processing ($fileName), could not emit progress. Exiting loop.",
+          );
+          loopCompletedNaturally = false;
+          break;
+        }
+        // --- End Update State ---
+      } // End for loop
+
+      // If the loop finished without breaking early, set the flag
+      if (attemptedCount == absoluteFilePaths.length) {
+        loopCompletedNaturally = true;
       }
+
       print(
-        'TrackManagementBloc WAVEFORM: Completed extraction loop for all files',
+        'TrackManagementBloc WAVEFORM: Completed extraction loop attempts for all files. Loop completed naturally: $loopCompletedNaturally',
       );
-    } catch (e) {
+
+      // *** RELOAD CONDITIONALLY: Only reload if the loop finished ***
+      if (loopCompletedNaturally &&
+          state is TrackManagementProcessingWaveforms) {
+        print(
+          'TrackManagementBloc WAVEFORM: Loop finished naturally, dispatching final LoadTracksForActiveCollection.',
+        );
+        // It's often better to emit the final loaded state directly from here
+        // instead of dispatching another Load event, to avoid potential race conditions.
+        // Fetch the final state data.
+        final finalTracks = await _collectionService.getAllTracks();
+        final finalRoots = _collectionService.getRootFolders();
+        final finalTags = await _collectionService.getAllTags();
+        final currentSearchQuery =
+            (state as TrackManagementProcessingWaveforms).searchQuery;
+
+        emit(
+          TrackManagementLoaded(
+            tracks: finalTracks,
+            rootFolders: finalRoots,
+            allTags: finalTags,
+            searchQuery: currentSearchQuery,
+          ),
+        );
+        print(
+          'TrackManagementBloc WAVEFORM: Emitted final TrackManagementLoaded state.',
+        );
+      } else {
+        print(
+          'TrackManagementBloc WAVEFORM: Loop was cancelled or state changed before finishing (${state.runtimeType}). Final state emission/reload is skipped.',
+        );
+        // If the state is already Loaded/Error, it means another event likely took over.
+      }
+    } catch (e, stackTrace) {
       print(
-        'TrackManagementBloc WAVEFORM ERROR: Exception in background extraction: $e',
+        'TrackManagementBloc WAVEFORM ERROR: Exception during processing batch: $e\n$stackTrace',
+      );
+      // Emit error state, preserving data if possible
+      final currentStateOnError = state;
+      List<Track> tracksOnError = [];
+      List<String> rootsOnError = [];
+      if (currentStateOnError is TrackManagementProcessingWaveforms) {
+        tracksOnError = currentStateOnError.tracks;
+        rootsOnError = currentStateOnError.rootFolders;
+      } else if (currentStateOnError is TrackManagementLoaded) {
+        tracksOnError = currentStateOnError.tracks;
+        rootsOnError = currentStateOnError.rootFolders;
+      }
+      emit(
+        TrackManagementError(
+          "Error during waveform processing: ${e.toString()}",
+          tracks: tracksOnError,
+          rootFolders: rootsOnError,
+        ),
       );
     } finally {
       _isProcessingWaveforms = false;
-      print('TrackManagementBloc WAVEFORM: Processing finished.');
+      print(
+        'TrackManagementBloc WAVEFORM: Background processing finished. Flag set to false.',
+      );
+      // *** Ensure add(LoadTracksForActiveCollection()) is NOT called here ***
     }
-  }
+  } // End _startBackgroundWaveformExtraction
+
+  // In lib/blocs/track_management/track_management_bloc.dart
 
   Future<bool> _extractWaveformData(
     int trackId,
@@ -1076,59 +1415,108 @@ class TrackManagementBloc
     try {
       await _ensureAudioServiceInitialized();
 
-      // Use AudioService to get waveform data
-      // This assumes AudioService.loadAudio triggers extraction or loads from cache
-      // And the waveform data becomes available via waveformStream or a getter.
-      // We might need a more direct way to request extraction if loadAudio doesn't fit.
-
-      // Option A: Rely on loadAudio triggering extraction
-      // await _audioService.loadAudio(absoluteFilePath, isUrl: false); // Might trigger extraction
-      // List<double>? waveformData = _audioService.waveformData; // Check if available immediately
-
-      // Option B: A dedicated extraction method in AudioService (Preferred)
-      // Let's assume AudioService has a method like this:
-      // List<double>? waveformData = await _audioService.extractAndGetWaveform(absoluteFilePath);
-
-      // --- Temporary Simulation (Replace with actual call to AudioService) ---
-      // Simulate getting waveform via loadAudio and stream
+      // --- Load the audio first ---
       await _audioService.loadAudio(absoluteFilePath, isUrl: false);
+
+      // --- *** NEW: Check AudioService directly for cached data *** ---
+      final immediatelyAvailableData = _audioService.waveformData;
+      if (immediatelyAvailableData != null &&
+          immediatelyAvailableData.isNotEmpty) {
+        print(
+          "TrackManagementBloc EXTRACT: Got waveform data directly from AudioService for track $trackId (${immediatelyAvailableData.length} points)",
+        );
+        await _updateTrackWithWaveform(trackId, immediatelyAvailableData);
+        return true; // Success, no need to listen to stream
+      }
+      // --- *** End New Check *** ---
+
+      // --- Fallback to Stream Listening (if direct check failed) ---
+      print(
+        "TrackManagementBloc EXTRACT: No immediate data found, setting up stream listener for track $trackId",
+      );
       final completer = Completer<List<double>?>();
       StreamSubscription? sub;
-      sub = _audioService.waveformStream.listen((data) {
-        if (!completer.isCompleted) {
-          completer.complete(data);
-          sub?.cancel();
-        }
-      });
-      // Timeout to prevent waiting forever
-      Future.delayed(Duration(seconds: 15), () {
-        // Reduced timeout
+
+      // Timeout to prevent waiting forever if waveform stream doesn't emit
+      final timeoutTimer = Timer(const Duration(seconds: 20), () {
         if (!completer.isCompleted) {
           print(
-            "TrackManagementBloc EXTRACT: Timeout waiting for waveform data for track $trackId",
+            "TrackManagementBloc EXTRACT: Timeout waiting for waveform data for track $trackId via stream",
           );
-          completer.complete(null);
+          completer.complete(null); // Complete with null on timeout
           sub?.cancel();
         }
       });
-      final waveformData = await completer.future;
-      // --- End Simulation ---
 
-      if (waveformData != null && waveformData.isNotEmpty) {
+      sub = _audioService.waveformStream.listen(
+        (data) {
+          if (!completer.isCompleted) {
+            // Check if data is for the correct source (optional but good practice)
+            // This requires AudioService stream to perhaps emit source+data pairs
+            // Or assume the stream only emits for the last loaded source.
+            print(
+              "TrackManagementBloc EXTRACT: Received waveform data via stream for track $trackId (${data.length} points)",
+            );
+            completer.complete(data);
+            sub?.cancel();
+            timeoutTimer.cancel(); // Cancel timeout if data received
+          }
+        },
+        onError: (error) {
+          if (!completer.isCompleted) {
+            print(
+              "TrackManagementBloc EXTRACT: Error on waveform stream for track $trackId: $error",
+            );
+            completer.completeError(error); // Complete with error
+            sub?.cancel();
+            timeoutTimer.cancel();
+          }
+        },
+        onDone: () {
+          // Handle stream closing unexpectedly if needed
+          if (!completer.isCompleted) {
+            print(
+              "TrackManagementBloc EXTRACT: Waveform stream closed before data received for track $trackId.",
+            );
+            completer.complete(
+              null,
+            ); // Complete with null if stream closes early
+            timeoutTimer.cancel();
+          }
+        },
+      );
+
+      // Await the result from the stream listener or timeout
+      List<double>? waveformDataFromStream;
+      try {
+        waveformDataFromStream = await completer.future;
+      } catch (e) {
+        print(
+          "TrackManagementBloc EXTRACT: Error awaiting stream completer: $e",
+        );
+        waveformDataFromStream = null; // Treat error as no data received
+      }
+
+      // --- End Stream Listening ---
+
+      if (waveformDataFromStream != null && waveformDataFromStream.isNotEmpty) {
+        print(
+          "TrackManagementBloc EXTRACT: Successfully processed stream data for track $trackId",
+        );
         await _updateTrackWithWaveform(
           trackId,
-          waveformData,
+          waveformDataFromStream,
         ); // Update DB via CollectionService
         return true;
       } else {
         print(
-          "TrackManagementBloc EXTRACT: No waveform data received for track $trackId",
+          "TrackManagementBloc EXTRACT: No waveform data received from stream or data was empty for track $trackId",
         );
-        return false;
+        return false; // Failed to get data via stream
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       print(
-        'TrackManagementBloc EXTRACT ERROR: Exception for track $trackId: $e',
+        'TrackManagementBloc EXTRACT ERROR: Exception for track $trackId: $e\n$stackTrace',
       );
       return false;
     }
@@ -1141,7 +1529,7 @@ class TrackManagementBloc
     print(
       'TrackManagementBloc UPDATE DB: Saving waveform data for track $trackId',
     );
-    // Get the existing track data (relative path) from CollectionService
+    // Get the existing track data from CollectionService
     final track = await _collectionService.getTrack(
       trackId,
     ); // This should return resolved path

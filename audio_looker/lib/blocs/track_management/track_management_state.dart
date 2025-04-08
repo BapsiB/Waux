@@ -19,11 +19,21 @@ class TrackManagementLoading extends TrackManagementState {
   final List<String>? currentRootFolders;
   final String? currentSearchQuery; // Preserve search query during loading
 
+  // --- NEW: Waveform Processing Progress ---
+  final double?
+  waveformProcessingProgress; // 0.0 to 1.0, null if not processing
+  final String? waveformProcessingMessage; // e.g., "Processing 5 of 20..."
+  // --- END NEW ---
+
   const TrackManagementLoading({
     this.currentTracks,
     this.currentAllTags,
     this.currentRootFolders,
     this.currentSearchQuery,
+    // --- NEW ---
+    this.waveformProcessingProgress,
+    this.waveformProcessingMessage,
+    // --- END NEW ---
   });
 
   TrackManagementLoading copyWith({
@@ -31,12 +41,27 @@ class TrackManagementLoading extends TrackManagementState {
     List<Tag>? currentAllTags,
     List<String>? currentRootFolders,
     String? currentSearchQuery,
+    // --- NEW ---
+    double? waveformProcessingProgress,
+    bool clearWaveformProgress = false, // Flag to explicitly clear
+    String? waveformProcessingMessage,
+    // --- END NEW ---
   }) {
     return TrackManagementLoading(
       currentTracks: currentTracks ?? this.currentTracks,
       currentAllTags: currentAllTags ?? this.currentAllTags,
       currentRootFolders: currentRootFolders ?? this.currentRootFolders,
       currentSearchQuery: currentSearchQuery ?? this.currentSearchQuery,
+      // --- NEW ---
+      waveformProcessingProgress:
+          clearWaveformProgress
+              ? null
+              : waveformProcessingProgress ?? this.waveformProcessingProgress,
+      waveformProcessingMessage:
+          clearWaveformProgress
+              ? null
+              : waveformProcessingMessage ?? this.waveformProcessingMessage,
+      // --- END NEW ---
     );
   }
 
@@ -46,6 +71,10 @@ class TrackManagementLoading extends TrackManagementState {
     currentAllTags,
     currentRootFolders,
     currentSearchQuery,
+    // --- NEW ---
+    waveformProcessingProgress,
+    waveformProcessingMessage,
+    // --- END NEW ---
   ];
 }
 
@@ -97,4 +126,52 @@ class TrackManagementError extends TrackManagementState {
 
   @override
   List<Object?> get props => [message, tracks, rootFolders];
+}
+
+class TrackManagementProcessingWaveforms extends TrackManagementState {
+  final List<Track> tracks; // Show current tracks while processing
+  final List<Tag> allTags;
+  final List<String> rootFolders;
+  final String? searchQuery; // Preserve search query
+  final int processedCount; // Number of waveforms processed
+  final int totalCount; // Total waveforms to process
+
+  const TrackManagementProcessingWaveforms({
+    required this.tracks,
+    required this.allTags,
+    required this.rootFolders,
+    this.searchQuery,
+    required this.processedCount,
+    required this.totalCount,
+  });
+
+  @override
+  List<Object?> get props => [
+    tracks,
+    allTags,
+    rootFolders,
+    searchQuery,
+    processedCount,
+    totalCount,
+  ];
+
+  // Optional: Add copyWith if needed for internal state updates
+  TrackManagementProcessingWaveforms copyWith({
+    List<Track>? tracks,
+    List<Tag>? allTags,
+    List<String>? rootFolders,
+    String? searchQuery,
+    int? processedCount,
+    int? totalCount,
+    bool clearSearchQuery = false,
+  }) {
+    return TrackManagementProcessingWaveforms(
+      tracks: tracks ?? this.tracks,
+      allTags: allTags ?? this.allTags,
+      rootFolders: rootFolders ?? this.rootFolders,
+      searchQuery: clearSearchQuery ? null : (searchQuery ?? this.searchQuery),
+      processedCount: processedCount ?? this.processedCount,
+      totalCount: totalCount ?? this.totalCount,
+    );
+  }
 }

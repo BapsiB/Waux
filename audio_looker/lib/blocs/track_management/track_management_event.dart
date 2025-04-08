@@ -136,3 +136,5 @@ class ExportCollectionToFile extends TrackManagementEvent {
   @override
   List<Object?> get props => [path];
 }
+
+class SyncActiveCollectionFolders extends TrackManagementEvent {}

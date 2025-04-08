@@ -596,7 +596,6 @@ class CollectionService {
   // --- Track CRUD Operations (Revised for Path Handling) ---
   // (Helpers: _resolveTrackPath, _prepareTrackForDb)
   // (Methods: addTrack, updateTrack, deleteTrack, getTrack, getTrackByPath, getAllTracks, searchTracks)
-  // ... (Keep existing methods from previous step) ...
   Track _resolveTrackPath(Track track) {
     if (_activeCollectionDefinition?.type == CollectionType.shared &&
         !track.isUrl &&

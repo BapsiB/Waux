@@ -146,30 +146,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _setupCollectionListener() {
     context.read<CollectionManagementBloc>().stream.listen((collectionState) {
+      if (!mounted) return; // Ensure widget is still mounted
+
       // Check if the state indicates a collection is successfully loaded and active
       if (collectionState is CollectionManagementLoaded &&
           collectionState.activeCollectionDefinition != null) {
+        final activeCollectionId =
+            collectionState.activeCollectionDefinition!.id;
         print(
-          "HomeScreen Listener: Collection '${collectionState.activeCollectionDefinition!.name}' loaded.",
+          "HomeScreen Listener: Collection '${collectionState.activeCollectionDefinition!.name}' loaded (ID: $activeCollectionId).",
         );
-        // Trigger Playlist loading
-        print("HomeScreen Listener: Reloading playlists.");
-        context.read<PlaylistBloc>().add(LoadPlaylists()); //
 
-        // *** ADD THIS LINE: Trigger Track loading ***
+        // --- Trigger Loading for other BLoCs ---
+        print("HomeScreen Listener: Reloading playlists.");
+        context.read<PlaylistBloc>().add(LoadPlaylists());
+
         print("HomeScreen Listener: Reloading tracks and folders.");
         context.read<TrackManagementBloc>().add(
           LoadTracksForActiveCollection(),
-        ); //
+        );
+
+        // *** ADDED: Trigger Folder Sync ***
+        print(
+          "HomeScreen Listener: Triggering folder sync for active collection.",
+        );
+        context.read<TrackManagementBloc>().add(
+          SyncActiveCollectionFolders(),
+        ); // <<< ADD THIS DISPATCH
       } else if (collectionState is CollectionManagementLoaded &&
           collectionState.activeCollectionDefinition == null) {
-        // Handle case where loading finished but no collection is active (e.g., after deletion)
+        // Handle case where loading finished but no collection is active
         print(
           "HomeScreen Listener: Collection Management loaded, but no active collection.",
         );
-        // Optionally clear existing tracks/playlists here if needed
-        // context.read<TrackManagementBloc>().add(ClearTracks()); // Example event
-        // context.read<PlaylistBloc>().add(ClearPlaylists());   // Example event
+        // Clear potentially displayed tracks from previous collection
+        context.read<TrackManagementBloc>().add(
+          const SearchTracks(''),
+        ); // Clear search/filter
       }
     });
   }
@@ -687,6 +700,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   return false;
                 });
 
+                print("_selectedTrackIds length ${_selectedTrackIds.length}");
+
                 if (selectionChanged) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (mounted) {
@@ -711,26 +726,28 @@ class _HomeScreenState extends State<HomeScreen> {
               // Get tracks, folders, tags and loading state
               List<Track> allTracks = [];
               List<String> rootFolders = [];
-              bool isLoading = false;
               List<Tag> allTags = [];
+              bool isLoading =
+                  state
+                      is TrackManagementInitial; // Only initial is true loading state now
 
               if (state is TrackManagementLoading) {
-                isLoading = true;
                 allTracks = state.currentTracks ?? [];
                 rootFolders = state.currentRootFolders ?? [];
                 allTags = state.currentAllTags ?? [];
               } else if (state is TrackManagementLoaded) {
-                isLoading = false;
                 allTracks = state.tracks;
                 rootFolders = state.rootFolders;
                 allTags = state.allTags;
+              } else if (state is TrackManagementProcessingWaveforms) {
+                allTracks = state.tracks; // Use tracks from processing state
+                rootFolders = state.rootFolders;
+                allTags = state.allTags;
+                isLoading = false; // Not considered initial loading
               } else if (state is TrackManagementError) {
-                isLoading = false;
                 allTracks = state.tracks ?? [];
-                rootFolders = [];
-                allTags = [];
-              } else if (state is TrackManagementInitial) {
-                isLoading = true;
+                rootFolders = state.rootFolders ?? [];
+                // Optionally show error message here or rely on snackbar
               }
 
               if (isLoading && allTracks.isEmpty && rootFolders.isEmpty) {
@@ -804,56 +821,110 @@ class _HomeScreenState extends State<HomeScreen> {
               }
 
               // Build the main view
-              return Opacity(
-                opacity:
-                    isLoading &&
-                            (allTracks.isNotEmpty || rootFolders.isNotEmpty)
-                        ? 0.6
-                        : 1.0,
-                child: Container(
-                  color:
-                      _currentlySelectedPlaylistId != null
-                          ? Theme.of(
-                            context,
-                          ).colorScheme.surfaceVariant.withOpacity(0.3)
-                          : null,
-                  child:
-                      _viewMode == ViewMode.list
-                          ? TrackTableWidget(
-                            tracks: displayedTracks,
-                            key: ValueKey(
-                              'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}',
-                            ),
-                            selectedTrackIds: _selectedTrackIds,
-                            audioPlayerBloc: context.read<AudioPlayerBloc>(),
-                            onSelectionChanged: _handleSelectionChanged,
-                            onShowContextMenu:
-                                _contextMenuHandler.showContextMenu,
-                            onRatingChanged: _handleRatingChanged,
-                            onSort: _handleSortChanged,
-                            initialSortColumnName: _sortColumnName,
-                            initialSortDirection: _sortDirectionSf,
-                            onPlayPreviewAndMinimize: _selectAndPlayTrack,
-                            onEditMetadata: _selectAndOpenPlayer,
-                          )
-                          : FolderTreeView(
-                            tracks: allTracks,
-                            key: ValueKey(
-                              'folder-tree-${_currentlyLoadedPathInPlayer ?? 'none'}',
-                            ),
-                            rootFolders: rootFolders,
-                            selectedTrack: _selectedTrackForPlayer,
-                            currentlyLoadedPath: _currentlyLoadedPathInPlayer,
-                            onTrackSelected: (track) {
-                              _handleSelectionChanged(track.id!, true);
-                              _selectTrackForPlayer(track);
-                            },
-                            onTrackDeleted: (trackId) {
-                              _contextMenuHandler.confirmAndDeleteSelected();
-                            },
+              return Container(
+                color:
+                    _currentlySelectedPlaylistId != null
+                        ? Theme.of(
+                          context,
+                        ).colorScheme.surfaceVariant.withOpacity(0.3)
+                        : null,
+                child:
+                    _viewMode == ViewMode.list
+                        ? TrackTableWidget(
+                          // Ensure keys update if underlying data structure changes significantly
+                          key: ValueKey(
+                            'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}-${allTracks.length}',
                           ),
-                ),
+                          tracks:
+                              displayedTracks, // Pass currently filtered/sorted tracks
+                          selectedTrackIds: _selectedTrackIds,
+                          audioPlayerBloc: context.read<AudioPlayerBloc>(),
+                          onSelectionChanged: _handleSelectionChanged,
+                          onShowContextMenu:
+                              _contextMenuHandler.showContextMenu,
+                          onRatingChanged: _handleRatingChanged,
+                          onSort: _handleSortChanged,
+                          initialSortColumnName: _sortColumnName,
+                          initialSortDirection: _sortDirectionSf,
+                          onPlayPreviewAndMinimize: _selectAndPlayTrack,
+                          onEditMetadata: _selectAndOpenPlayer,
+                        )
+                        : FolderTreeView(
+                          key: ValueKey(
+                            'folder-tree-${rootFolders.join('-')}-${allTracks.length}',
+                          ),
+                          tracks:
+                              allTracks, // Pass all tracks for tree structure
+                          rootFolders: rootFolders,
+                          selectedTrack: _selectedTrackForPlayer,
+                          currentlyLoadedPath: _currentlyLoadedPathInPlayer,
+                          onTrackSelected: (track) {
+                            _handleSelectionChanged(track.id!, true);
+                            _selectTrackForPlayer(track);
+                          },
+                          onTrackDeleted: (trackId) {
+                            _contextMenuHandler.confirmAndDeleteSelected();
+                          },
+                        ),
               );
+            }, // End Builder for main content
+          ),
+
+          BlocBuilder<TrackManagementBloc, TrackManagementState>(
+            builder: (context, state) {
+              if (state is TrackManagementProcessingWaveforms) {
+                double progress =
+                    (state.totalCount > 0)
+                        ? (state.processedCount / state.totalCount).clamp(
+                          0.0,
+                          1.0,
+                        )
+                        : 0.0;
+                return Positioned(
+                  // Position the progress bar
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    color: Colors.black.withOpacity(
+                      0.7,
+                    ), // Semi-transparent background
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            value: progress, // Show determinate progress
+                            strokeWidth: 3,
+                            backgroundColor: Colors.white24,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Processing waveforms (${state.processedCount}/${state.totalCount})...',
+                            style: const TextStyle(color: Colors.white),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              } else if (state is TrackManagementLoading &&
+                  state.currentTracks == null &&
+                  state.currentRootFolders == null) {
+                // Show general loading if nothing else is displayed yet
+                return const Center(
+                  child: CircularProgressIndicator(color: Colors.lightGreen),
+                );
+              }
+              return const SizedBox.shrink(); // Hide if not processing waveforms
             },
           ),
 
@@ -887,32 +958,32 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
 
           // Loading indicator overlay
-          BlocBuilder<TrackManagementBloc, TrackManagementState>(
-            builder: (context, state) {
-              if (state is TrackManagementLoading &&
-                  (state.currentTracks?.isNotEmpty ?? false)) {
-                return Positioned.fill(
-                  child: Container(
-                    color: Colors.black.withOpacity(0.4),
-                    child: const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircularProgressIndicator(color: Colors.white),
-                          SizedBox(height: 16),
-                          Text(
-                            'Processing audio...',
-                            style: TextStyle(color: Colors.white, fontSize: 16),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }
-              return const SizedBox.shrink();
-            },
-          ),
+          // BlocBuilder<TrackManagementBloc, TrackManagementState>(
+          //   builder: (context, state) {
+          //     if (state is TrackManagementLoading &&
+          //         (state.currentTracks?.isNotEmpty ?? false)) {
+          //       return Positioned.fill(
+          //         child: Container(
+          //           color: Colors.black.withOpacity(0.4),
+          //           child: const Center(
+          //             child: Column(
+          //               mainAxisSize: MainAxisSize.min,
+          //               children: [
+          //                 CircularProgressIndicator(color: Colors.white),
+          //                 SizedBox(height: 16),
+          //                 Text(
+          //                   'Processing audio...',
+          //                   style: TextStyle(color: Colors.white, fontSize: 16),
+          //                 ),
+          //               ],
+          //             ),
+          //           ),
+          //         ),
+          //       );
+          //     }
+          //     return const SizedBox.shrink();
+          //   },
+          // ),
         ],
       ),
     );

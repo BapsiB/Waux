@@ -48,6 +48,8 @@ class TrackSelectionHandler {
     } else if (collectionState is TrackManagementError &&
         collectionState.tracks != null) {
       sourceTracks = collectionState.tracks!;
+    } else if (collectionState is TrackManagementProcessingWaveforms) {
+      sourceTracks = collectionState.tracks!;
     }
 
     List<Track> filteredTracks;
