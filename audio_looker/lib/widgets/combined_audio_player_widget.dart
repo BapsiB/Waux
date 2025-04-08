@@ -1,12 +1,14 @@
+// lib/widgets/combined_audio_player_widget.dart
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'dart:async'; // For Timer
 
 // Import BLoCs and Services/Models
 import '../blocs/audio_player/audio_player_bloc.dart';
-import '../blocs/collection/collection_bloc.dart';
-import '../services/collection_service.dart';
-// import '../services/audio_service.dart';
+import '../blocs/collection/collection_bloc.dart'; // Keep for collection state access
+import '../services/collection_service.dart'; // Keep for Track and Tag models
+// import '../services/audio_service.dart'; // AudioService likely not needed directly here
 
 // Import UI components
 import 'waveform_painter.dart';
@@ -14,14 +16,20 @@ import 'tag_editor_popup.dart';
 
 class CombinedAudioPlayerWidget extends StatefulWidget {
   final Track track;
-  final bool isMinimized; // <<< Input: Current minimized state from parent
-  final VoidCallback onToggle; // <<< Input: Callback to toggle state in parent
+  final bool isMinimized;
+  final VoidCallback onToggle;
+  // *** ADDED CALLBACKS ***
+  final VoidCallback? onPreviousPressed;
+  final VoidCallback? onNextPressed;
 
   const CombinedAudioPlayerWidget({
     Key? key,
     required this.track,
     required this.isMinimized,
     required this.onToggle,
+    // *** ADDED CALLBACKS TO CONSTRUCTOR ***
+    this.onPreviousPressed,
+    this.onNextPressed,
   }) : super(key: key);
 
   @override
@@ -71,7 +79,10 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       end: _minimizedPlayerHeight,
     ).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
-    );
+    )..addListener(() {
+      // Optional: Add listener if needed, e.g., for state updates during animation
+      if (mounted) setState(() {}); // Rebuild while animating
+    });
     // Set initial animation value based on the INITIAL isMinimized prop
     _animationController.value = widget.isMinimized ? 1.0 : 0.0;
     // --- End Animation Controller Init ---
@@ -136,7 +147,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       needsLoad = false; // Assume it's loading the right one or wait
     }
     if (needsLoad) {
-      print("HomeScreen: Dispatching LoadAudio for track ${track.id}");
+      print("CombinedAudioPlayer: Dispatching LoadAudio for track ${track.id}");
       bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
     }
   }
@@ -149,23 +160,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     super.dispose();
   }
 
-  // Toggle between minimized and expanded states
-  // void _togglePlayerSize() {
-  //   // Use mounted check before calling setState
-  //   if (!mounted) return;
-  //   setState(() {
-  //     _isMinimized = !_isMinimized;
-  //     if (_isMinimized) {
-  //       _animationController.forward();
-  //     } else {
-  //       _animationController.reverse();
-  //     }
-  //   });
-  // }
-
   // --- UI Building Methods ---
 
-  // Build the common toggle bar
   // Build the common toggle bar
   Widget _buildToggleBar() {
     return Container(
@@ -203,6 +199,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               1.0,
             )
             : 0.0;
+    final canPrevious = duration > Duration.zero; // Can seek if duration exists
+    final canNext = duration > Duration.zero; // Can seek if duration exists
 
     return Container(
       height: _minimizedPlayerHeight, // Ensure container has the correct height
@@ -213,6 +211,18 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       ),
       child: Row(
         children: [
+          // *** ADDED Previous Button ***
+          IconButton(
+            icon: const Icon(Icons.skip_previous),
+            iconSize: 30, // Slightly smaller
+            color:
+                canPrevious
+                    ? Theme.of(context).colorScheme.onSurfaceVariant
+                    : Theme.of(context).disabledColor,
+            onPressed: canPrevious ? widget.onPreviousPressed : null,
+            tooltip: 'Previous Track',
+          ),
+          const SizedBox(width: 4), // Spacing
           // Play/Pause Button
           IconButton(
             icon: Icon(
@@ -233,6 +243,18 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               }
             },
             tooltip: isPlaying ? 'Pause' : 'Play',
+          ),
+          const SizedBox(width: 4), // Spacing
+          // *** ADDED Next Button ***
+          IconButton(
+            icon: const Icon(Icons.skip_next),
+            iconSize: 30, // Slightly smaller
+            color:
+                canNext
+                    ? Theme.of(context).colorScheme.onSurfaceVariant
+                    : Theme.of(context).disabledColor,
+            onPressed: canNext ? widget.onNextPressed : null,
+            tooltip: 'Next Track',
           ),
           const SizedBox(width: 8),
 
@@ -289,13 +311,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
             _formatDuration(duration),
             style: Theme.of(context).textTheme.bodySmall,
           ),
-          const SizedBox(width: 8), // Spacing before expand button
-          // Expand Button (now part of the toggle bar)
-          // IconButton(
-          //   icon: const Icon(Icons.keyboard_arrow_up),
-          //   onPressed: _togglePlayerSize,
-          //   tooltip: 'Expand player',
-          // ),
+          // Expand button is part of the toggle bar now
         ],
       ),
     );
@@ -312,6 +328,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     final position = playerState.position;
     final waveformData = playerState.waveformData;
     final timeTags = playerState.tags;
+    final canPrevious = duration > Duration.zero;
+    final canNext = duration > Duration.zero;
 
     // Get general tags for the current track from collection state
     List<String> currentGeneralTags = [];
@@ -650,7 +668,19 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                           );
                         },
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 10), // Spacing
+              // *** ADDED Previous Button ***
+              IconButton(
+                icon: const Icon(Icons.skip_previous),
+                iconSize: 40,
+                color:
+                    canPrevious
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Theme.of(context).disabledColor,
+                onPressed: canPrevious ? widget.onPreviousPressed : null,
+                tooltip: 'Previous Track',
+              ),
+              const SizedBox(width: 10), // Spacing
               // Play/Pause Button
               FloatingActionButton(
                 tooltip: isPlaying ? 'Pause' : 'Play',
@@ -675,7 +705,20 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 // Use standard Icons, AnimatedIcon can be complex with BLoC state
                 child: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 10), // Spacing
+              // *** ADDED Next Button ***
+              IconButton(
+                icon: const Icon(Icons.skip_next),
+                iconSize: 40,
+                color:
+                    canNext
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Theme.of(context).disabledColor,
+                onPressed: canNext ? widget.onNextPressed : null,
+                tooltip: 'Next Track',
+              ),
+              const SizedBox(width: 10), // Spacing
+
               IconButton(
                 icon: const Icon(Icons.forward_10),
                 iconSize: 32,
@@ -947,14 +990,14 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
             bool isErrorForThisTrack =
                 playerState is AudioPlayerError &&
                 playerState.source == widget.track.path;
+            // Check if loading OR initial (and not the correct track already loaded)
             bool isLoadingThisTrack =
                 (playerState is AudioPlayerInitial ||
-                    playerState is AudioPlayerLoading);
+                    playerState is AudioPlayerLoading) &&
+                !isCorrectTrackLoaded;
 
-            // Handle Loading/Error states for the player
-            // Show loading if Initial state OR Loading state
-            if (isLoadingThisTrack && !isCorrectTrackLoaded) {
-              // Show a simple loading indicator
+            // Handle Loading state
+            if (isLoadingThisTrack) {
               return Container(
                 height:
                     _minimizedPlayerHeight, // Use minimized height for loading
@@ -973,9 +1016,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 ),
               );
             }
-            // <<< CORRECTED: Check error state and its source >>>
+            // Handle Error state specific to this track
             else if (isErrorForThisTrack) {
-              // Show error specific to this track
               return Container(
                 height:
                     _minimizedPlayerHeight, // Use minimized height for error
@@ -1000,17 +1042,14 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 ),
               );
             }
-            // Show the main player UI only if the loaded track matches the widget's track
+            // Show player UI if the correct track is loaded
             else if (isCorrectTrackLoaded) {
-              // --- Main Player UI ---
               return AnimatedBuilder(
                 animation: _playerHeightAnimation,
                 builder: (context, child) {
                   return Container(
-                    // This container's height is animated
                     height: _playerHeightAnimation.value,
                     decoration: BoxDecoration(
-                      // Apply decoration here
                       color: Theme.of(context).cardColor,
                       boxShadow: [
                         BoxShadow(
@@ -1020,38 +1059,51 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                         ),
                       ],
                     ),
-                    child: child, // Pass the actual content as child
+                    child: child,
                   );
                 },
                 child: Column(
-                  // The actual content structure
                   children: [
-                    _buildToggleBar(), // Calls widget.onToggle
+                    _buildToggleBar(),
                     Expanded(
                       child: Stack(
                         children: [
-                          // Expanded View
-                          AnimatedOpacity(
-                            opacity: widget.isMinimized ? 0.0 : 1.0,
-                            duration: const Duration(milliseconds: 150),
-                            child: IgnorePointer(
-                              ignoring: widget.isMinimized,
-                              child: _buildExpandedPlayerUI(
-                                playerState,
-                                widget.track,
-                                collectionState,
+                          // Expanded View (Visible when animation value < 0.5)
+                          Positioned.fill(
+                            child: AnimatedOpacity(
+                              opacity:
+                                  _animationController.value < 0.5
+                                      ? 1.0 - (_animationController.value * 2)
+                                      : 0.0,
+                              duration:
+                                  Duration
+                                      .zero, // Opacity handled by controller
+                              child: IgnorePointer(
+                                ignoring: widget.isMinimized,
+                                child: _buildExpandedPlayerUI(
+                                  playerState,
+                                  widget.track,
+                                  collectionState,
+                                ),
                               ),
                             ),
                           ),
-                          // Minimized View
-                          AnimatedOpacity(
-                            opacity: widget.isMinimized ? 1.0 : 0.0,
-                            duration: const Duration(milliseconds: 150),
-                            child: IgnorePointer(
-                              ignoring: !widget.isMinimized,
-                              child: _buildMinimizedPlayerControls(
-                                playerState,
-                                widget.track,
+                          // Minimized View (Visible when animation value > 0.5)
+                          Positioned.fill(
+                            child: AnimatedOpacity(
+                              opacity:
+                                  _animationController.value > 0.5
+                                      ? (_animationController.value - 0.5) * 2
+                                      : 0.0,
+                              duration:
+                                  Duration
+                                      .zero, // Opacity handled by controller
+                              child: IgnorePointer(
+                                ignoring: !widget.isMinimized,
+                                child: _buildMinimizedPlayerControls(
+                                  playerState,
+                                  widget.track,
+                                ),
                               ),
                             ),
                           ),
@@ -1061,8 +1113,9 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                   ],
                 ),
               );
-            } else {
-              // Other track loaded/errored, or initial state
+            }
+            // Fallback: Track doesn't match or player is in an unexpected state
+            else {
               return const SizedBox.shrink();
             }
           },
