@@ -6,7 +6,10 @@ import 'package:provider/provider.dart'; // Import Provider
 
 // Import your BLoCs and Services
 import 'blocs/audio_player/audio_player_bloc.dart';
-import 'blocs/collection/collection_bloc.dart';
+import 'blocs/collection_management/collection_management_bloc.dart'; // Import the new management BLoC
+import 'blocs/track_management/track_management_bloc.dart'; // Import the new track BLoC
+// Import necessary events if you add initial events
+
 import 'blocs/playlist/playlist_bloc.dart'; // Import PlaylistBloc
 import 'services/audio_service.dart';
 import 'services/collection_service.dart';
@@ -61,26 +64,47 @@ class MyApp extends StatelessWidget {
       // Use MultiBlocProvider to provide BLoCs
       child: MultiBlocProvider(
         providers: [
+          // Keep existing BLoCs
           BlocProvider<AudioPlayerBloc>(
             create: (context) => AudioPlayerBloc(context.read<AudioService>()),
           ),
-          BlocProvider<CollectionBloc>(
-            create:
-                (context) => CollectionBloc(
-                    // 1. Pass service as a positional argument
-                    context.read<CollectionService>(),
-                  )
-                  // 2. Use the correct event constructor
-                  ..add(LoadCollection()),
-          ),
-
           BlocProvider<PlaylistBloc>(
-            // Provide PlaylistBloc
             create:
                 (context) => PlaylistBloc(
                   playlistService: context.read<PlaylistService>(),
-                  collectionService: collectionService,
-                )..add(LoadPlaylists()), // Load initial playlists
+                  // PlaylistBloc depends on CollectionService to know the active collection
+                  collectionService: context.read<CollectionService>(),
+                )..add(LoadPlaylists()),
+          ),
+
+          // --- REMOVE Old CollectionBloc Provider ---
+          // BlocProvider<CollectionBloc>(
+          //   create: (context) => CollectionBloc(context.read<CollectionService>())
+          //     ..add(LoadCollection()), // Old initial event
+          // ),
+
+          // +++ ADD New BLoC Providers +++
+
+          // 1. CollectionManagementBloc
+          BlocProvider<CollectionManagementBloc>(
+            create:
+                (context) => CollectionManagementBloc(
+                    // Assuming CollectionManagementBloc takes CollectionService
+                    context.read<CollectionService>(),
+                  )
+                  // Add an initial event to load the list of collections
+                  ..add(LoadCollectionList()), // Or similar initial event
+          ),
+
+          // 2. TrackManagementBloc
+          BlocProvider<TrackManagementBloc>(
+            create:
+                (context) => TrackManagementBloc(
+                  // TrackManagementBloc takes CollectionService
+                  context.read<CollectionService>(),
+                  // If TrackManagementBloc needs AudioService directly:
+                  // audioService: context.read<AudioService>(),
+                ),
           ),
           // Add other BLoCs if needed
         ],

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
-import 'package:audio_looker/blocs/collection/collection_bloc.dart';
+import 'package:audio_looker/blocs/track_management/track_management_bloc.dart';
 import 'package:audio_looker/widgets/waveform_painter.dart';
 import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/widgets/tag_editor_popup.dart';
@@ -147,14 +147,14 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     setState(() {
       _currentRating = newRating;
     });
-    context.read<CollectionBloc>().add(
+    context.read<TrackManagementBloc>().add(
       UpdateTrackRating(widget.trackId, newRating),
     );
     widget.onRatingChanged?.call(newRating);
   }
 
   void _handleNotesChanged() {
-    context.read<CollectionBloc>().add(
+    context.read<TrackManagementBloc>().add(
       UpdateTrackComment(widget.trackId, _notesController.text),
     );
     widget.onNotesChanged?.call(_notesController.text);
@@ -216,8 +216,8 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   }
 
   void _openTagEditor(BuildContext buildContext, List<Tag> allAvailableTags) {
-    final collectionState = buildContext.read<CollectionBloc>().state;
-    if (collectionState is CollectionLoaded) {
+    final collectionState = buildContext.read<TrackManagementBloc>().state;
+    if (collectionState is TrackManagementLoaded) {
       List<String> currentTrackTags = [];
       try {
         final currentTrack = collectionState.tracks.firstWhere(
@@ -235,7 +235,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
         context: buildContext,
         builder:
             (BuildContext dialogContext) => BlocProvider.value(
-              value: BlocProvider.of<CollectionBloc>(buildContext),
+              value: BlocProvider.of<TrackManagementBloc>(buildContext),
               child: TagEditorPopup(
                 trackId: widget.trackId,
                 currentTrackTags: currentTrackTags,
@@ -251,10 +251,10 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<CollectionBloc, CollectionState>(
+    return BlocBuilder<TrackManagementBloc, TrackManagementState>(
       builder: (context, collectionState) {
         final allTagsMap = <String, Tag>{};
-        if (collectionState is CollectionLoaded) {
+        if (collectionState is TrackManagementLoaded) {
           for (var tag in collectionState.allTags) {
             allTagsMap[tag.name] = tag;
           }
@@ -270,7 +270,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      CircularProgressIndicator(),
+                      CircularProgressIndicator(color: Colors.red),
                       SizedBox(height: 16),
                       Text("Loading audio..."),
                     ],
@@ -310,7 +310,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                 _animationController.reverse();
 
               List<String> currentGeneralTags = [];
-              if (collectionState is CollectionLoaded) {
+              if (collectionState is TrackManagementLoaded) {
                 try {
                   final currentTrack = collectionState.tracks.firstWhere(
                     (t) => t.id == widget.trackId,
@@ -410,7 +410,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                                             ),
                                             onPressed: () {
                                               if (collectionState
-                                                  is CollectionLoaded)
+                                                  is TrackManagementLoaded)
                                                 _openTagEditor(
                                                   context,
                                                   collectionState.allTags,
@@ -425,7 +425,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                                 icon: const Icon(Icons.add_circle_outline),
                                 tooltip: 'Edit Tags',
                                 onPressed: () {
-                                  if (collectionState is CollectionLoaded)
+                                  if (collectionState is TrackManagementLoaded)
                                     _openTagEditor(
                                       context,
                                       collectionState.allTags,

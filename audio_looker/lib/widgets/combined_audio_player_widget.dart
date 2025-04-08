@@ -6,7 +6,7 @@ import 'dart:async'; // For Timer
 
 // Import BLoCs and Services/Models
 import '../blocs/audio_player/audio_player_bloc.dart';
-import '../blocs/collection/collection_bloc.dart'; // Keep for collection state access
+import '../blocs/track_management/track_management_bloc.dart'; // Keep for collection state access
 import '../services/collection_service.dart'; // Keep for Track and Tag models
 // import '../services/audio_service.dart'; // AudioService likely not needed directly here
 
@@ -321,7 +321,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   Widget _buildExpandedPlayerUI(
     AudioPlayerLoaded playerState,
     Track track,
-    CollectionState collectionState,
+    TrackManagementState collectionState,
   ) {
     final isPlaying = playerState.isPlaying;
     final duration = playerState.duration;
@@ -334,7 +334,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     // Get general tags for the current track from collection state
     List<String> currentGeneralTags = [];
     final allTagsMap = <String, Tag>{}; // Map for tag colors
-    if (collectionState is CollectionLoaded) {
+    if (collectionState is TrackManagementLoaded) {
       try {
         final currentTrackFromBloc = collectionState.tracks.firstWhere(
           (t) => t.id == track.id,
@@ -424,7 +424,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                   ),
                                   onPressed: () {
                                     // Ensure collection state is loaded before opening editor
-                                    if (collectionState is CollectionLoaded) {
+                                    if (collectionState
+                                        is TrackManagementLoaded) {
                                       _openTagEditor(
                                         context,
                                         collectionState.allTags,
@@ -451,7 +452,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                       icon: const Icon(Icons.add_circle_outline),
                       tooltip: 'Edit Tags',
                       onPressed: () {
-                        if (collectionState is CollectionLoaded) {
+                        if (collectionState is TrackManagementLoaded) {
                           _openTagEditor(context, collectionState.allTags);
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -874,7 +875,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 setState(() {
                   _currentRating = newRating;
                 });
-                context.read<CollectionBloc>().add(
+                context.read<TrackManagementBloc>().add(
                   UpdateTrackRating(trackId, newRating),
                 );
               }
@@ -916,7 +917,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               onEditingComplete: () {
                 // Use mounted check before accessing context
                 if (mounted) {
-                  context.read<CollectionBloc>().add(
+                  context.read<TrackManagementBloc>().add(
                     UpdateTrackComment(widget.track.id!, _notesController.text),
                   );
                   FocusScope.of(context).unfocus(); // Hide keyboard
@@ -932,10 +933,10 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   // Open the general tag editor popup
   void _openTagEditor(BuildContext buildContext, List<Tag> allAvailableTags) {
     // Ensure we have the CollectionBloc available
-    final collectionBloc = BlocProvider.of<CollectionBloc>(buildContext);
+    final collectionBloc = BlocProvider.of<TrackManagementBloc>(buildContext);
     final collectionState = collectionBloc.state;
 
-    if (collectionState is CollectionLoaded) {
+    if (collectionState is TrackManagementLoaded) {
       List<String> currentTrackTags = [];
       try {
         // Find the current track's tags from the CollectionLoaded state
@@ -982,7 +983,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     return BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
       builder: (context, playerState) {
         // Use another BlocBuilder for CollectionState to get general tags
-        return BlocBuilder<CollectionBloc, CollectionState>(
+        return BlocBuilder<TrackManagementBloc, TrackManagementState>(
           builder: (context, collectionState) {
             bool isCorrectTrackLoaded =
                 playerState is AudioPlayerLoaded &&

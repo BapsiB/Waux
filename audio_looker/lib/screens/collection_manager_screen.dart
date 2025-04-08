@@ -6,7 +6,7 @@ import 'package:path/path.dart'
     as pathLib; // <<< Import needed for path manipulation
 
 // Import BLoC and Service/Models needed
-import '../blocs/collection/collection_bloc.dart';
+import '../blocs/collection_management/collection_management_bloc.dart';
 import '../services/collection_service.dart'; // For CollectionDefinition
 
 class CollectionManagerScreen extends StatefulWidget {
@@ -22,7 +22,7 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
   void initState() {
     super.initState();
     // Request the list of collections when the screen loads
-    context.read<CollectionBloc>().add(LoadCollectionList());
+    context.read<CollectionManagementBloc>().add(LoadCollectionList());
   }
 
   // --- Dialog for Creating New Collection ---
@@ -116,14 +116,14 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
 
                     // Dispatch event to BLoC
                     if (isShared) {
-                      context.read<CollectionBloc>().add(
+                      context.read<CollectionManagementBloc>().add(
                         CreateSharedCollection(
                           name: name,
                           rootPath: selectedFolderPath!,
                         ),
                       );
                     } else {
-                      context.read<CollectionBloc>().add(
+                      context.read<CollectionManagementBloc>().add(
                         CreateLocalCollection(name),
                       );
                     }
@@ -263,7 +263,7 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
     // 4. Dispatch Event if name confirmed
     if (confirmedName != null && confirmedName.isNotEmpty) {
       if (!mounted) return; // Check mount status again
-      context.read<CollectionBloc>().add(
+      context.read<CollectionManagementBloc>().add(
         AddExistingSharedCollection(
           name: confirmedName,
           rootPath: selectedFolderPath, // The folder user selected
@@ -299,7 +299,7 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
               style: TextButton.styleFrom(foregroundColor: Colors.red),
               child: const Text('Delete'),
               onPressed: () {
-                context.read<CollectionBloc>().add(
+                context.read<CollectionManagementBloc>().add(
                   DeleteCollection(collection.id),
                 );
                 Navigator.of(dialogContext).pop();
@@ -325,18 +325,20 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
         //   ),
         // ],
       ),
-      body: BlocBuilder<CollectionBloc, CollectionState>(
+      body: BlocBuilder<CollectionManagementBloc, CollectionManagementState>(
         builder: (context, state) {
           // Handle loading state for the list itself
           // Note: This screen primarily reacts to the 'availableCollections' part of the state.
           // Loading indicators for *switching* collections will be seen on HomeScreen.
-          if (state is CollectionInitial &&
-              state is! CollectionLoading &&
-              state is! CollectionLoaded &&
-              state is! CollectionError) {
+          if (state is CollectionManagementInitial &&
+              state is! CollectionManagementLoading &&
+              state is! CollectionManagementLoaded &&
+              state is! CollectionManagementError) {
             // If initial and no list loaded yet, show loading or trigger load again
-            context.read<CollectionBloc>().add(LoadCollectionList());
-            return const Center(child: CircularProgressIndicator());
+            context.read<CollectionManagementBloc>().add(LoadCollectionList());
+            return const Center(
+              child: CircularProgressIndicator(color: Colors.amber),
+            );
           }
 
           // Extract available collections safely from any state
@@ -344,21 +346,21 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
           CollectionDefinition?
           activeCollection; // Get active collection for highlighting
 
-          if (state is CollectionLoaded) {
+          if (state is CollectionManagementLoaded) {
             collections = state.availableCollections;
             activeCollection = state.activeCollectionDefinition;
-          } else if (state is CollectionLoading) {
+          } else if (state is CollectionManagementLoading) {
             collections = state.availableCollections ?? [];
             activeCollection = state.activeCollectionDefinition;
             // Optionally show a loading indicator overlay if desired
-          } else if (state is CollectionError) {
+          } else if (state is CollectionManagementError) {
             collections = state.availableCollections ?? [];
             activeCollection = state.activeCollectionDefinition;
             // Display error prominently? For now, just show list if available.
             // return Center(child: Text("Error loading collections: ${state.message}"));
           }
 
-          if (collections.isEmpty && state is! CollectionLoading) {
+          if (collections.isEmpty && state is! CollectionManagementLoading) {
             return const Center(
               child: Text(
                 'No collections found.\nTap (+) to create one!',
@@ -417,7 +419,7 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
                   onTap: () {
                     // Only switch if it's not already active
                     if (!isActive) {
-                      context.read<CollectionBloc>().add(
+                      context.read<CollectionManagementBloc>().add(
                         SwitchCollection(collection.id),
                       );
                     }

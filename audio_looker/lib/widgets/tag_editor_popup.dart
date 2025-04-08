@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Required for RawKeyboardListener and LogicalKeyboardKey
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
-import '../blocs/collection/collection_bloc.dart';
+import '../blocs/track_management/track_management_bloc.dart';
 import '../services/collection_service.dart'; // Make sure Tag model is accessible
 
 class TagEditorPopup extends StatefulWidget {
@@ -72,8 +72,8 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
       _suggestedTag = null;
 
       if (_searchTerm.isNotEmpty) {
-        final collectionState = context.read<CollectionBloc>().state;
-        if (collectionState is CollectionLoaded) {
+        final collectionState = context.read<TrackManagementBloc>().state;
+        if (collectionState is TrackManagementLoaded) {
           final potentialSuggestion = collectionState.allTags.firstWhere(
             (tag) =>
                 tag.name.toLowerCase().startsWith(_searchTerm) &&
@@ -129,15 +129,15 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
     final tagName = _searchController.text.trim();
     if (tagName.isEmpty) return;
 
-    final collectionState = context.read<CollectionBloc>().state;
-    if (collectionState is CollectionLoaded) {
+    final collectionState = context.read<TrackManagementBloc>().state;
+    if (collectionState is TrackManagementLoaded) {
       final existingTag = collectionState.allTags.any(
         (t) => t.name.toLowerCase() == tagName.toLowerCase(),
       );
 
       if (existingTag) {
         if (!_selectedTags.contains(tagName)) {
-          context.read<CollectionBloc>().add(
+          context.read<TrackManagementBloc>().add(
             AddTrackGeneralTag(widget.trackId, tagName),
           );
           // Use mounted check before calling setState
@@ -148,8 +148,8 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
           }
         }
       } else {
-        context.read<CollectionBloc>().add(CreateGeneralTag(tagName));
-        context.read<CollectionBloc>().add(
+        context.read<TrackManagementBloc>().add(CreateGeneralTag(tagName));
+        context.read<TrackManagementBloc>().add(
           AddTrackGeneralTag(widget.trackId, tagName),
         );
         // Use mounted check before calling setState
@@ -218,7 +218,7 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
               onPressed: () {
                 // Use mounted check before accessing context
                 if (mounted) {
-                  context.read<CollectionBloc>().add(
+                  context.read<TrackManagementBloc>().add(
                     SetGeneralTagColor(tag.name, currentColor.value),
                   );
                 }
@@ -276,7 +276,7 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                               Navigator.pop(confirmCtx);
                               // Use mounted check before accessing context
                               if (mounted) {
-                                context.read<CollectionBloc>().add(
+                                context.read<TrackManagementBloc>().add(
                                   DeleteGeneralTag(tag.name),
                                 );
                                 setState(() {
@@ -318,14 +318,14 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
         // Use mounted check before calling setState or accessing context
         if (!mounted) return;
         if (showAsSelected) {
-          context.read<CollectionBloc>().add(
+          context.read<TrackManagementBloc>().add(
             RemoveTrackGeneralTag(widget.trackId, tag.name),
           );
           setState(() {
             _selectedTags.remove(tag.name);
           });
         } else {
-          context.read<CollectionBloc>().add(
+          context.read<TrackManagementBloc>().add(
             AddTrackGeneralTag(widget.trackId, tag.name),
           );
           setState(() {
@@ -375,13 +375,15 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
     return KeyboardListener(
       focusNode: FocusNode(),
       onKeyEvent: (event) => _handleKeyEvent(_searchFocusNode, event),
-      child: BlocBuilder<CollectionBloc, CollectionState>(
+      child: BlocBuilder<TrackManagementBloc, TrackManagementState>(
         builder: (context, state) {
-          if (state is! CollectionLoaded) {
+          if (state is! TrackManagementLoaded) {
             return const Dialog(
               child: Padding(
                 padding: EdgeInsets.all(20.0),
-                child: Center(child: CircularProgressIndicator()),
+                child: Center(
+                  child: CircularProgressIndicator(color: Colors.cyan),
+                ),
               ),
             );
           }
