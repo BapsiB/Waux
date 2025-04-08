@@ -356,8 +356,6 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
           } else if (state is CollectionManagementError) {
             collections = state.availableCollections ?? [];
             activeCollection = state.activeCollectionDefinition;
-            // Display error prominently? For now, just show list if available.
-            // return Center(child: Text("Error loading collections: ${state.message}"));
           }
 
           if (collections.isEmpty && state is! CollectionManagementLoading) {

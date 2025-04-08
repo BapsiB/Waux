@@ -119,6 +119,8 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
             return idCell.value != null &&
                 widget.selectedTrackIds.contains(idCell.value as int);
           }).toList();
+      _dataGridController.selectedRow =
+          _dataGridController.selectedRows.firstOrNull;
     } catch (e) {
       debugPrint(
         "Error updating controller selection (might be temporary): $e",
@@ -208,7 +210,6 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
 
   @override
   void didUpdateWidget(TrackTableWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
     bool dataSourceUpdated = false;
     // Update the data source if the tracks list changes
     if (!const ListEquality().equals(widget.tracks, oldWidget.tracks)) {
@@ -219,14 +220,14 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     }
 
     // Update controller selection if external IDs change OR if datasource was updated
-    // Use deep comparison for Sets as well
     if (dataSourceUpdated ||
         !const SetEquality().equals(
-          widget.selectedTrackIds,
+          widget.selectedTrackIds, // Detects change here
           oldWidget.selectedTrackIds,
         )) {
-      _updateControllerSelection();
+      _updateControllerSelection(); // Updates the grid controller's selection
     }
+    super.didUpdateWidget(oldWidget);
   }
 
   @override

@@ -58,7 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
   ];
   String _sortColumnName = 'title';
   DataGridSortDirection _sortDirectionSf = DataGridSortDirection.ascending;
-  final Set<int> _selectedTrackIds = {};
+  Set<int> _selectedTrackIds = {};
   int? _anchorTrackId;
   bool _isPlaylistPanelVisible = true;
   String? _currentlySelectedPlaylistId;
@@ -260,17 +260,17 @@ class _HomeScreenState extends State<HomeScreen> {
     _initializeHandlers();
   }
 
-  void _selectAndPlayTrack(Track track) {
-    setState(() {
-      _selectedTrackForPlayer = track;
-      _selectedTrackIds.clear();
-      if (track.id != null) _selectedTrackIds.add(track.id!);
-      _anchorTrackId = track.id;
-    });
+  // void _selectAndPlayTrack(Track track) {
+  //   setState(() {
+  //     _selectedTrackForPlayer = track;
+  //     _selectedTrackIds.clear();
+  //     if (track.id != null) _selectedTrackIds.add(track.id!);
+  //     _anchorTrackId = track.id;
+  //   });
 
-    _initializeHandlers(); // Update handlers with new selection
-    _trackSelectionHandler.selectAndPlayTrack(track);
-  }
+  //   _initializeHandlers(); // Update handlers with new selection
+  //   _trackSelectionHandler.selectAndPlayTrack(track);
+  // }
 
   void _selectAndOpenPlayer(Track track) {
     setState(() {
@@ -316,8 +316,8 @@ class _HomeScreenState extends State<HomeScreen> {
       isCtrlPressed: isCtrlPressed,
       onSelectionStateChanged: (newSelectedIds, newAnchorId, newSelectedTrack) {
         setState(() {
-          _selectedTrackIds.clear();
-          _selectedTrackIds.addAll(newSelectedIds);
+          _selectedTrackIds = Set<int>.from(newSelectedIds);
+
           _anchorTrackId = newAnchorId;
 
           // Update player selection if it changed
@@ -369,6 +369,21 @@ class _HomeScreenState extends State<HomeScreen> {
     _playerControlHandler.playPreviousTrack(
       onTrackSelected: _selectAndPlayTrack,
     );
+  }
+
+  void _selectAndPlayTrack(Track track) {
+    setState(() {
+      _selectedTrackForPlayer = track;
+      // --- MODIFIED: Create a new Set ---
+      _selectedTrackIds = {
+        if (track.id != null) track.id!,
+      }; // Creates a new Set with the single ID
+      // --- END MODIFICATION ---
+      _anchorTrackId = track.id;
+    });
+
+    _initializeHandlers();
+    _trackSelectionHandler.selectAndPlayTrack(track);
   }
 
   // --- Build Method ---
