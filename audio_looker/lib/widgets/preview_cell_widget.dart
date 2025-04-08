@@ -133,27 +133,33 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
                   .onPlayAndMinimize(); // Call the same callback as the button
 
               // --- REMOVE the old logic below ---
-              // final bloc = widget.audioPlayerBloc;
-              // final currentState = bloc.state;
-              // if (currentState is AudioPlayerLoaded &&
-              //     currentState.currentSource == widget.track.path &&
-              //     currentState.duration > Duration.zero) {
-              //   final seekRatio = _calculateSeekRatio(details.globalPosition);
-              //   if (seekRatio != null) {
-              //     final seekPosition = currentState.duration * seekRatio;
-              //     bloc.add(SeekAudio(position: seekPosition));
-              //     bloc.add(PlayAudio()); // Play after seeking on tap
-              //   }
-              // } else {
-              //   bloc.add(LoadAudio(source: widget.track.path, isUrl: widget.track.isUrl));
-              //   Future.delayed(const Duration(milliseconds: 150), () {
-              //     if (!mounted) return;
-              //     final postDelayState = bloc.state;
-              //     if (postDelayState is AudioPlayerLoaded && postDelayState.currentSource == widget.track.path) {
-              //       bloc.add(PlayAudio());
-              //     }
-              //   });
-              // }
+              final bloc = widget.audioPlayerBloc;
+              final currentState = bloc.state;
+              if (currentState is AudioPlayerLoaded &&
+                  currentState.currentSource == widget.track.path &&
+                  currentState.duration > Duration.zero) {
+                final seekRatio = _calculateSeekRatio(details.globalPosition);
+                if (seekRatio != null) {
+                  final seekPosition = currentState.duration * seekRatio;
+                  bloc.add(SeekAudio(position: seekPosition));
+                  bloc.add(PlayAudio()); // Play after seeking on tap
+                }
+              } else {
+                bloc.add(
+                  LoadAudio(
+                    source: widget.track.path,
+                    isUrl: widget.track.isUrl,
+                  ),
+                );
+                Future.delayed(const Duration(milliseconds: 150), () {
+                  if (!mounted) return;
+                  final postDelayState = bloc.state;
+                  if (postDelayState is AudioPlayerLoaded &&
+                      postDelayState.currentSource == widget.track.path) {
+                    bloc.add(PlayAudio());
+                  }
+                });
+              }
             },
             // --- Drag Handlers (Keep existing logic for seeking during drag) ---
             onHorizontalDragStart: (details) {
