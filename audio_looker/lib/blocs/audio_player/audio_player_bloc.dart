@@ -304,9 +304,15 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   }
 
   void _onPlayAudio(PlayAudio event, Emitter<AudioPlayerState> emit) {
+    print(
+      "AudioPlayerBloc: Received PlayAudio. Current state: ${state.runtimeType}",
+    ); // <-- ADD THIS
     if (state is AudioPlayerLoaded) {
+      print("AudioPlayerBloc: Calling _audioService.play()"); // <-- ADD THIS
       _audioService.play();
       // State update will come from the playerStateStream listener
+    } else {
+      print("AudioPlayerBloc: Cannot play, state is not AudioPlayerLoaded.");
     }
   }
 

@@ -163,33 +163,33 @@ class WaveformPainter extends CustomPainter {
     return result;
   }
 
-  void _createWaveformPaths(
-    Size size,
-    double centerY,
-    double maxAmplitude,
-    double spacing,
-    int splitIndex,
-    List<double> dataToRender,
-  ) {
-    _waveformPathActive = Path();
-    _waveformPathInactive = Path();
+  // void _createWaveformPaths(
+  //   Size size,
+  //   double centerY,
+  //   double maxAmplitude,
+  //   double spacing,
+  //   int splitIndex,
+  //   List<double> dataToRender,
+  // ) {
+  //   _waveformPathActive = Path();
+  //   _waveformPathInactive = Path();
 
-    for (int i = 0; i < dataToRender.length; i++) {
-      final x = i * spacing;
-      final amplitude = dataToRender[i].clamp(0.0, 1.0) * maxAmplitude;
-      final topY = centerY - amplitude;
-      final bottomY = centerY + amplitude;
+  //   for (int i = 0; i < dataToRender.length; i++) {
+  //     final x = i * spacing;
+  //     final amplitude = dataToRender[i].clamp(0.0, 1.0) * maxAmplitude;
+  //     final topY = centerY - amplitude;
+  //     final bottomY = centerY + amplitude;
 
-      final currentPath =
-          i <= splitIndex ? _waveformPathActive! : _waveformPathInactive!;
+  //     final currentPath =
+  //         i <= splitIndex ? _waveformPathActive! : _waveformPathInactive!;
 
-      // Problem Area: Creates many disconnected lines
-      currentPath.moveTo(x, centerY); // Move to center
-      currentPath.lineTo(x, topY); // Draw up
-      currentPath.moveTo(x, centerY); // Move back to center
-      currentPath.lineTo(x, bottomY); // Draw down
-    }
-  }
+  //     // Problem Area: Creates many disconnected lines
+  //     currentPath.moveTo(x, centerY); // Move to center
+  //     currentPath.lineTo(x, topY); // Draw up
+  //     currentPath.moveTo(x, centerY); // Move back to center
+  //     currentPath.lineTo(x, bottomY); // Draw down
+  //   }
+  // }
 
   void _drawProgressLine(Canvas canvas, Size size, double progressPosition) {
     final progressX = progressPosition * size.width;

@@ -43,6 +43,7 @@ dependencies:
   syncfusion_flutter_datagrid: ^29.1.35
   syncfusion_flutter_core: ^29.1.35
   uuid: ^4.5.1
+  youtube_explode_dart: ^2.4.0
 
 dev_dependencies:
   flutter_test:

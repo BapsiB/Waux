@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert'; // For JSON encoding/decoding
 import 'package:audio_looker/services/performance_profiler.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 class AudioTag {
   final double position;
@@ -25,6 +26,8 @@ class AudioTag {
 }
 
 class AudioService {
+  final _yt = YoutubeExplode();
+
   static final AudioService _instance =
       AudioService._internal(); // Private static instance
 
@@ -193,18 +196,72 @@ class AudioService {
   Future<void> loadAudio(String source, {bool isUrl = false}) async {
     // Start overall timing
     PerformanceProfiler.start('loadAudio:total');
+    String? effectiveSource = source;
+    bool isYouTube = false;
 
     try {
       print(
         '🔍 AudioService: Starting to load audio from: $source, isUrl: $isUrl',
       );
 
+      if (isUrl &&
+          (source.contains('youtube.com') || source.contains('youtu.be'))) {
+        isYouTube = true;
+        print('🔍 AudioService: Detected YouTube URL. Extracting stream...');
+        PerformanceProfiler.start('loadAudio:youtubeExtract');
+        try {
+          var videoId = VideoId.parseVideoId(source); // Extract video ID
+          if (videoId == null) {
+            throw Exception('Could not parse YouTube Video ID');
+          }
+          var manifest = await _yt.videos.streamsClient.getManifest(videoId);
+          print(
+            "Available audio streams: ${manifest.audioOnly}",
+          ); // Log available streams
+
+          // Try to find the MP4 stream (specifically tag 140 if possible, or best MP4)
+          var streamInfo =
+              manifest.audioOnly.where((s) => s.tag == 140).firstOrNull;
+
+          if (streamInfo == null) {
+            print("Stream 140 not found, searching for best audio/mp4...");
+            var audioOnly = manifest.audioOnly;
+            var mp4Streams = audioOnly.where(
+              (s) => s.codec.mimeType == 'audio/mp4',
+            );
+            var sorted = mp4Streams.sortByBitrate();
+            var count = sorted.length;
+            if (count > 0) {
+              streamInfo = sorted.last;
+            }
+          }
+
+          // Fallback to the highest bitrate overall if no suitable MP4 found
+          if (streamInfo == null) {
+            print(
+              "No suitable MP4 stream found, falling back to highest bitrate overall (might be WebM/Opus).",
+            );
+            streamInfo = manifest.audioOnly.withHighestBitrate();
+          }
+          // --- END MODIFIED STREAM SELECTION ---
+
+          effectiveSource = streamInfo.url.toString();
+        } catch (ytError) {
+          print('❌ AudioService: Error extracting YouTube stream: $ytError');
+          // Rethrow the error to be caught by the outer catch block
+          // This allows AudioPlayerBloc to receive a specific error
+          throw Exception('Failed to get YouTube audio stream: $ytError');
+        } finally {
+          PerformanceProfiler.end('loadAudio:youtubeExtract');
+        }
+      }
+
       // Step 1: Try to set up the audio player
       PerformanceProfiler.start('loadAudio:setPlayer');
       if (isUrl) {
         try {
           print('🔍 AudioService: Setting URL in player');
-          await _audioPlayer.setUrl(source);
+          await _audioPlayer.setUrl(effectiveSource);
         } catch (e) {
           print('❌ AudioService: Error setting URL: $e');
         }
@@ -218,39 +275,45 @@ class AudioService {
         }
       }
       PerformanceProfiler.end('loadAudio:setPlayer');
+      if (!isYouTube) {
+        print('🔍 AudioService: Checking for cached waveform data');
+        PerformanceProfiler.start('loadAudio:checkCache');
+        final cachedWaveform = await loadWaveformFromCache(source);
+        PerformanceProfiler.end('loadAudio:checkCache');
 
-      // Step 2: Try to load waveform from cache
-      print('🔍 AudioService: Checking for cached waveform data');
-      PerformanceProfiler.start('loadAudio:checkCache');
-      final cachedWaveform = await loadWaveformFromCache(source);
-      PerformanceProfiler.end('loadAudio:checkCache');
-
-      if (cachedWaveform != null) {
-        // Use cached waveform
-        PerformanceProfiler.start('loadAudio:useCache');
-        _waveformData = cachedWaveform;
-        _waveformController.add(_waveformData!);
-        print('✅ AudioService: Using cached waveform data');
-        PerformanceProfiler.end('loadAudio:useCache');
-      } else {
-        // No cached data, need to extract
-        print(
-          '🔍 AudioService: No cached waveform found, extracting new waveform',
-        );
-        PerformanceProfiler.start('loadAudio:extractWaveform');
-        if (isUrl) {
-          await _extractWaveformFromUrl(source);
+        if (cachedWaveform != null) {
+          // Use cached waveform
+          PerformanceProfiler.start('loadAudio:useCache');
+          _waveformData = cachedWaveform;
+          _waveformController.add(_waveformData!);
+          print('✅ AudioService: Using cached waveform data');
+          PerformanceProfiler.end('loadAudio:useCache');
         } else {
-          await _extractWaveformFromFile(source);
-        }
-        PerformanceProfiler.end('loadAudio:extractWaveform');
+          // No cached data, need to extract
+          print(
+            '🔍 AudioService: No cached waveform found, extracting new waveform',
+          );
+          PerformanceProfiler.start('loadAudio:extractWaveform');
+          // Use original source type (isUrl) to decide extraction method
+          if (isUrl) {
+            await _extractWaveformFromUrl(source);
+          } else {
+            await _extractWaveformFromFile(source);
+          }
+          PerformanceProfiler.end('loadAudio:extractWaveform');
 
-        // Save the newly extracted waveform to cache
-        if (_waveformData != null && _waveformData!.isNotEmpty) {
-          PerformanceProfiler.start('loadAudio:saveToCache');
-          await _saveWaveformToCache(source, _waveformData!);
-          PerformanceProfiler.end('loadAudio:saveToCache');
+          // Save the newly extracted waveform to cache
+          if (_waveformData != null && _waveformData!.isNotEmpty) {
+            PerformanceProfiler.start('loadAudio:saveToCache');
+            await _saveWaveformToCache(source, _waveformData!);
+            PerformanceProfiler.end('loadAudio:saveToCache');
+          }
         }
+      } else {
+        // For YouTube, clear any existing waveform data
+        print('🔍 AudioService: Skipping waveform extraction for YouTube URL.');
+        _waveformData = null;
+        _waveformController.add([]); // Emit empty list to clear UI
       }
 
       print('✅ AudioService: Successfully completed loadAudio');
@@ -482,10 +545,29 @@ class AudioService {
 
   // Playback controls
   Future<void> play() async {
+    // <-- ADD THIS LOGGING -->
+    final currentSource = _audioPlayer.audioSource;
+    if (currentSource == null) {
+      print(
+        '▶️ AudioService: Attempting to play, but _audioPlayer.audioSource is null (nothing loaded?).',
+      );
+    } else if (currentSource is UriAudioSource) {
+      // It's a URL source (like http or a file URI)
+      print(
+        '▶️ AudioService: Attempting to play UriAudioSource: ${currentSource.uri}',
+      );
+    } else {
+      // Handle other potential AudioSource types if you use them
+      print(
+        '▶️ AudioService: Attempting to play unknown source type: ${currentSource.runtimeType}',
+      );
+    }
+    // <-- END LOGGING -->
+
     try {
       await _audioPlayer.play();
     } catch (e) {
-      print('Error playing audio: $e');
+      print('❌ AudioService: Error during _audioPlayer.play(): $e');
     }
   }
 

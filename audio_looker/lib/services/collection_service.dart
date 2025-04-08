@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart'; // For unique collection IDs
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 // Keep AudioService import if needed for waveform, etc.
 // import 'package:audio_looker/services/audio_service.dart';
@@ -210,6 +211,7 @@ class CollectionService {
   static const String columnRating = 'rating';
   static const String columnComment = 'comment';
   static const String columnGeneralTags = 'generalTags';
+  final _yt = YoutubeExplode();
 
   // Playlist table columns <<< NEW
   static const String columnPlaylistId = 'id';
@@ -947,21 +949,52 @@ class CollectionService {
       throw Exception("Database not open");
     if (_activeCollectionDefinition == null)
       throw Exception("No active collection");
+
     setLoading(true);
     try {
+      // Check if it already exists by the original URL
       final existingTrack = await getTrackByPath(url);
       if (existingTrack != null) {
         print('URL already exists in database: ${existingTrack.title}');
         return existingTrack;
       }
-      final uri = Uri.parse(url);
-      final filename = pathLib.basename(uri.path);
-      final title = filename.isNotEmpty ? filename : url;
-      List<double>? waveformData; // Placeholder
+
+      String trackTitle = url; // Default title
+      int trackDurationMs = 0; // Default duration
+      bool isYouTube = false;
+
+      // --- YouTube Integration ---
+      var videoId = VideoId.parseVideoId(url);
+      if (videoId != null) {
+        isYouTube = true;
+        print('Fetching metadata for YouTube video: $videoId');
+        try {
+          var video = await _yt.videos.get(videoId);
+          trackTitle = video.title;
+          trackDurationMs = video.duration?.inMilliseconds ?? 0;
+          print('Fetched title: $trackTitle, Duration: $trackDurationMs ms');
+        } catch (ytError) {
+          print(
+            'Error fetching YouTube metadata: $ytError. Using URL as title.',
+          );
+          // Keep default title/duration on error
+        }
+      } else {
+        // Fallback for non-YouTube URLs (maybe try getting filename?)
+        final uri = Uri.tryParse(url);
+        final filename =
+            (uri != null && uri.pathSegments.isNotEmpty)
+                ? uri.pathSegments.last
+                : '';
+        if (filename.isNotEmpty) {
+          trackTitle = filename;
+        }
+      }
+      List<double>? waveformData;
       final track = Track(
-        title: title,
+        title: trackTitle,
         artist: 'Unknown',
-        album: 'Unknown',
+        album: isYouTube ? 'YouTube' : 'Unknown',
         path: url,
         isUrl: true,
         duration: 0,
