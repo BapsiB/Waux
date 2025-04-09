@@ -58,6 +58,13 @@ class UpdateTrackRating extends TrackManagementEvent {
   List<Object?> get props => [trackId, rating];
 }
 
+class SetMinimumRatingFilter extends TrackManagementEvent {
+  final int? rating; // Nullable to represent "All"
+  const SetMinimumRatingFilter(this.rating);
+  @override
+  List<Object?> get props => [rating];
+}
+
 class UpdateTrackComment extends TrackManagementEvent {
   final int trackId;
   final String comment;

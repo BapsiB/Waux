@@ -22,18 +22,17 @@ class TrackManagementLoading extends TrackManagementState {
   // --- NEW: Waveform Processing Progress ---
   final double?
   waveformProcessingProgress; // 0.0 to 1.0, null if not processing
-  final String? waveformProcessingMessage; // e.g., "Processing 5 of 20..."
-  // --- END NEW ---
+  final String? waveformProcessingMessage;
+  final int? currentMinimumRating;
 
   const TrackManagementLoading({
     this.currentTracks,
     this.currentAllTags,
     this.currentRootFolders,
     this.currentSearchQuery,
-    // --- NEW ---
+    this.currentMinimumRating,
     this.waveformProcessingProgress,
     this.waveformProcessingMessage,
-    // --- END NEW ---
   });
 
   TrackManagementLoading copyWith({
@@ -41,11 +40,10 @@ class TrackManagementLoading extends TrackManagementState {
     List<Tag>? currentAllTags,
     List<String>? currentRootFolders,
     String? currentSearchQuery,
-    // --- NEW ---
+    int? currentMinimumRating,
     double? waveformProcessingProgress,
     bool clearWaveformProgress = false, // Flag to explicitly clear
     String? waveformProcessingMessage,
-    // --- END NEW ---
   }) {
     return TrackManagementLoading(
       currentTracks: currentTracks ?? this.currentTracks,
@@ -71,44 +69,55 @@ class TrackManagementLoading extends TrackManagementState {
     currentAllTags,
     currentRootFolders,
     currentSearchQuery,
-    // --- NEW ---
     waveformProcessingProgress,
     waveformProcessingMessage,
-    // --- END NEW ---
+    currentMinimumRating,
   ];
 }
 
 // State when tracks and related data for the active collection are loaded
 class TrackManagementLoaded extends TrackManagementState {
   final List<Track> tracks;
-  final List<String>
-  rootFolders; // Specific to the active collection (if local)
-  final List<Tag> allTags; // Global tag definitions
-  final String? searchQuery; // Current search term, null if not searching
+  final List<String> rootFolders;
+  final List<Tag> allTags;
+  final String? searchQuery;
+  final int? minimumRating; // <<< ADDED
 
   const TrackManagementLoaded({
     required this.tracks,
     required this.rootFolders,
     required this.allTags,
     this.searchQuery,
+    this.minimumRating, // <<< ADDED
   });
 
   @override
-  List<Object?> get props => [tracks, rootFolders, allTags, searchQuery];
+  List<Object?> get props => [
+    tracks,
+    rootFolders,
+    allTags,
+    searchQuery,
+    minimumRating,
+  ]; // <<< ADDED
 
-  // Helper for easy state updates (e.g., optimistic updates)
   TrackManagementLoaded copyWith({
     List<Track>? tracks,
     List<String>? rootFolders,
     List<Tag>? allTags,
     String? searchQuery,
-    bool clearSearchQuery = false, // Flag to explicitly clear search
+    bool clearSearchQuery = false,
+    int? minimumRating, // <<< ADDED
+    bool clearMinimumRating = false, // <<< Optional: Flag to clear rating
   }) {
     return TrackManagementLoaded(
       tracks: tracks ?? this.tracks,
       rootFolders: rootFolders ?? this.rootFolders,
       allTags: allTags ?? this.allTags,
       searchQuery: clearSearchQuery ? null : (searchQuery ?? this.searchQuery),
+      minimumRating:
+          clearMinimumRating
+              ? null
+              : (minimumRating ?? this.minimumRating), // <<< ADDED
     );
   }
 }
@@ -135,6 +144,7 @@ class TrackManagementProcessingWaveforms extends TrackManagementState {
   final String? searchQuery; // Preserve search query
   final int processedCount; // Number of waveforms processed
   final int totalCount; // Total waveforms to process
+  final int? minimumRating;
 
   const TrackManagementProcessingWaveforms({
     required this.tracks,
@@ -143,6 +153,7 @@ class TrackManagementProcessingWaveforms extends TrackManagementState {
     this.searchQuery,
     required this.processedCount,
     required this.totalCount,
+    this.minimumRating,
   });
 
   @override
@@ -153,6 +164,7 @@ class TrackManagementProcessingWaveforms extends TrackManagementState {
     searchQuery,
     processedCount,
     totalCount,
+    minimumRating,
   ];
 
   // Optional: Add copyWith if needed for internal state updates
@@ -164,6 +176,7 @@ class TrackManagementProcessingWaveforms extends TrackManagementState {
     int? processedCount,
     int? totalCount,
     bool clearSearchQuery = false,
+    int? minimumRating,
   }) {
     return TrackManagementProcessingWaveforms(
       tracks: tracks ?? this.tracks,

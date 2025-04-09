@@ -54,9 +54,8 @@ class TrackManagementBloc
     on<SetGeneralTagColor>(_onSetGeneralTagColor);
     on<ImportCollectionFromFile>(_onImportCollectionFromFile);
     on<ExportCollectionToFile>(_onExportCollectionToFile);
-    on<SyncActiveCollectionFolders>(
-      _onSyncActiveCollectionFolders,
-    ); // Register handler
+    on<SyncActiveCollectionFolders>(_onSyncActiveCollectionFolders);
+    on<SetMinimumRatingFilter>(_onSetMinimumRatingFilter);
 
     // Listen to CollectionService loading state if needed (optional)
     _collectionService.loadingStream.listen((isLoading) {
@@ -145,7 +144,23 @@ class TrackManagementBloc
     }
   }
 
-  // --- Handlers ---
+  Future<void> _onSetMinimumRatingFilter(
+    SetMinimumRatingFilter event,
+    Emitter<TrackManagementState> emit,
+  ) async {
+    final currentState = state; // Capture current state
+    if (currentState is TrackManagementLoaded) {
+      emit(currentState.copyWith(minimumRating: event.rating));
+    } else if (currentState is TrackManagementLoading) {
+      // Preserve other loading state data
+      emit(currentState.copyWith(currentMinimumRating: event.rating));
+    } else if (currentState is TrackManagementProcessingWaveforms) {
+      // Preserve other processing state data
+      emit(currentState.copyWith(minimumRating: event.rating));
+    }
+    // No need to reload tracks; filtering happens based on this state value
+    print("TrackManagementBloc: Set minimum rating filter to ${event.rating}");
+  }
 
   Future<void> _onLoadTracksForActiveCollection(
     LoadTracksForActiveCollection event,
@@ -1497,8 +1512,6 @@ class TrackManagementBloc
         waveformDataFromStream = null; // Treat error as no data received
       }
 
-      // --- End Stream Listening ---
-
       if (waveformDataFromStream != null && waveformDataFromStream.isNotEmpty) {
         print(
           "TrackManagementBloc EXTRACT: Successfully processed stream data for track $trackId",
@@ -1526,9 +1539,6 @@ class TrackManagementBloc
     int trackId,
     List<double> waveformData,
   ) async {
-    print(
-      'TrackManagementBloc UPDATE DB: Saving waveform data for track $trackId',
-    );
     // Get the existing track data from CollectionService
     final track = await _collectionService.getTrack(
       trackId,
@@ -1538,9 +1548,6 @@ class TrackManagementBloc
       // The service's updateTrack handles preparing the path (making it relative if needed)
       await _collectionService.updateTrack(
         track.copyWith(waveformData: waveformData),
-      );
-      print(
-        'TrackManagementBloc UPDATE DB: Successfully saved waveform data for track $trackId',
       );
     } else {
       print(

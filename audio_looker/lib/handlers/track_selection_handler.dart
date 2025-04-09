@@ -35,37 +35,61 @@ class TrackSelectionHandler {
     this.currentlySelectedPlaylist,
   });
 
-  /// Returns the currently displayed tracks based on filter and sort settings
   List<Track> getCurrentDisplayedTracks() {
     final collectionState = context.read<TrackManagementBloc>().state;
     List<Track> sourceTracks = [];
+    int? minimumRating; // Variable to hold the filter value
 
+    // Get tracks and minimumRating from the current state
     if (collectionState is TrackManagementLoaded) {
       sourceTracks = collectionState.tracks;
+      minimumRating = collectionState.minimumRating; // <<< Get rating
     } else if (collectionState is TrackManagementLoading &&
         collectionState.currentTracks != null) {
       sourceTracks = collectionState.currentTracks!;
+      minimumRating = collectionState.currentMinimumRating; // <<< Get rating
     } else if (collectionState is TrackManagementError &&
         collectionState.tracks != null) {
       sourceTracks = collectionState.tracks!;
+      // Assume no filter on error, or get from state if added there
     } else if (collectionState is TrackManagementProcessingWaveforms) {
-      sourceTracks = collectionState.tracks!;
+      sourceTracks = collectionState.tracks;
+      minimumRating = collectionState.minimumRating; // <<< Get rating
     }
 
-    List<Track> filteredTracks;
+    List<Track> ratingFilteredTracks;
+    if (minimumRating != null && minimumRating > 0) {
+      // Filter tracks where rating is greater than or equal to the minimum
+      ratingFilteredTracks =
+          sourceTracks
+              .where((track) => track.rating >= minimumRating!)
+              .toList();
+      print(
+        "Applying rating filter: >= $minimumRating stars. Found ${ratingFilteredTracks.length} tracks.",
+      );
+    } else {
+      ratingFilteredTracks = sourceTracks; // No filter or 0 stars selected
+      print("No rating filter applied (minimumRating is $minimumRating).");
+    }
+
+    // Apply playlist filter AFTER rating filter
+    List<Track> playlistFilteredTracks;
     if (currentlySelectedPlaylist != null) {
       final playlistTrackPaths = Set<String>.from(
         currentlySelectedPlaylist!.trackPaths,
       );
-      filteredTracks =
-          sourceTracks
+      // Filter the RATING-FILTERED tracks
+      playlistFilteredTracks =
+          ratingFilteredTracks
               .where((track) => playlistTrackPaths.contains(track.path))
               .toList();
     } else {
-      filteredTracks = sourceTracks;
+      // If no playlist selected, use the rating-filtered list
+      playlistFilteredTracks = ratingFilteredTracks;
     }
 
-    return getSortedTracks(filteredTracks);
+    // Sort the final filtered list
+    return getSortedTracks(playlistFilteredTracks);
   }
 
   /// Sorts tracks based on current sort column and direction

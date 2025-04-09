@@ -5,31 +5,22 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
-
-// Import BLoCs
 import 'package:audio_looker/blocs/track_management/track_management_bloc.dart';
 import 'package:audio_looker/blocs/collection_management/collection_management_bloc.dart';
 import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
 import 'package:audio_looker/blocs/playlist/playlist_bloc.dart';
-
-// Import Services and Models
 import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/models/playlist.dart';
-
-// Import Widgets
 import 'package:audio_looker/widgets/playlist_drawer.dart';
 import 'package:audio_looker/widgets/folder_tree_view.dart';
 import 'package:audio_looker/widgets/track_table_widget.dart';
 import 'package:audio_looker/widgets/combined_audio_player_widget.dart';
-
-// Import handlers
 import 'package:audio_looker/handlers/track_selection_handler.dart';
 import 'package:audio_looker/handlers/context_menu_handler.dart';
 import 'package:audio_looker/handlers/file_handler.dart';
 import 'package:audio_looker/handlers/player_control_handler.dart';
-
-// Import the Collection Manager Screen
 import 'package:audio_looker/screens/collection_manager_screen.dart';
+import 'package:audio_looker/widgets/rating_filter_widget.dart';
 
 // Define view mode enum
 enum ViewMode { list, tree }
@@ -65,6 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Playlist? _currentlySelectedPlaylist;
   bool _isMinimized = true;
   String? _currentlyLoadedPathInPlayer;
+  int? _selectedMinimumRating;
 
   // Create handler instances lazily
   late TrackSelectionHandler _trackSelectionHandler;
@@ -434,7 +426,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _buildSearchBar(),
+                    _buildFilterBar(),
                     if (_currentlySelectedPlaylist != null)
                       _buildPlaylistHeader(),
                     Expanded(child: _buildContentArea()),
@@ -622,21 +614,61 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // Build search bar
-  Widget _buildSearchBar() {
+  Widget _buildFilterBar() {
     return Padding(
+      // Consistent padding
       padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
-      child: TextField(
-        controller: _searchController,
-        decoration: InputDecoration(
-          hintText: 'Search collection...',
-          prefixIcon: const Icon(Icons.search, size: 20),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 8,
+      // Use a Row to place items horizontally
+      child: Row(
+        children: [
+          // Search Text Field (Takes available space)
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search collection...',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                // Consistent styling
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                isDense: true,
+              ),
+            ),
           ),
-          isDense: true,
-        ),
+          const SizedBox(width: 8), // Add spacing between search and stars
+          // Rating Filter Widget (Takes fixed space needed by stars)
+          BlocBuilder<TrackManagementBloc, TrackManagementState>(
+            builder: (context, state) {
+              int? currentFilterValue;
+              // Extract current filter value from the appropriate state property
+              if (state is TrackManagementLoaded) {
+                currentFilterValue = state.minimumRating;
+              } else if (state is TrackManagementLoading) {
+                currentFilterValue = state.currentMinimumRating;
+              } else if (state is TrackManagementProcessingWaveforms) {
+                currentFilterValue = state.minimumRating;
+              }
+
+              // Use the new RatingFilterWidget
+              return RatingFilterWidget(
+                currentMinimumRating: currentFilterValue,
+                onRatingSelected: (int? rating) {
+                  // Dispatch the event to the BLoC when a star is tapped
+                  context.read<TrackManagementBloc>().add(
+                    SetMinimumRatingFilter(rating),
+                  );
+                },
+                // Optional: Adjust icon size/padding if needed
+                // iconSize: 22,
+              );
+            },
+          ),
+        ],
       ),
     );
   }
