@@ -1,3 +1,5 @@
+// lib/widgets/track_table_widget.dart
+
 import 'package:flutter/gestures.dart'; // Required for PointerHoverEvent (though callback removed)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -24,6 +26,10 @@ typedef ContextMenuCallback =
 typedef RatingChangeCallback = void Function(int trackId, int newRating);
 typedef SortCallback =
     void Function(String columnName, DataGridSortDirection direction);
+// --- Add missing callbacks from constructor usage ---
+typedef PlayAndMinimizeCallback = void Function(Track track, bool togglePlay);
+typedef SelectAndOpenPlayerCallback = void Function(Track track);
+// --- End missing callbacks ---
 
 class TrackTableWidget extends StatefulWidget {
   final List<Track> tracks;
@@ -35,8 +41,10 @@ class TrackTableWidget extends StatefulWidget {
   final SortCallback onSort;
   final String initialSortColumnName;
   final DataGridSortDirection initialSortDirection;
-  final PlayAndMinimizeCallback onPlayPreviewAndMinimize;
-  final SelectAndOpenPlayerCallback onEditMetadata;
+  final PlayAndMinimizeCallback
+  onPlayPreviewAndMinimize; // <<< Added based on usage in DataSource
+  final SelectAndOpenPlayerCallback
+  onEditMetadata; // <<< Added based on usage in DataSource
 
   const TrackTableWidget({
     Key? key,
@@ -49,8 +57,8 @@ class TrackTableWidget extends StatefulWidget {
     required this.onSort,
     required this.initialSortColumnName,
     required this.initialSortDirection,
-    required this.onPlayPreviewAndMinimize,
-    required this.onEditMetadata,
+    required this.onPlayPreviewAndMinimize, // <<< Added
+    required this.onEditMetadata, // <<< Added
   }) : super(key: key);
 
   @override
@@ -80,8 +88,9 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       trackData: widget.tracks,
       audioPlayerBloc: widget.audioPlayerBloc,
       onRatingChanged: widget.onRatingChanged,
-      onPlayPreviewAndMinimize: widget.onPlayPreviewAndMinimize,
-      onEditMetadata: widget.onEditMetadata,
+      onPlayPreviewAndMinimize:
+          widget.onPlayPreviewAndMinimize, // Pass callback
+      onEditMetadata: widget.onEditMetadata, // Pass callback
     );
     // Initialize Controller here
     _dataGridController = DataGridController();
@@ -304,7 +313,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
           selectionColor: colorScheme.primary.withOpacity(0.2),
           headerColor: colorScheme.surfaceVariant.withOpacity(0.5),
           headerHoverColor: colorScheme.primary.withOpacity(0.1),
-          // rowHoverColor: colorScheme.onSurface.withOpacity(0.04),
+          // rowHoverColor: colorScheme.onSurface.withOpacity(0.04), // Handled by DataSource now
         ),
         child: SfDataGrid(
           key: _sfDataGridKey,
@@ -396,34 +405,37 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
           columns: _gridColumns,
 
           // --- Context Menu (Right-Click) ---
-          // onCellSecondaryTap: (DataGridCellSecondaryTapDetails details) {
-          //   int rowIndex = details.rowColumnIndex.rowIndex;
-          //   // Adjust for header row (rowIndex 0 is header)
-          //   if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
-          //     final dataRow = _trackDataSource.rows[rowIndex - 1];
-          //     final idCell = dataRow.getCells().firstWhere(
-          //       (cell) => cell.columnName == 'id',
-          //       orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
-          //     );
-          //     final int trackId = idCell.value as int? ?? -1;
-          //     if (trackId != -1) {
-          //       try {
-          //         // Find the track from the original widget list passed in
-          //         final track = widget.tracks.firstWhere(
-          //           (t) => t.id == trackId,
-          //         );
-          //         // Use details.globalPosition for tap location
-          //         widget.onShowContextMenu(
-          //           context,
-          //           details.globalPosition,
-          //           track,
-          //         );
-          //       } catch (e) {
-          //         debugPrint("Error finding track for context menu: $e");
-          //       }
-          //     }
-          //   }
-          // },
+          // *** UNCOMMENTED AND ENABLED ***Function( details
+          onCellSecondaryTap: (DataGridCellTapDetails details) {
+            int rowIndex = details.rowColumnIndex.rowIndex;
+            // Adjust for header row (rowIndex 0 is header)
+            if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
+              final dataRow = _trackDataSource.rows[rowIndex - 1];
+              final idCell = dataRow.getCells().firstWhere(
+                (cell) => cell.columnName == 'id',
+                orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
+              );
+              final int trackId = idCell.value as int? ?? -1;
+              if (trackId != -1) {
+                try {
+                  // Find the track from the original widget list passed in
+                  // This ensures we pass the correct Track object with resolved paths if necessary
+                  final track = widget.tracks.firstWhere(
+                    (t) => t.id == trackId,
+                  );
+                  // Use details.globalPosition for tap location
+                  widget.onShowContextMenu(
+                    // Call the handler passed from HomeScreen
+                    context,
+                    details.globalPosition,
+                    track,
+                  );
+                } catch (e) {
+                  debugPrint("Error finding track for context menu: $e");
+                }
+              }
+            }
+          },
           // --- End Context Menu ---
         ),
       ),

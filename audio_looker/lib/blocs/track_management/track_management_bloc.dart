@@ -402,34 +402,34 @@ class TrackManagementBloc
         ),
       );
 
-      // --- Automatically scan the newly added folder for tracks ---
-      print(
-        "TrackManagementBloc: Scanning newly added root folder: ${event.folderPath}",
-      );
-      List<String> foundFilePaths = [];
-      final dir = Directory(event.folderPath);
-      if (await dir.exists()) {
-        await _findAudioFilesRecursively(
-          dir,
-          foundFilePaths,
-          _supportedExtensions,
-        );
-        if (foundFilePaths.isNotEmpty) {
-          print(
-            "TrackManagementBloc: Found ${foundFilePaths.length} tracks in new root. Adding...",
-          );
-          add(AddTracksFromPaths(foundFilePaths)); // Dispatch event to add them
-        } else {
-          print("TrackManagementBloc: No tracks found in new root folder.");
-        }
-      } else {
-        print(
-          "TrackManagementBloc: Warning - Added root folder path does not exist: ${event.folderPath}",
-        );
-        // Keep the loaded state, but maybe show a non-fatal warning elsewhere?
-        // Or emit a specific state indicating a root folder issue?
-        // For now, just log the warning.
-      }
+      // // --- Automatically scan the newly added folder for tracks ---
+      // print(
+      //   "TrackManagementBloc: Scanning newly added root folder: ${event.folderPath}",
+      // );
+      // List<String> foundFilePaths = [];
+      // final dir = Directory(event.folderPath);
+      // if (await dir.exists()) {
+      //   await _findAudioFilesRecursively(
+      //     dir,
+      //     foundFilePaths,
+      //     _supportedExtensions,
+      //   );
+      //   if (foundFilePaths.isNotEmpty) {
+      //     print(
+      //       "TrackManagementBloc: Found ${foundFilePaths.length} tracks in new root. Adding...",
+      //     );
+      //     add(AddTracksFromPaths(foundFilePaths)); // Dispatch event to add them
+      //   } else {
+      //     print("TrackManagementBloc: No tracks found in new root folder.");
+      //   }
+      // } else {
+      //   print(
+      //     "TrackManagementBloc: Warning - Added root folder path does not exist: ${event.folderPath}",
+      //   );
+      // Keep the loaded state, but maybe show a non-fatal warning elsewhere?
+      // Or emit a specific state indicating a root folder issue?
+      // For now, just log the warning.
+      // }
       // --- End Auto-scan ---
     } catch (e) {
       print('TrackManagementBloc: Error adding root folder: $e');

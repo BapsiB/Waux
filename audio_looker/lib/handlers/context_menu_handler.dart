@@ -2,9 +2,11 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:url_launcher/url_launcher.dart'; // Import url_launcher
+import 'dart:io'; // Import for Platform checks
+import 'package:path/path.dart' as path_lib; // Import for path manipulation
 
 // Import BLoCs
-// import 'package:audio_looker/blocs/collection_management/collection_management_bloc.dart';
 import 'package:audio_looker/blocs/track_management/track_management_bloc.dart';
 import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
 import 'package:audio_looker/blocs/playlist/playlist_bloc.dart';
@@ -54,6 +56,29 @@ class ContextMenuHandler {
             title: Text('Play Now'),
           ),
         ),
+        // --- Reveal/Open Item ---
+        PopupMenuItem(
+          value: track.isUrl ? 'open_url' : 'reveal_file',
+          child: ListTile(
+            leading: Icon(
+              track.isUrl ? Icons.open_in_browser : Icons.folder_open,
+            ),
+            title: Text(
+              track.isUrl ? 'Open URL in Browser' : 'Reveal in Finder',
+            ), // Adapt text for OS if needed
+          ),
+        ),
+        // --- >>> NEW: Open File Item <<< ---
+        if (selectedTrackIds.length == 1 &&
+            !track.isUrl) // Only show for single local files
+          PopupMenuItem(
+            value: 'open_file',
+            child: const ListTile(
+              leading: Icon(Icons.audiotrack_outlined), // Or Icons.open_in_new
+              title: Text('Open File'),
+            ),
+          ),
+        // --- >>> END NEW <<< ---
         // Use spread operator to add playlist items
         ...buildAddToPlaylistItems(context),
         const PopupMenuDivider(),
@@ -87,6 +112,7 @@ class ContextMenuHandler {
 
   /// Builds the "Add to playlist" submenu items
   List<PopupMenuEntry<dynamic>> buildAddToPlaylistItems(BuildContext context) {
+    // ... (implementation remains the same) ...
     final playlistState = context.read<PlaylistBloc>().state;
     List<PopupMenuEntry<dynamic>> playlistItems = [];
 
@@ -145,6 +171,13 @@ class ContextMenuHandler {
       _handleAddToPlaylist(value['playlist_id']);
     } else if (value == 'play_now' && selectedTrackIds.length == 1) {
       onPlayTrack(track, false);
+    } else if (value == 'reveal_file' && !track.isUrl) {
+      _revealFile(track.path);
+    } else if (value == 'open_url' &&
+        track.isUrl &&
+        selectedTrackIds.length == 1) {
+      _openUrl(track.path);
+      // --- >>> NEW: Handle Open File <<< ---
     } else if (value == 'edit' && selectedTrackIds.length == 1) {
       _handleEditTrack(track);
     } else if (value == 'delete') {
@@ -152,8 +185,91 @@ class ContextMenuHandler {
     }
   }
 
+  /// Reveal File Method
+  Future<void> _revealFile(String filePath) async {
+    // ... (implementation remains the same) ...
+    try {
+      // Ensure it's an absolute path before proceeding
+      if (!path_lib.isAbsolute(filePath)) {
+        print("Error revealing file: Path is not absolute: $filePath");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Cannot reveal relative path: $filePath")),
+        );
+        return;
+      }
+
+      // Get the parent directory
+      final String directoryPath = path_lib.dirname(filePath);
+      final Uri directoryUri = Uri.file(directoryPath);
+
+      if (await canLaunchUrl(directoryUri)) {
+        await launchUrl(directoryUri);
+      } else {
+        throw Exception('Could not launch directory URI: $directoryUri');
+      }
+    } catch (e) {
+      print("Error revealing file in Finder/Explorer: $e");
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Could not reveal file: $e")));
+    }
+  }
+
+  /// Open URL Method
+  Future<void> _openUrl(String url) async {
+    // ... (implementation remains the same) ...
+    final Uri uri = Uri.parse(url);
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        ); // Open in default browser
+      } else {
+        throw Exception('Could not launch URL: $url');
+      }
+    } catch (e) {
+      print("Error opening URL: $e");
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Could not open URL: $e")));
+    }
+  }
+
+  // --- >>> NEW: Open File Method <<< ---
+  Future<void> _openFile(String filePath) async {
+    try {
+      // Ensure it's an absolute path before proceeding
+      if (!path_lib.isAbsolute(filePath)) {
+        print("Error opening file: Path is not absolute: $filePath");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Cannot open relative path: $filePath")),
+        );
+        return;
+      }
+
+      final Uri fileUri = Uri.file(filePath);
+
+      if (await canLaunchUrl(fileUri)) {
+        // LaunchMode.externalApplication might be needed on some platforms
+        // to ensure it opens in the default app instead of trying within Flutter.
+        // Let's try default first. Add mode if needed.
+        await launchUrl(fileUri);
+      } else {
+        throw Exception('Could not launch file URI: $fileUri');
+      }
+    } catch (e) {
+      print("Error opening file: $e");
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Could not open file: $e")));
+    }
+  }
+  // --- >>> END NEW <<< ---
+
   /// Add selected tracks to a playlist
   void _handleAddToPlaylist(String playlistId) {
+    // ... (implementation remains the same) ...
     final addedTrackIds = Set<int>.from(selectedTrackIds); // Copy selection
     final collectionState = context.read<TrackManagementBloc>().state;
     final playlistBloc = context.read<PlaylistBloc>();
@@ -168,7 +284,7 @@ class ContextMenuHandler {
           playlistBloc.add(
             AddTrackToPlaylist(
               playlistId: playlistId,
-              trackPath: trackToAdd.path,
+              trackPath: trackToAdd.path, // Pass the path from the track
             ),
           );
           addedCount++;
@@ -186,7 +302,8 @@ class ContextMenuHandler {
 
   /// Handle edit track metadata
   void _handleEditTrack(Track track) {
-    // Placeholder for edit functionality
+    // ... (implementation remains the same) ...
+    print("Edit action triggered for track: ${track.title}");
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Edit action triggered (UI not implemented)'),
@@ -196,6 +313,7 @@ class ContextMenuHandler {
 
   /// Show confirmation dialog and delete selected tracks
   void confirmAndDeleteSelected() {
+    // ... (implementation remains the same) ...
     if (selectedTrackIds.isEmpty) return;
     final count = selectedTrackIds.length;
 
@@ -227,6 +345,7 @@ class ContextMenuHandler {
 
   /// Actually delete the selected tracks
   void _performDelete() {
+    // ... (implementation remains the same) ...
     final collectionBloc = context.read<TrackManagementBloc>();
     final audioPlayerBloc = context.read<AudioPlayerBloc>();
     final idsToDelete = List<int>.from(selectedTrackIds); // Copy IDs for safety
@@ -234,7 +353,13 @@ class ContextMenuHandler {
     // Check if we need to stop the player
     final selectedTrack = _getSelectedTrack();
     if (selectedTrack != null && idsToDelete.contains(selectedTrack.id)) {
-      audioPlayerBloc.add(StopAudio());
+      // Also check if the currently playing track in the player bloc matches
+      final playerState = audioPlayerBloc.state;
+      if (playerState is AudioPlayerLoaded &&
+          playerState.currentSource == selectedTrack.path) {
+        print("Stopping player because deleted track was active.");
+        audioPlayerBloc.add(StopAudio());
+      }
     }
 
     // Dispatch delete events
@@ -245,15 +370,29 @@ class ContextMenuHandler {
 
   /// Get the currently selected track (if single selection)
   Track? _getSelectedTrack() {
+    // ... (implementation remains the same) ...
     if (selectedTrackIds.length != 1) return null;
 
     final state = context.read<TrackManagementBloc>().state;
-    if (state is! TrackManagementLoaded) return null;
+    List<Track> tracks = [];
+
+    // Get tracks from the appropriate state
+    if (state is TrackManagementLoaded) {
+      tracks = state.tracks;
+    } else if (state is TrackManagementLoading && state.currentTracks != null) {
+      tracks = state.currentTracks!;
+    } else if (state is TrackManagementError && state.tracks != null) {
+      tracks = state.tracks!;
+    } else if (state is TrackManagementProcessingWaveforms) {
+      tracks = state.tracks;
+    }
+
+    if (tracks.isEmpty) return null;
 
     try {
-      return state.tracks.firstWhere((t) => t.id == selectedTrackIds.first);
+      return tracks.firstWhere((t) => t.id == selectedTrackIds.first);
     } catch (e) {
-      return null;
+      return null; // Not found
     }
   }
 }
