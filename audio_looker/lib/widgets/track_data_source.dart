@@ -9,7 +9,8 @@ import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart'; // Impo
 // Add these typedefs for clarity
 typedef PlayPreviewCallback = void Function(Track track);
 typedef RatingChangeCallback = void Function(int trackId, int newRating);
-typedef PlayAndMinimizeCallback = void Function(Track track);
+typedef PlayAndMinimizeCallback = void Function(Track track, bool togglePlay);
+typedef SelectAndOpenPlayerCallback = void Function(Track track);
 
 class TrackDataSource extends DataGridSource {
   /// Creates the track data source class with required details.
@@ -29,7 +30,7 @@ class TrackDataSource extends DataGridSource {
   List<Track> _trackData = [];
   final RatingChangeCallback onRatingChanged;
   final PlayAndMinimizeCallback onPlayPreviewAndMinimize; // Store callback
-  final PlayAndMinimizeCallback onEditMetadata; // Store callback
+  final SelectAndOpenPlayerCallback onEditMetadata; // Store callback
 
   // --- State Management for Hover ---
   final Map<int, bool> _rowHoverState = {};
@@ -175,7 +176,7 @@ class TrackDataSource extends DataGridSource {
               cellContent = PreviewCellWidget(
                 track: track!, // Use track! (safe due to null check above)
                 audioPlayerBloc: _audioPlayerBloc,
-                onPlayAndMinimize: () => onPlayPreviewAndMinimize(track!),
+                onPlayAndMinimize: () => onPlayPreviewAndMinimize(track!, true),
               );
               break; // IMPORTANT: Added break statement
 

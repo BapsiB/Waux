@@ -36,7 +36,7 @@ class TrackTableWidget extends StatefulWidget {
   final String initialSortColumnName;
   final DataGridSortDirection initialSortDirection;
   final PlayAndMinimizeCallback onPlayPreviewAndMinimize;
-  final PlayAndMinimizeCallback onEditMetadata;
+  final SelectAndOpenPlayerCallback onEditMetadata;
 
   const TrackTableWidget({
     Key? key,

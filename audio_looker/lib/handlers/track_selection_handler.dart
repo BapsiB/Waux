@@ -247,7 +247,7 @@ class TrackSelectionHandler {
   }
 
   /// Select and load a track, then play it
-  void selectAndPlayTrack(Track track) {
+  void selectAndPlayTrack(Track track, {bool togglePlay = false}) {
     print("Selecting and playing track: ${track.title}");
     final bloc = context.read<AudioPlayerBloc>();
     final currentBlocState = bloc.state;
@@ -267,7 +267,16 @@ class TrackSelectionHandler {
         }
       });
     } else {
-      bloc.add(PlayAudio());
+      if (togglePlay) {
+        if (currentBlocState is AudioPlayerLoaded &&
+            currentBlocState.isPlaying) {
+          bloc.add(PauseAudio());
+        } else {
+          bloc.add(PlayAudio());
+        }
+      } else {
+        bloc.add(PlayAudio());
+      }
     }
   }
 

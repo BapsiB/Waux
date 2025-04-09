@@ -17,7 +17,7 @@ class ContextMenuHandler {
   final BuildContext context;
   final Set<int> selectedTrackIds;
   final Function(int, bool) onSelectionChanged;
-  final Function(Track) onPlayTrack;
+  final Function(Track, bool) onPlayTrack;
 
   ContextMenuHandler({
     required this.context,
@@ -144,7 +144,7 @@ class ContextMenuHandler {
     if (value != null && value is Map && value['action'] == 'add_to_playlist') {
       _handleAddToPlaylist(value['playlist_id']);
     } else if (value == 'play_now' && selectedTrackIds.length == 1) {
-      onPlayTrack(track);
+      onPlayTrack(track, false);
     } else if (value == 'edit' && selectedTrackIds.length == 1) {
       _handleEditTrack(track);
     } else if (value == 'delete') {

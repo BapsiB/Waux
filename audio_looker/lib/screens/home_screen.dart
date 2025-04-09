@@ -363,7 +363,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _selectAndPlayTrack(Track track) {
+  void _selectAndPlayTrack(Track track, bool shouldTogglePlay) {
     setState(() {
       _selectedTrackForPlayer = track;
       // --- MODIFIED: Create a new Set ---
@@ -375,7 +375,10 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     _initializeHandlers();
-    _trackSelectionHandler.selectAndPlayTrack(track);
+    _trackSelectionHandler.selectAndPlayTrack(
+      track,
+      togglePlay: shouldTogglePlay,
+    );
   }
 
   // --- Build Method ---
