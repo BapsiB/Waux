@@ -37,7 +37,6 @@ class TrackManagementBloc
     : super(TrackManagementInitial()) {
     // Register Handlers for Track/Metadata/Folder Events
     on<LoadTracksForActiveCollection>(_onLoadTracksForActiveCollection);
-    // on<AddTrackFromPath>(_onAddTrackFromPath);
     on<AddTracksFromPaths>(_onAddTracksFromPaths);
     on<AddTrackFromUrl>(_onAddTrackFromUrl);
     on<RemoveTrack>(_onRemoveTrack);
@@ -472,19 +471,6 @@ class TrackManagementBloc
       await _collectionService.removeRootFolder(event.folderPath);
       final updatedRootFolders = _collectionService.getRootFolders();
 
-      // Decide whether to remove tracks belonging ONLY to this root folder.
-      // This is complex. For now, we just remove the root folder definition.
-      // Tracks will remain but might appear under "Imported" if they don't belong
-      // to any other root folder, or might become inaccessible if shared.
-      // A cleanup mechanism might be needed later.
-
-      // TODO: Implement track cleanup logic if desired.
-      // Example idea:
-      // 1. Get all tracks.
-      // 2. For each track, check if its path starts with the removed folderPath.
-      // 3. If it does, check if it *also* starts with any *other* remaining root folder path.
-      // 4. If it only belonged to the removed root, dispatch RemoveTrack(track.id).
-
       emit(
         TrackManagementLoaded(
           tracks: currentTracks, // Keep existing tracks for now
@@ -504,78 +490,6 @@ class TrackManagementBloc
       );
     }
   }
-
-  // Future<void> _onAddTrackFromPath(
-  //   AddTrackFromPath event,
-  //   Emitter<TrackManagementState> emit,
-  // ) async {
-  //   final activeDef = _collectionService.getActiveCollection();
-  //   if (activeDef == null) {
-  //     emit(TrackManagementError("Cannot add track: No active collection."));
-  //     return;
-  //   }
-
-  //   final tracksBeforeAdd = _getTracksFromState();
-  //   final tagsBeforeAdd = _getTagsFromState();
-  //   final rootsBeforeAdd = _getRootFoldersFromState();
-  //   final currentState = state;
-  //   String? currentSearchQuery;
-  //   if (currentState is TrackManagementLoaded) {
-  //     currentSearchQuery = currentState.searchQuery;
-  //   } else if (currentState is TrackManagementLoading) {
-  //     currentSearchQuery = currentState.currentSearchQuery;
-  //   }
-
-  //   // Emit loading state immediately
-  //   emit(
-  //     TrackManagementLoading(
-  //       currentTracks: tracksBeforeAdd,
-  //       currentAllTags: tagsBeforeAdd,
-  //       currentRootFolders: rootsBeforeAdd,
-  //       currentSearchQuery: currentSearchQuery, // Preserve search
-  //     ),
-  //   );
-
-  //   try {
-  //     // Add the single file using the service
-  //     final addedOrFoundTrack = await _collectionService.addLocalFile(
-  //       event.filePath,
-  //     );
-  //     print(
-  //       'TrackManagementBloc: Added/found track: ${addedOrFoundTrack.title}',
-  //     );
-
-  //     // Reload all tracks to reflect the addition AND get updated waveform data if processed quickly
-  //     add(LoadTracksForActiveCollection());
-
-  //     // Start background waveform processing for the single added track
-  //     // Check if waveform data is already present (might have been processed by addLocalFile)
-  //     final potentiallyUpdatedTrack = await _collectionService.getTrack(
-  //       addedOrFoundTrack.id!,
-  //     );
-  //     if (potentiallyUpdatedTrack != null &&
-  //         (potentiallyUpdatedTrack.waveformData == null ||
-  //             potentiallyUpdatedTrack.waveformData!.isEmpty) &&
-  //         !_isProcessingWaveforms &&
-  //         !potentiallyUpdatedTrack.isUrl) {
-  //       print(
-  //         "TrackManagementBloc: Starting background waveform extraction for single file.",
-  //       );
-  //       _startBackgroundWaveformExtraction([potentiallyUpdatedTrack.path]);
-  //     }
-  //   } catch (e, stackTrace) {
-  //     print(
-  //       "TrackManagementBloc: ERROR adding track from path: $e\n$stackTrace",
-  //     );
-  //     emit(
-  //       TrackManagementError(
-  //         e.toString(),
-  //         tracks: tracksBeforeAdd, // Revert to previous state on error
-  //         rootFolders: rootsBeforeAdd,
-  //       ),
-  //     );
-  //   }
-  // }
 
   Future<void> _onAddTracksFromPaths(
     AddTracksFromPaths event,
@@ -1168,11 +1082,6 @@ class TrackManagementBloc
     }
   }
 
-  // --- Waveform Extraction Logic ---
-  // lib/blocs/track_management/track_management_bloc.dart
-
-  // --- Waveform Extraction Logic ---
-  // --- Waveform Extraction Logic (Corrected) ---
   Future<void> _startBackgroundWaveformExtraction(
     List<String> absoluteFilePaths,
   ) async {
