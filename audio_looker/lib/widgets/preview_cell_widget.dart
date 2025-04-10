@@ -44,13 +44,6 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
   @override
   void initState() {
     super.initState();
-    // --- REMOVE Bloc subscription ---
-    // _updateStateFromBloc(widget.audioPlayerBloc.state); // REMOVED
-    // _playerStateSubscription = widget.audioPlayerBloc.stream.listen((state) { // REMOVED
-    //   if (mounted) { // REMOVED
-    //     _updateStateFromBloc(state); // REMOVED
-    //   } // REMOVED
-    // }); // REMOVED
   }
 
   @override
