@@ -226,6 +226,7 @@ class CollectionService {
   // SharedPreferences Keys
   static const String _collectionDefinitionsKey = 'collection_definitions_list';
   static const String _generalTagsKey = 'general_tags_list'; // Global tags
+  static const String _lastActiveCollectionIdKey = 'last_active_collection_id';
 
   // --- State ---
   Database? _database; // Connection to the *active* database
@@ -275,6 +276,31 @@ class CollectionService {
       await prefs.setString(_collectionDefinitionsKey, jsonEncode(jsonList));
     } catch (e) {
       print('Error saving collection definitions: $e');
+    }
+  }
+
+  Future<String?> loadLastActiveCollectionId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_lastActiveCollectionIdKey);
+    } catch (e) {
+      print('Error loading last active collection ID: $e');
+      return null;
+    }
+  }
+
+  Future<void> saveLastActiveCollectionId(String? id) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (id != null && id.isNotEmpty) {
+        await prefs.setString(_lastActiveCollectionIdKey, id);
+        print('Saved last active collection ID: $id');
+      } else {
+        await prefs.remove(_lastActiveCollectionIdKey);
+        print('Cleared last active collection ID.');
+      }
+    } catch (e) {
+      print('Error saving last active collection ID: $e');
     }
   }
 

@@ -1,13 +1,13 @@
-import 'dart:io'; // <<< Import needed for Directory/File access
+import 'dart:io'; // Already likely there
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path/path.dart'
-    as pathLib; // <<< Import needed for path manipulation
+import 'package:path/path.dart' as pathLib; // Already likely there
+import 'package:url_launcher/url_launcher.dart'; // <<< Add this
 
 // Import BLoC and Service/Models needed
 import '../blocs/collection_management/collection_management_bloc.dart';
-import '../services/collection_service.dart'; // For CollectionDefinition
+import '../services/collection_service.dart';
 
 class CollectionManagerScreen extends StatefulWidget {
   const CollectionManagerScreen({super.key});
@@ -18,11 +18,90 @@ class CollectionManagerScreen extends StatefulWidget {
 }
 
 class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
+  Offset _tapPosition = Offset.zero; // Store tap position
+
+  void _storePosition(TapDownDetails details) {
+    _tapPosition = details.globalPosition;
+  }
+
   @override
   void initState() {
     super.initState();
     // Request the list of collections when the screen loads
     context.read<CollectionManagementBloc>().add(LoadCollectionList());
+  }
+
+  void _showCollectionContextMenu(
+    BuildContext context,
+    CollectionDefinition collection,
+  ) {
+    final RenderBox overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+
+    showMenu(
+      context: context,
+      position: RelativeRect.fromRect(
+        _tapPosition & const Size(40, 40), // Small rectangle at tap pos
+        Offset.zero & overlay.size, // Bigger rectangle of the overlay
+      ),
+      items: <PopupMenuEntry>[
+        PopupMenuItem(
+          value: 'reveal_db', // Unique value for this action
+          child: const ListTile(
+            leading: Icon(Icons.folder_open),
+            title: Text('Reveal in Finder'),
+          ),
+        ),
+        // Add other options like Rename later if needed
+        // const PopupMenuDivider(),
+        // PopupMenuItem( ... ),
+      ],
+    ).then((value) {
+      // Handle menu selection
+      if (value != null) {
+        _handleCollectionMenuSelection(value, collection);
+      }
+    });
+  }
+
+  // Method to perform the reveal action
+  Future<void> _revealDbLocation(CollectionDefinition collection) async {
+    try {
+      final String dbPath = collection.dbPath;
+      // Ensure the path is absolute before getting the directory
+      if (!pathLib.isAbsolute(dbPath)) {
+        print("Error revealing location: DB path is not absolute: $dbPath");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Cannot reveal relative path: $dbPath")),
+        );
+        return;
+      }
+
+      final String directoryPath = pathLib.dirname(dbPath);
+      final Uri directoryUri = Uri.file(directoryPath);
+
+      if (await canLaunchUrl(directoryUri)) {
+        await launchUrl(directoryUri);
+      } else {
+        throw Exception('Could not launch directory URI: $directoryUri');
+      }
+    } catch (e) {
+      print("Error revealing DB location: $e");
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Could not open folder: $e")));
+    }
+  }
+
+  // Method to handle menu selection
+  void _handleCollectionMenuSelection(
+    dynamic value,
+    CollectionDefinition collection,
+  ) {
+    if (value == 'reveal_db') {
+      _revealDbLocation(collection);
+    }
+    // Handle other potential menu values here
   }
 
   // --- Dialog for Creating New Collection ---
@@ -284,11 +363,18 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
     showDialog(
       context: context,
       builder: (dialogContext) {
+        // --- >>> MODIFY DIALOG CONTENT <<< ---
+        String deletionNote =
+            collection.type == CollectionType.shared
+                ? 'Note: This will NOT delete the actual folder or database file on your drive.'
+                : 'Note: This WILL delete the associated local database file (${pathLib.basename(collection.dbPath)}). This action cannot be undone.';
+        // --- >>> END MODIFICATION <<< ---
+
         return AlertDialog(
           title: Text('Delete Collection?'),
           content: Text(
-            'Are you sure you want to remove the collection "${collection.name}" from the list?\n\n'
-            '${collection.type == CollectionType.shared ? 'Note: This will NOT delete the actual folder or database file on your drive.' : 'Note: This will NOT delete the local database file.'}',
+            // Use the dynamic deletionNote
+            'Are you sure you want to remove the collection "${collection.name}" from the list?\n\n$deletionNote',
           ),
           actions: <Widget>[
             TextButton(
@@ -373,57 +459,73 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
               final collection = collections[index];
               final bool isActive = collection.id == activeCollection?.id;
 
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                elevation: isActive ? 4 : 1,
-                shape: RoundedRectangleBorder(
-                  side: BorderSide(
-                    color:
-                        isActive
-                            ? Theme.of(context).colorScheme.primary
-                            : Colors.transparent,
-                    width: 1.5,
+              return GestureDetector(
+                // <<< Wrap with GestureDetector
+                onTapDown: _storePosition, // Store position for menu
+                onSecondaryTapDown: _storePosition, // Store position for menu
+                onSecondaryTap:
+                    () => _showCollectionContextMenu(
+                      context,
+                      collection,
+                    ), // Show menu
+                child: Card(
+                  // Keep the Card and ListTile inside
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
                   ),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: ListTile(
-                  leading: Icon(
-                    collection.type == CollectionType.shared
-                        ? Icons.folder_shared_outlined
-                        : Icons.folder_outlined,
-                    color:
-                        isActive ? Theme.of(context).colorScheme.primary : null,
-                  ),
-                  title: Text(
-                    collection.name,
-                    style: TextStyle(
-                      fontWeight:
-                          isActive ? FontWeight.bold : FontWeight.normal,
+                  elevation: isActive ? 4 : 1,
+                  shape: RoundedRectangleBorder(
+                    side: BorderSide(
+                      color:
+                          isActive
+                              ? Theme.of(context).colorScheme.primary
+                              : Colors.transparent,
+                      width: 1.5,
                     ),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  subtitle: Text(
-                    '${collection.type.name} - ${isActive ? "(Active)" : ""}',
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      color: Colors.redAccent,
+                  child: ListTile(
+                    leading: Icon(
+                      collection.type == CollectionType.shared
+                          ? Icons.folder_shared_outlined
+                          : Icons.folder_outlined,
+                      color:
+                          isActive
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
                     ),
-                    tooltip: 'Delete Collection Definition',
-                    onPressed:
-                        () =>
-                            _showDeleteConfirmationDialog(context, collection),
+                    title: Text(
+                      collection.name,
+                      style: TextStyle(
+                        fontWeight:
+                            isActive ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '${collection.type.name} - ${isActive ? "(Active)" : ""}',
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        color: Colors.redAccent,
+                      ),
+                      tooltip: 'Delete Collection Definition',
+                      onPressed:
+                          () => _showDeleteConfirmationDialog(
+                            context,
+                            collection,
+                          ),
+                    ),
+                    onTap: () {
+                      if (!isActive) {
+                        context.read<CollectionManagementBloc>().add(
+                          SwitchCollection(collection.id),
+                        );
+                      }
+                      Navigator.pop(context);
+                    },
                   ),
-                  onTap: () {
-                    // Only switch if it's not already active
-                    if (!isActive) {
-                      context.read<CollectionManagementBloc>().add(
-                        SwitchCollection(collection.id),
-                      );
-                    }
-                    // Navigate back to home screen after selection (or switch attempt)
-                    Navigator.pop(context);
-                  },
                 ),
               );
             },

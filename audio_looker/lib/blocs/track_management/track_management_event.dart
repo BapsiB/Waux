@@ -12,12 +12,12 @@ abstract class TrackManagementEvent extends Equatable {
 class LoadTracksForActiveCollection extends TrackManagementEvent {}
 
 // Track Addition Events
-class AddTrackFromPath extends TrackManagementEvent {
-  final String filePath;
-  const AddTrackFromPath(this.filePath);
-  @override
-  List<Object> get props => [filePath];
-}
+// class AddTrackFromPath extends TrackManagementEvent {
+//   final String filePath;
+//   const AddTrackFromPath(this.filePath);
+//   @override
+//   List<Object> get props => [filePath];
+// }
 
 class AddTracksFromPaths extends TrackManagementEvent {
   final List<String> filePaths;

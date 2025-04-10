@@ -37,7 +37,7 @@ class TrackManagementBloc
     : super(TrackManagementInitial()) {
     // Register Handlers for Track/Metadata/Folder Events
     on<LoadTracksForActiveCollection>(_onLoadTracksForActiveCollection);
-    on<AddTrackFromPath>(_onAddTrackFromPath);
+    // on<AddTrackFromPath>(_onAddTrackFromPath);
     on<AddTracksFromPaths>(_onAddTracksFromPaths);
     on<AddTrackFromUrl>(_onAddTrackFromUrl);
     on<RemoveTrack>(_onRemoveTrack);
@@ -505,77 +505,77 @@ class TrackManagementBloc
     }
   }
 
-  Future<void> _onAddTrackFromPath(
-    AddTrackFromPath event,
-    Emitter<TrackManagementState> emit,
-  ) async {
-    final activeDef = _collectionService.getActiveCollection();
-    if (activeDef == null) {
-      emit(TrackManagementError("Cannot add track: No active collection."));
-      return;
-    }
+  // Future<void> _onAddTrackFromPath(
+  //   AddTrackFromPath event,
+  //   Emitter<TrackManagementState> emit,
+  // ) async {
+  //   final activeDef = _collectionService.getActiveCollection();
+  //   if (activeDef == null) {
+  //     emit(TrackManagementError("Cannot add track: No active collection."));
+  //     return;
+  //   }
 
-    final tracksBeforeAdd = _getTracksFromState();
-    final tagsBeforeAdd = _getTagsFromState();
-    final rootsBeforeAdd = _getRootFoldersFromState();
-    final currentState = state;
-    String? currentSearchQuery;
-    if (currentState is TrackManagementLoaded) {
-      currentSearchQuery = currentState.searchQuery;
-    } else if (currentState is TrackManagementLoading) {
-      currentSearchQuery = currentState.currentSearchQuery;
-    }
+  //   final tracksBeforeAdd = _getTracksFromState();
+  //   final tagsBeforeAdd = _getTagsFromState();
+  //   final rootsBeforeAdd = _getRootFoldersFromState();
+  //   final currentState = state;
+  //   String? currentSearchQuery;
+  //   if (currentState is TrackManagementLoaded) {
+  //     currentSearchQuery = currentState.searchQuery;
+  //   } else if (currentState is TrackManagementLoading) {
+  //     currentSearchQuery = currentState.currentSearchQuery;
+  //   }
 
-    // Emit loading state immediately
-    emit(
-      TrackManagementLoading(
-        currentTracks: tracksBeforeAdd,
-        currentAllTags: tagsBeforeAdd,
-        currentRootFolders: rootsBeforeAdd,
-        currentSearchQuery: currentSearchQuery, // Preserve search
-      ),
-    );
+  //   // Emit loading state immediately
+  //   emit(
+  //     TrackManagementLoading(
+  //       currentTracks: tracksBeforeAdd,
+  //       currentAllTags: tagsBeforeAdd,
+  //       currentRootFolders: rootsBeforeAdd,
+  //       currentSearchQuery: currentSearchQuery, // Preserve search
+  //     ),
+  //   );
 
-    try {
-      // Add the single file using the service
-      final addedOrFoundTrack = await _collectionService.addLocalFile(
-        event.filePath,
-      );
-      print(
-        'TrackManagementBloc: Added/found track: ${addedOrFoundTrack.title}',
-      );
+  //   try {
+  //     // Add the single file using the service
+  //     final addedOrFoundTrack = await _collectionService.addLocalFile(
+  //       event.filePath,
+  //     );
+  //     print(
+  //       'TrackManagementBloc: Added/found track: ${addedOrFoundTrack.title}',
+  //     );
 
-      // Reload all tracks to reflect the addition AND get updated waveform data if processed quickly
-      add(LoadTracksForActiveCollection());
+  //     // Reload all tracks to reflect the addition AND get updated waveform data if processed quickly
+  //     add(LoadTracksForActiveCollection());
 
-      // Start background waveform processing for the single added track
-      // Check if waveform data is already present (might have been processed by addLocalFile)
-      final potentiallyUpdatedTrack = await _collectionService.getTrack(
-        addedOrFoundTrack.id!,
-      );
-      if (potentiallyUpdatedTrack != null &&
-          (potentiallyUpdatedTrack.waveformData == null ||
-              potentiallyUpdatedTrack.waveformData!.isEmpty) &&
-          !_isProcessingWaveforms &&
-          !potentiallyUpdatedTrack.isUrl) {
-        print(
-          "TrackManagementBloc: Starting background waveform extraction for single file.",
-        );
-        _startBackgroundWaveformExtraction([potentiallyUpdatedTrack.path]);
-      }
-    } catch (e, stackTrace) {
-      print(
-        "TrackManagementBloc: ERROR adding track from path: $e\n$stackTrace",
-      );
-      emit(
-        TrackManagementError(
-          e.toString(),
-          tracks: tracksBeforeAdd, // Revert to previous state on error
-          rootFolders: rootsBeforeAdd,
-        ),
-      );
-    }
-  }
+  //     // Start background waveform processing for the single added track
+  //     // Check if waveform data is already present (might have been processed by addLocalFile)
+  //     final potentiallyUpdatedTrack = await _collectionService.getTrack(
+  //       addedOrFoundTrack.id!,
+  //     );
+  //     if (potentiallyUpdatedTrack != null &&
+  //         (potentiallyUpdatedTrack.waveformData == null ||
+  //             potentiallyUpdatedTrack.waveformData!.isEmpty) &&
+  //         !_isProcessingWaveforms &&
+  //         !potentiallyUpdatedTrack.isUrl) {
+  //       print(
+  //         "TrackManagementBloc: Starting background waveform extraction for single file.",
+  //       );
+  //       _startBackgroundWaveformExtraction([potentiallyUpdatedTrack.path]);
+  //     }
+  //   } catch (e, stackTrace) {
+  //     print(
+  //       "TrackManagementBloc: ERROR adding track from path: $e\n$stackTrace",
+  //     );
+  //     emit(
+  //       TrackManagementError(
+  //         e.toString(),
+  //         tracks: tracksBeforeAdd, // Revert to previous state on error
+  //         rootFolders: rootsBeforeAdd,
+  //       ),
+  //     );
+  //   }
+  // }
 
   Future<void> _onAddTracksFromPaths(
     AddTracksFromPaths event,

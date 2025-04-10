@@ -1,6 +1,7 @@
 // lib/blocs/collection_management/collection_management_bloc.dart
 
 import 'dart:async';
+import 'dart:io';
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:uuid/uuid.dart';
@@ -8,7 +9,7 @@ import 'package:path/path.dart' as pathLib;
 import 'package:path_provider/path_provider.dart';
 
 // Import Services and Models
-import '../../services/collection_service.dart';
+import '../../services/collection_service.dart'; // Needed for CollectionService, CollectionDefinition, CollectionType
 
 part 'collection_management_event.dart';
 part 'collection_management_state.dart';
@@ -32,66 +33,110 @@ class CollectionManagementBloc
     LoadCollectionList event,
     Emitter<CollectionManagementState> emit,
   ) async {
-    // Preserve active collection if already loaded
+    // Preserve active collection if already loaded from a previous state
     final currentActiveDef = state.activeCollectionDefinition;
     emit(
       CollectionManagementLoading(
-        availableCollections:
-            state.availableCollections, // Keep old list while loading
+        availableCollections: state.availableCollections,
         activeCollectionDefinition: currentActiveDef,
       ),
     );
     try {
+      // --- MODIFIED START ---
+      // 1. Load the last active ID *before* loading definitions
+      final String? lastActiveId =
+          await _collectionService.loadLastActiveCollectionId();
+      print("CollectionManagementBloc: Found last active ID: $lastActiveId");
+
+      // 2. Load all definitions
       final definitions = await _collectionService.loadCollectionDefinitions();
       print(
         "CollectionManagementBloc: Loaded ${definitions.length} definitions.",
       );
 
-      // If no collection is active AND definitions were loaded, try activating the first one
-      CollectionDefinition? newActiveDef = currentActiveDef;
-      if (currentActiveDef == null && definitions.isNotEmpty) {
-        // Attempt to open the first one as default (UI might override this later)
-        try {
-          print(
-            "CollectionManagementBloc: No active collection, attempting to activate '${definitions.first.name}'.",
-          );
-          await _collectionService.openCollection(definitions.first);
-          newActiveDef = definitions.first;
-        } catch (e) {
-          print(
-            "CollectionManagementBloc: Failed to auto-activate first collection: $e. Staying inactive.",
-          );
-          newActiveDef = null; // Stay inactive if opening fails
-          await _collectionService
-              .closeCollection(); // Ensure it's closed if activation failed
-        }
+      CollectionDefinition? collectionToActivate;
+
+      // 3. Check if last active ID is valid and exists in the loaded definitions
+      if (lastActiveId != null &&
+          definitions.any((d) => d.id == lastActiveId)) {
+        collectionToActivate = definitions.firstWhere(
+          (d) => d.id == lastActiveId,
+        );
+        print(
+          "CollectionManagementBloc: Will attempt to activate last active: ${collectionToActivate.name}",
+        );
+      }
+      // --- MODIFIED END ---
+      // If no valid lastActiveId found, and no collection currently active, default to first (optional)
+      else if (currentActiveDef == null && definitions.isNotEmpty) {
+        // Default to first only if no last active ID was found
+        // collectionToActivate = definitions.first;
+        // print("CollectionManagementBloc: No valid last active ID, defaulting to first: ${collectionToActivate.name}");
+        print(
+          "CollectionManagementBloc: No valid last active ID found, remaining inactive for now.",
+        );
+        collectionToActivate = null; // Or keep it null to not auto-activate any
       } else if (currentActiveDef != null &&
           !definitions.any((d) => d.id == currentActiveDef.id)) {
+        // Handle case where previously active was deleted
         print(
           "CollectionManagementBloc: Previously active collection no longer exists. Deactivating.",
         );
-        // Previously active collection was deleted, deactivate
         await _collectionService.closeCollection();
-        newActiveDef = null;
+        collectionToActivate = null;
+      } else {
+        // Keep the current one active if it still exists, or stay inactive
+        collectionToActivate =
+            currentActiveDef != null &&
+                    definitions.any((d) => d.id == currentActiveDef.id)
+                ? currentActiveDef
+                : null;
+        print(
+          "CollectionManagementBloc: Keeping current state: ${collectionToActivate?.name ?? 'Inactive'}",
+        );
+      }
+
+      // --- Attempt to open the determined collection (if any) ---
+      CollectionDefinition? finalActiveDefinition = collectionToActivate;
+      if (collectionToActivate != null) {
+        try {
+          print(
+            "CollectionManagementBloc: Opening collection: ${collectionToActivate.name}",
+          );
+          await _collectionService.openCollection(collectionToActivate);
+        } catch (e) {
+          print(
+            "CollectionManagementBloc: Failed to open collection '${collectionToActivate.name}': $e. Deactivating.",
+          );
+          finalActiveDefinition =
+              null; // Failed to open, so no active collection
+          await _collectionService.saveLastActiveCollectionId(
+            null,
+          ); // Clear invalid saved ID
+          await _collectionService.closeCollection(); // Ensure DB is closed
+        }
+      } else {
+        print("CollectionManagementBloc: No collection to activate.");
+        // Ensure service is closed if no collection is active
+        await _collectionService.closeCollection();
       }
 
       emit(
         CollectionManagementLoaded(
           availableCollections: definitions,
           activeCollectionDefinition:
-              newActiveDef, // Use potentially updated active definition
+              finalActiveDefinition, // Use the one that was successfully opened (or null)
         ),
       );
-      // Trigger TrackManagementBloc/PlaylistBloc to load data for the newly active collection
-      // This is best handled by the UI layer (e.g., HomeScreen) listening to this state change.
+      // UI layer listens to this state to trigger Track/Playlist loads
     } catch (e, stackTrace) {
       print("CollectionManagementBloc ERROR loading list: $e\n$stackTrace");
       emit(
         CollectionManagementError(
           "Failed to load collection list: $e",
-          availableCollections:
-              state.availableCollections, // Keep old list on error
-          activeCollectionDefinition: currentActiveDef,
+          availableCollections: state.availableCollections,
+          activeCollectionDefinition:
+              currentActiveDef, // Revert to previous on error
         ),
       );
     }
@@ -132,6 +177,12 @@ class CollectionManagementBloc
       print(
         "CollectionManagementBloc: Switched active collection to '${targetDefinition.name}'.",
       );
+
+      // --- MODIFIED START ---
+      // Save the successfully activated collection ID
+      await _collectionService.saveLastActiveCollectionId(targetDefinition.id);
+      // --- MODIFIED END ---
+
       emit(
         CollectionManagementLoaded(
           availableCollections: currentCollections,
@@ -365,25 +416,78 @@ class CollectionManagementBloc
     final previousAvailable = state.availableCollections;
     final previousActive = state.activeCollectionDefinition;
 
-    // Optionally show loading, though delete is usually fast
-    // emit(CollectionManagementLoading(availableCollections: previousAvailable, activeCollectionDefinition: previousActive));
+    // --- Find the definition to be deleted ---
+    CollectionDefinition? definitionToDelete;
+    try {
+      definitionToDelete = previousAvailable.firstWhere(
+        (def) => def.id == event.collectionId,
+      );
+    } catch (e) {
+      print(
+        "CollectionManagementBloc: Could not find definition for ID ${event.collectionId} to delete.",
+      );
+      emit(
+        CollectionManagementError(
+          "Collection to delete not found.",
+          availableCollections: previousAvailable,
+          activeCollectionDefinition: previousActive,
+        ),
+      );
+      return; // Stop if definition not found
+    }
 
     try {
-      await _collectionService.removeCollectionDefinition(event.collectionId);
-      final wasActiveDeleted = previousActive?.id == event.collectionId;
+      final String? lastActiveId =
+          await _collectionService.loadLastActiveCollectionId();
+      final bool wasActiveDeleted = previousActive?.id == event.collectionId;
+      final bool wasLastSavedDeleted = lastActiveId == event.collectionId;
 
-      // Reload the list
+      if (definitionToDelete.type == CollectionType.local) {
+        try {
+          final dbFile = File(definitionToDelete.dbPath);
+          if (await dbFile.exists()) {
+            await dbFile.delete();
+            print(
+              "CollectionManagementBloc: Deleted local collection DB file: ${definitionToDelete.dbPath}",
+            );
+          } else {
+            print(
+              "CollectionManagementBloc: Local collection DB file not found, skipping deletion: ${definitionToDelete.dbPath}",
+            );
+          }
+        } catch (e) {
+          print(
+            "CollectionManagementBloc: Error deleting local DB file ${definitionToDelete.dbPath}: $e",
+          );
+          // Decide if you want to stop the process or just log the error.
+          // Optionally re-throw or emit an error specific to file deletion failure.
+        }
+      } else {
+        print(
+          "CollectionManagementBloc: Skipping DB file deletion for shared collection: ${definitionToDelete.name}",
+        );
+      }
+
+      // Remove the definition from the list
+      await _collectionService.removeCollectionDefinition(event.collectionId);
       final updatedDefinitions =
           await _collectionService.loadCollectionDefinitions();
 
       CollectionDefinition? newActiveDef = previousActive;
-      if (wasActiveDeleted) {
+
+      // If the one being deleted was the active one OR the last saved one, clear state
+      if (wasActiveDeleted || wasLastSavedDeleted) {
         print(
-          "CollectionManagementBloc: Active collection was deleted. Deactivating.",
+          "CollectionManagementBloc: Deleted collection was active or last saved. Deactivating and clearing saved ID.",
         );
-        await _collectionService.closeCollection(); // Close DB if it was active
+        if (wasActiveDeleted) {
+          await _collectionService
+              .closeCollection(); // Close DB if it was active
+        }
+        await _collectionService.saveLastActiveCollectionId(
+          null,
+        ); // Clear saved ID
         newActiveDef = null; // No active collection now
-        // Potentially auto-switch to another if desired, or let user choose
       }
 
       emit(
@@ -396,7 +500,6 @@ class CollectionManagementBloc
       print(
         "CollectionManagementBloc: Deleted collection definition ID: ${event.collectionId}",
       );
-      // UI listener should handle state changes (e.g., if active became null)
     } catch (e, stackTrace) {
       print(
         "CollectionManagementBloc ERROR deleting collection: $e\n$stackTrace",
