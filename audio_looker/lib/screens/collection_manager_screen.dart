@@ -105,69 +105,237 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
   }
 
   // --- Dialog for Creating New Collection ---
+  // In lib/screens/collection_manager_screen.dart
+
+  // --- Dialog for Creating New Collection ---
+  // In lib/screens/collection_manager_screen.dart
+
+  // --- Dialog for Creating New Collection ---
+  // In lib/screens/collection_manager_screen.dart
+
+  // --- Dialog for Creating New Collection ---
   void _showCreateCollectionDialog({required bool isShared}) {
     final TextEditingController nameController = TextEditingController();
-    String? selectedFolderPath; // Only used for shared
+    // --- *** ADD FocusNode *** ---
+    final FocusNode nameFocusNode = FocusNode();
+    // --- *** END ADD *** ---
+    String? selectedFolderPath;
+    String? detectedDbPath;
+    String? suggestedName;
+    bool dbDetected = false;
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) {
-        // Use StatefulWidget for the dialog content if path selection needs state
         return StatefulBuilder(
           builder: (stfContext, stfSetState) {
             return AlertDialog(
               title: Text(
                 isShared ? 'New Shared Collection' : 'New Local Collection',
               ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Collection Name',
-                      hintText: 'Enter a name',
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      // --- *** ADD focusNode property *** ---
+                      focusNode: nameFocusNode,
+                      // --- *** END ADD *** ---
+                      enabled: !dbDetected,
+                      // --- MODIFIED: Autofocus local immediately, shared after folder select ---
+                      autofocus: !isShared,
+                      // --- END MODIFIED ---
+                      decoration: InputDecoration(
+                        labelText: 'Collection Name',
+                        hintText:
+                            dbDetected
+                                ? '(From existing database)'
+                                : 'Enter a name',
+                      ),
                     ),
-                  ),
-                  if (isShared) ...[
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            selectedFolderPath ?? 'No folder selected',
-                            style: TextStyle(
-                              color:
-                                  selectedFolderPath == null
-                                      ? Colors.grey
-                                      : null,
+                    if (isShared) ...[
+                      const SizedBox(height: 16),
+                      const Divider(),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Select Shared Folder:',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              selectedFolderPath ?? 'No folder selected',
+                              style: TextStyle(
+                                color:
+                                    selectedFolderPath == null
+                                        ? Colors.grey
+                                        : null,
+                                fontStyle:
+                                    selectedFolderPath == null
+                                        ? FontStyle.italic
+                                        : FontStyle.normal,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            overflow: TextOverflow.ellipsis,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.folder_open),
+                            tooltip: 'Select Root Folder',
+                            onPressed: () async {
+                              final String? directoryPath = await FilePicker
+                                  .platform
+                                  .getDirectoryPath(
+                                    dialogTitle:
+                                        'Select Shared Collection Folder',
+                                  );
+
+                              if (directoryPath != null) {
+                                stfSetState(() {
+                                  selectedFolderPath = directoryPath;
+                                  detectedDbPath = null;
+                                  suggestedName = null;
+                                  dbDetected = false;
+                                  nameController.text = '';
+                                });
+
+                                List<FileSystemEntity> dbFiles = [];
+                                String? foundDbPath;
+                                String? extractedName;
+                                final directory = Directory(directoryPath);
+
+                                try {
+                                  if (await directory.exists()) {
+                                    dbFiles =
+                                        await directory
+                                            .list()
+                                            .where(
+                                              (entity) =>
+                                                  entity is File &&
+                                                  pathLib
+                                                      .basename(entity.path)
+                                                      .startsWith(
+                                                        '_collection_',
+                                                      ) &&
+                                                  pathLib
+                                                      .basename(entity.path)
+                                                      .endsWith('.db'),
+                                            )
+                                            .toList();
+
+                                    if (dbFiles.length == 1) {
+                                      foundDbPath = dbFiles.first.path;
+                                      String baseName = pathLib
+                                          .basenameWithoutExtension(
+                                            foundDbPath,
+                                          );
+                                      if (baseName.startsWith('_collection_')) {
+                                        extractedName = baseName
+                                            .substring('_collection_'.length)
+                                            .replaceAll('_', ' ');
+                                      } else {
+                                        extractedName = baseName.replaceAll(
+                                          '_',
+                                          ' ',
+                                        );
+                                      }
+                                      print(
+                                        "Detected DB: $foundDbPath, Extracted Name: $extractedName",
+                                      );
+                                    } else if (dbFiles.length > 1) {
+                                      print(
+                                        "Multiple collection DB files found in $directoryPath",
+                                      );
+                                      if (stfContext.mounted) {
+                                        ScaffoldMessenger.of(
+                                          stfContext,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Multiple collection databases found. Please ensure only one exists.',
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      selectedFolderPath = null;
+                                    } else {
+                                      print(
+                                        "No collection DB file found in $directoryPath",
+                                      );
+                                    }
+                                  }
+                                } catch (e) {
+                                  print(
+                                    "Error scanning directory for DB file: $e",
+                                  );
+                                  if (stfContext.mounted) {
+                                    ScaffoldMessenger.of(
+                                      stfContext,
+                                    ).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Error scanning folder: $e',
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  selectedFolderPath = null;
+                                }
+
+                                stfSetState(() {
+                                  if (foundDbPath != null &&
+                                      extractedName != null) {
+                                    detectedDbPath = foundDbPath;
+                                    suggestedName = extractedName;
+                                    dbDetected = true;
+                                    nameController.text = suggestedName!;
+                                  } else {
+                                    detectedDbPath = null;
+                                    suggestedName = null;
+                                    dbDetected = false;
+                                    nameController.clear();
+                                    // --- *** FIX: Request focus using FocusNode *** ---
+                                    if (directoryPath != null &&
+                                        foundDbPath == null &&
+                                        dbFiles.length <= 1) {
+                                      // Use WidgetsBinding to request focus after the current frame
+                                      WidgetsBinding.instance.addPostFrameCallback((
+                                        _,
+                                      ) {
+                                        if (stfContext.mounted) {
+                                          // Check mount status again in callback
+                                          FocusScope.of(
+                                            stfContext,
+                                          ).requestFocus(nameFocusNode);
+                                        }
+                                      });
+                                    }
+                                    // --- *** END FIX *** ---
+                                  }
+                                });
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                      if (dbDetected)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: Text(
+                            'Existing database detected. Name is set automatically.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            textAlign: TextAlign.center,
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.folder_open),
-                          tooltip: 'Select Root Folder',
-                          onPressed: () async {
-                            final String? directoryPath = await FilePicker
-                                .platform
-                                .getDirectoryPath(
-                                  dialogTitle:
-                                      'Select Shared Collection Folder',
-                                );
-                            if (directoryPath != null) {
-                              stfSetState(() {
-                                // Use stfSetState to update dialog UI
-                                selectedFolderPath = directoryPath;
-                              });
-                            }
-                          },
-                        ),
-                      ],
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
               actions: <Widget>[
                 TextButton(
@@ -175,38 +343,53 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
                   onPressed: () => Navigator.of(dialogContext).pop(),
                 ),
                 TextButton(
-                  child: const Text('Create'),
+                  child: Text(dbDetected ? 'Add Existing' : 'Create'),
                   onPressed: () {
                     final name = nameController.text.trim();
-                    if (name.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Name cannot be empty.')),
-                      );
-                      return;
-                    }
+
                     if (isShared && selectedFolderPath == null) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Please select a root folder.'),
+                          content: Text('Please select a shared folder.'),
+                        ),
+                      );
+                      return;
+                    }
+                    if (!dbDetected && name.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Collection Name cannot be empty.'),
                         ),
                       );
                       return;
                     }
 
-                    // Dispatch event to BLoC
                     if (isShared) {
-                      context.read<CollectionManagementBloc>().add(
-                        CreateSharedCollection(
-                          name: name,
-                          rootPath: selectedFolderPath!,
-                        ),
-                      );
+                      if (dbDetected) {
+                        context.read<CollectionManagementBloc>().add(
+                          AddExistingSharedCollection(
+                            name: name,
+                            rootPath: selectedFolderPath!,
+                            dbPath: detectedDbPath!,
+                          ),
+                        );
+                        print("Dispatching AddExistingSharedCollection");
+                      } else {
+                        context.read<CollectionManagementBloc>().add(
+                          CreateSharedCollection(
+                            name: name,
+                            rootPath: selectedFolderPath!,
+                          ),
+                        );
+                        print("Dispatching CreateSharedCollection");
+                      }
                     } else {
                       context.read<CollectionManagementBloc>().add(
                         CreateLocalCollection(name),
                       );
+                      print("Dispatching CreateLocalCollection");
                     }
-                    Navigator.of(dialogContext).pop(); // Close the dialog
+                    Navigator.of(dialogContext).pop();
                   },
                 ),
               ],
@@ -214,146 +397,150 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
           },
         );
       },
-    ).then((_) => nameController.dispose());
+    ).then((_) {
+      // --- *** ADD Dispose FocusNode *** ---
+      nameFocusNode.dispose();
+      // --- *** END ADD *** ---
+      nameController.dispose();
+    });
   }
+  // // --- >>> NEW: Logic for Adding Existing Shared Collection <<< ---
+  // Future<void> _addExistingSharedCollection() async {
+  //   // 1. Prompt user to select the ROOT FOLDER
+  //   String? selectedFolderPath = await FilePicker.platform.getDirectoryPath(
+  //     dialogTitle: 'Select Existing Shared Collection Folder',
+  //   );
 
-  // --- >>> NEW: Logic for Adding Existing Shared Collection <<< ---
-  Future<void> _addExistingSharedCollection() async {
-    // 1. Prompt user to select the ROOT FOLDER
-    String? selectedFolderPath = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Select Existing Shared Collection Folder',
-    );
+  //   if (selectedFolderPath == null) {
+  //     return; // User cancelled
+  //   }
 
-    if (selectedFolderPath == null) {
-      return; // User cancelled
-    }
+  //   // 2. Detect the database file within the selected folder
+  //   String? detectedDbPath;
+  //   String? suggestedName;
+  //   final directory = Directory(selectedFolderPath);
+  //   List<FileSystemEntity> dbFiles = [];
 
-    // 2. Detect the database file within the selected folder
-    String? detectedDbPath;
-    String? suggestedName;
-    final directory = Directory(selectedFolderPath);
-    List<FileSystemEntity> dbFiles = [];
+  //   try {
+  //     if (await directory.exists()) {
+  //       dbFiles =
+  //           await directory
+  //               .list()
+  //               .where(
+  //                 (entity) =>
+  //                     entity is File &&
+  //                     pathLib
+  //                         .basename(entity.path)
+  //                         .startsWith('_collection_') &&
+  //                     pathLib.basename(entity.path).endsWith('.db'),
+  //               )
+  //               .toList();
+  //     }
+  //   } catch (e) {
+  //     print("Error scanning directory for DB file: $e");
+  //     if (!mounted) return; // Check mount status after async gap
+  //     ScaffoldMessenger.of(
+  //       context,
+  //     ).showSnackBar(SnackBar(content: Text('Error scanning folder: $e')));
+  //     return;
+  //   }
 
-    try {
-      if (await directory.exists()) {
-        dbFiles =
-            await directory
-                .list()
-                .where(
-                  (entity) =>
-                      entity is File &&
-                      pathLib
-                          .basename(entity.path)
-                          .startsWith('_collection_') &&
-                      pathLib.basename(entity.path).endsWith('.db'),
-                )
-                .toList();
-      }
-    } catch (e) {
-      print("Error scanning directory for DB file: $e");
-      if (!mounted) return; // Check mount status after async gap
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error scanning folder: $e')));
-      return;
-    }
+  //   if (dbFiles.length == 1) {
+  //     detectedDbPath = dbFiles.first.path;
+  //     // Extract suggested name from filename: _collection_MyName.db -> MyName
+  //     String baseName = pathLib.basenameWithoutExtension(
+  //       detectedDbPath,
+  //     ); // _collection_MyName
+  //     if (baseName.startsWith('_collection_')) {
+  //       suggestedName = baseName
+  //           .substring('_collection_'.length)
+  //           .replaceAll('_', ' ');
+  //     } else {
+  //       suggestedName = baseName.replaceAll(
+  //         '_',
+  //         ' ',
+  //       ); // Fallback if prefix missing
+  //     }
+  //     print("Detected DB: $detectedDbPath, Suggested Name: $suggestedName");
+  //   } else if (dbFiles.isEmpty) {
+  //     print("No collection DB file found in $selectedFolderPath");
+  //     if (!mounted) return;
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       const SnackBar(
+  //         content: Text(
+  //           'No collection database (_collection_*.db) found in the selected folder.',
+  //         ),
+  //       ),
+  //     );
+  //     return;
+  //   } else {
+  //     print("Multiple collection DB files found in $selectedFolderPath");
+  //     if (!mounted) return;
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       const SnackBar(
+  //         content: Text(
+  //           'Multiple collection databases found. Please ensure only one exists.',
+  //         ),
+  //       ),
+  //     );
+  //     return;
+  //   }
 
-    if (dbFiles.length == 1) {
-      detectedDbPath = dbFiles.first.path;
-      // Extract suggested name from filename: _collection_MyName.db -> MyName
-      String baseName = pathLib.basenameWithoutExtension(
-        detectedDbPath,
-      ); // _collection_MyName
-      if (baseName.startsWith('_collection_')) {
-        suggestedName = baseName
-            .substring('_collection_'.length)
-            .replaceAll('_', ' ');
-      } else {
-        suggestedName = baseName.replaceAll(
-          '_',
-          ' ',
-        ); // Fallback if prefix missing
-      }
-      print("Detected DB: $detectedDbPath, Suggested Name: $suggestedName");
-    } else if (dbFiles.isEmpty) {
-      print("No collection DB file found in $selectedFolderPath");
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No collection database (_collection_*.db) found in the selected folder.',
-          ),
-        ),
-      );
-      return;
-    } else {
-      print("Multiple collection DB files found in $selectedFolderPath");
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Multiple collection databases found. Please ensure only one exists.',
-          ),
-        ),
-      );
-      return;
-    }
+  //   // 3. Confirm/Get Name via Dialog
+  //   final TextEditingController nameController = TextEditingController(
+  //     text: suggestedName ?? '',
+  //   );
+  //   // Check mount status before showing dialog
+  //   if (!mounted) return;
+  //   final String? confirmedName = await showDialog<String>(
+  //     context: context,
+  //     builder:
+  //         (dialogContext) => AlertDialog(
+  //           title: const Text('Confirm Collection Name'),
+  //           content: TextField(
+  //             controller: nameController,
+  //             autofocus: true,
+  //             decoration: const InputDecoration(labelText: 'Collection Name'),
+  //           ),
+  //           actions: [
+  //             TextButton(
+  //               onPressed: () => Navigator.pop(dialogContext),
+  //               child: const Text('Cancel'),
+  //             ),
+  //             TextButton(
+  //               onPressed: () {
+  //                 final name = nameController.text.trim();
+  //                 if (name.isNotEmpty) {
+  //                   Navigator.pop(dialogContext, name);
+  //                 } else {
+  //                   ScaffoldMessenger.of(dialogContext).showSnackBar(
+  //                     const SnackBar(content: Text('Name cannot be empty.')),
+  //                   );
+  //                 }
+  //               },
+  //               child: const Text('Add'),
+  //             ),
+  //           ],
+  //         ),
+  //   );
 
-    // 3. Confirm/Get Name via Dialog
-    final TextEditingController nameController = TextEditingController(
-      text: suggestedName ?? '',
-    );
-    // Check mount status before showing dialog
-    if (!mounted) return;
-    final String? confirmedName = await showDialog<String>(
-      context: context,
-      builder:
-          (dialogContext) => AlertDialog(
-            title: const Text('Confirm Collection Name'),
-            content: TextField(
-              controller: nameController,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: 'Collection Name'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () {
-                  final name = nameController.text.trim();
-                  if (name.isNotEmpty) {
-                    Navigator.pop(dialogContext, name);
-                  } else {
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      const SnackBar(content: Text('Name cannot be empty.')),
-                    );
-                  }
-                },
-                child: const Text('Add'),
-              ),
-            ],
-          ),
-    );
+  //   nameController.dispose(); // Dispose controller
 
-    nameController.dispose(); // Dispose controller
-
-    // 4. Dispatch Event if name confirmed
-    if (confirmedName != null && confirmedName.isNotEmpty) {
-      if (!mounted) return; // Check mount status again
-      context.read<CollectionManagementBloc>().add(
-        AddExistingSharedCollection(
-          name: confirmedName,
-          rootPath: selectedFolderPath, // The folder user selected
-          dbPath: detectedDbPath!, // The detected DB file path
-        ),
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added collection: $confirmedName')),
-      );
-    }
-  }
+  //   // 4. Dispatch Event if name confirmed
+  //   if (confirmedName != null && confirmedName.isNotEmpty) {
+  //     if (!mounted) return; // Check mount status again
+  //     context.read<CollectionManagementBloc>().add(
+  //       AddExistingSharedCollection(
+  //         name: confirmedName,
+  //         rootPath: selectedFolderPath, // The folder user selected
+  //         dbPath: detectedDbPath!, // The detected DB file path
+  //       ),
+  //     );
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       SnackBar(content: Text('Added collection: $confirmedName')),
+  //     );
+  //   }
+  // }
 
   // --- Dialog for Deleting Collection ---
   void _showDeleteConfirmationDialog(
@@ -394,6 +581,54 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildCollectionOptionCard({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    required String description,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      elevation: 2.0,
+      clipBehavior: Clip.antiAlias, // Clip content to card shape
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min, // Take minimum vertical space
+            crossAxisAlignment:
+                CrossAxisAlignment.center, // Center items horizontally
+            children: [
+              Icon(
+                icon,
+                size: 40.0,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                description,
+                style: Theme.of(context).textTheme.bodySmall,
+                textAlign: TextAlign.center,
+                // Optional: Limit lines if description gets too long
+                // maxLines: 3,
+                // overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -534,44 +769,65 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         tooltip: 'New Collection',
+        // Inside the FloatingActionButton's onPressed in lib/screens/collection_manager_screen.dart
         onPressed: () {
-          // Show options to create local or shared
           showModalBottomSheet(
             context: context,
             builder: (sheetContext) {
-              return Wrap(
-                children: <Widget>[
-                  ListTile(
-                    leading: const Icon(Icons.folder_outlined),
-                    title: const Text('Create New Local Collection'),
-                    onTap: () {
-                      Navigator.pop(sheetContext); // Close bottom sheet
-                      _showCreateCollectionDialog(isShared: false);
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.folder_shared_outlined),
-                    title: const Text('Create New Shared Collection'),
-                    onTap: () {
-                      Navigator.pop(sheetContext); // Close bottom sheet
-                      _showCreateCollectionDialog(isShared: true);
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(
-                      Icons.drive_folder_upload_outlined,
-                    ), // Example Icon
-                    title: const Text('Add Existing Shared Collection'),
-                    onTap: () {
-                      Navigator.pop(sheetContext); // Close bottom sheet
-                      _addExistingSharedCollection(); // Call the new handler logic
-                    },
-                  ),
-                ],
+              return Container(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Create a Collection', // Updated title slightly
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        // --- Option 1: Local Collection ---
+                        Expanded(
+                          child: _buildCollectionOptionCard(
+                            context: sheetContext,
+                            icon: Icons.folder_outlined,
+                            title: 'New Local Collection',
+                            description:
+                                'Private collection stored only on this device.',
+                            onTap: () {
+                              Navigator.pop(sheetContext);
+                              _showCreateCollectionDialog(isShared: false);
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+
+                        // --- Option 2: Shared Collection ---
+                        Expanded(
+                          child: _buildCollectionOptionCard(
+                            context: sheetContext,
+                            icon: Icons.folder_shared_outlined,
+                            title: 'New Shared Collection',
+                            description:
+                                'Collection in a folder, usable across devices (detects existing DB).', // Updated description
+                            onTap: () {
+                              Navigator.pop(sheetContext);
+                              _showCreateCollectionDialog(isShared: true);
+                            },
+                          ),
+                        ),
+                        // --- REMOVED Option 3 ---
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                ),
               );
             },
           );
-        },
+        }, // End onPressed
         child: const Icon(Icons.add),
       ),
     );
