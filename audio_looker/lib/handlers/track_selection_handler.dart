@@ -258,14 +258,14 @@ class TrackSelectionHandler {
     }
 
     if (needsLoad) {
-      bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
-      Future.delayed(const Duration(milliseconds: 150), () {
-        final postDelayState = bloc.state;
-        if (postDelayState is AudioPlayerLoaded &&
-            postDelayState.currentSource == track.path) {
-          bloc.add(PlayAudio());
-        }
-      });
+      // Dispatch LoadAudio with the new flag set to true
+      bloc.add(
+        LoadAudio(
+          source: track.path,
+          isUrl: track.isUrl,
+          playWhenReady: true, // <<< TELL THE BLOC TO PLAY
+        ),
+      );
     } else {
       if (togglePlay) {
         if (currentBlocState is AudioPlayerLoaded &&

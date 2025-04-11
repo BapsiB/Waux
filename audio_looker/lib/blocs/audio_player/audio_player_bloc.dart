@@ -18,11 +18,16 @@ abstract class AudioPlayerEvent extends Equatable {
 class LoadAudio extends AudioPlayerEvent {
   final String source;
   final bool isUrl;
+  final bool playWhenReady;
 
-  const LoadAudio({required this.source, required this.isUrl});
+  const LoadAudio({
+    required this.source,
+    required this.isUrl,
+    this.playWhenReady = false,
+  });
 
   @override
-  List<Object?> get props => [source, isUrl];
+  List<Object?> get props => [source, isUrl, playWhenReady];
 }
 
 class PlayAudio extends AudioPlayerEvent {}
@@ -195,6 +200,7 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     print('🔄 Bloc: Received LoadAudio event for source: ${event.source}');
     emit(AudioPlayerLoading());
     await _cancelSubscriptions();
+    bool playWhenReady = event.playWhenReady;
 
     _loadingTimeout?.cancel();
     _loadingTimeout = Timer(const Duration(seconds: 20), () {
@@ -213,6 +219,8 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
       print(
         '🔄 Bloc: Loading audio from: ${event.source}, isUrl: ${event.isUrl}',
       );
+      // Wait for the audio service to potentially resolve the source (like YouTube URLs)
+      // and set it in the player. loadAudio itself might handle setting the player source now.
       await _audioService.loadAudio(event.source, isUrl: event.isUrl);
       print('✅ Bloc: Successfully initiated audio loading for ${event.source}');
 
@@ -237,6 +245,17 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
       print(
         '✅ Bloc: Successfully emitted initial loaded state for ${event.source}',
       );
+
+      // Check the flag *after* emitting the loaded state
+      if (playWhenReady) {
+        print('▶️ Bloc: playWhenReady is true, calling _audioService.play()');
+        // Add a small delay to allow the player to potentially reach 'ready' state,
+        // although ideally AudioService.loadAudio should complete when ready.
+        // You might need to adjust this based on player behavior.
+        await Future.delayed(const Duration(milliseconds: 50));
+        _audioService.play();
+        // The playerStateStream listener will then update the state to isPlaying: true
+      }
 
       _loadingTimeout?.cancel();
       _loadingTimeout = null;

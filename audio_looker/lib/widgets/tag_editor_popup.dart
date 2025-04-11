@@ -27,6 +27,7 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
   final ScrollController _availableTagsScrollController = ScrollController();
   String _searchTerm = '';
   late Set<String> _selectedTags;
+  // Removed _hoveredAvailableTag state variable
 
   // --- Autocomplete State ---
   String? _suggestion;
@@ -34,12 +35,10 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
   // --- End Autocomplete State ---
 
   // --- Constants for Alignment ---
-  // These values should match the TextField's decoration properties
   final EdgeInsets _textFieldPadding = const EdgeInsets.symmetric(
     horizontal: 12,
     vertical: 12,
   );
-  // Estimate or measure the space taken by the prefix icon + its internal padding
   final double _prefixIconTotalWidth = 33.0;
   // --- End Constants ---
 
@@ -64,7 +63,6 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
 
   void _onSearchChanged() {
     final currentText = _searchController.text;
-    // Use mounted check before calling setState
     if (!mounted) return;
     setState(() {
       _searchTerm = currentText.toLowerCase();
@@ -94,7 +92,6 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
-    // Use mounted check
     if (!mounted) return KeyEventResult.ignored;
     if (event is KeyDownEvent) {
       if (event.logicalKey == LogicalKeyboardKey.tab && _suggestedTag != null) {
@@ -111,7 +108,6 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
 
   void _acceptSuggestion() {
     if (_suggestedTag != null) {
-      // Use mounted check before calling setState
       if (!mounted) return;
       setState(() {
         _searchController.text = _suggestedTag!;
@@ -136,23 +132,29 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
       );
 
       if (existingTag) {
-        if (!_selectedTags.contains(tagName)) {
+        // Find the exact tag name (case-insensitive match)
+        final exactTagName =
+            collectionState.allTags
+                .firstWhere(
+                  (t) => t.name.toLowerCase() == tagName.toLowerCase(),
+                )
+                .name;
+        if (!_selectedTags.contains(exactTagName)) {
           context.read<TrackManagementBloc>().add(
-            AddTrackGeneralTag(widget.trackId, tagName),
+            AddTrackGeneralTag(widget.trackId, exactTagName),
           );
-          // Use mounted check before calling setState
           if (mounted) {
             setState(() {
-              _selectedTags.add(tagName);
+              _selectedTags.add(exactTagName);
             });
           }
         }
       } else {
+        // Create with the exact case entered by the user
         context.read<TrackManagementBloc>().add(CreateGeneralTag(tagName));
         context.read<TrackManagementBloc>().add(
           AddTrackGeneralTag(widget.trackId, tagName),
         );
-        // Use mounted check before calling setState
         if (mounted) {
           setState(() {
             _selectedTags.add(tagName);
@@ -160,7 +162,6 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
         }
       }
       _searchController.clear();
-      // Use mounted check before calling setState
       if (mounted) {
         setState(() {
           _suggestion = null;
@@ -216,7 +217,6 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
             TextButton(
               child: const Text('Set Color'),
               onPressed: () {
-                // Use mounted check before accessing context
                 if (mounted) {
                   context.read<TrackManagementBloc>().add(
                     SetGeneralTagColor(tag.name, currentColor.value),
@@ -231,6 +231,7 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
     );
   }
 
+  // <<< MODIFIED: Context menu now includes Delete >>>
   void _showTagContextMenu(BuildContext context, Tag tag) {
     showModalBottomSheet(
       context: context,
@@ -242,61 +243,66 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
               title: const Text('Set Color'),
               onTap: () {
                 Navigator.pop(ctx);
-                // Use mounted check before accessing context
                 if (mounted) {
                   _showColorPicker(context, tag);
                 }
               },
             ),
+            const Divider(height: 1), // Optional divider
             ListTile(
-              leading: Icon(Icons.delete, color: Colors.red[700]),
+              leading: Icon(
+                Icons.delete_forever,
+                color: Colors.red[700],
+              ), // Use a distinct delete icon
               title: Text(
-                'Delete "${tag.name}" Globally',
+                'Delete Tag Definition "${tag.name}"', // Clarify action
                 style: TextStyle(color: Colors.red[700]),
               ),
               onTap: () {
                 Navigator.pop(ctx);
-                // Use mounted check before accessing context
-                if (!mounted) return;
-                showDialog(
-                  context: context,
-                  builder:
-                      (confirmCtx) => AlertDialog(
-                        title: const Text('Confirm Deletion'),
-                        content: Text(
-                          'Are you sure you want to delete the tag "${tag.name}" globally? This will remove it from all tracks and cannot be undone.',
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(confirmCtx),
-                            child: const Text('Cancel'),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              Navigator.pop(confirmCtx);
-                              // Use mounted check before accessing context
-                              if (mounted) {
-                                context.read<TrackManagementBloc>().add(
-                                  DeleteGeneralTag(tag.name),
-                                );
-                                setState(() {
-                                  _selectedTags.remove(tag.name);
-                                });
-                              }
-                            },
-                            child: Text(
-                              'Delete',
-                              style: TextStyle(color: Colors.red),
-                            ),
-                          ),
-                        ],
-                      ),
-                );
+                _showDeleteConfirmationDialog(
+                  context,
+                  tag,
+                ); // Call confirmation
               },
             ),
           ],
         );
       },
+    );
+  }
+
+  // Confirmation dialog remains the same, text was already updated
+  void _showDeleteConfirmationDialog(BuildContext context, Tag tag) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder:
+          (confirmCtx) => AlertDialog(
+            title: const Text('Confirm Delete Tag Definition'),
+            content: Text(
+              'Are you sure you want to delete the tag definition "${tag.name}"? This will remove it from the available tags list but will NOT remove it from tracks where it is already assigned.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(confirmCtx),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(confirmCtx);
+                  if (!mounted) return;
+                  context.read<TrackManagementBloc>().add(
+                    DeleteGeneralTag(tag.name),
+                  );
+                },
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
     );
   }
 
@@ -313,9 +319,11 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
             : Colors.black;
     final bool showAsSelected = _selectedTags.contains(tag.name);
 
-    return InkWell(
+    // <<< MODIFIED: Use GestureDetector for secondary tap >>>
+    return GestureDetector(
+      key: ValueKey('tag_gesture_${tag.name}'), // Key for GestureDetector
+      // Primary tap action (add/remove from track)
       onTap: () {
-        // Use mounted check before calling setState or accessing context
         if (!mounted) return;
         if (showAsSelected) {
           context.read<TrackManagementBloc>().add(
@@ -334,25 +342,23 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
         }
         FocusScope.of(context).requestFocus(_searchFocusNode);
       },
-      onLongPress:
+      // Secondary tap action (right-click) for context menu in available section
+      onSecondaryTap:
           isAvailableSection
               ? () {
-                // Use mounted check before accessing context
-                if (mounted) {
-                  _showTagContextMenu(context, tag);
-                }
+                if (mounted) _showTagContextMenu(context, tag);
               }
               : null,
-      borderRadius: BorderRadius.circular(15.0),
       child: Container(
+        // Use Container for decoration
         padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 5.0),
         decoration: BoxDecoration(
           color: tagColor.withOpacity(showAsSelected ? 1.0 : 0.7),
           borderRadius: BorderRadius.circular(15.0),
-          border:
-              showAsSelected && isAvailableSection
-                  ? Border.all(color: Colors.white, width: 1.5)
-                  : null,
+          // border:
+          //     showAsSelected && isAvailableSection
+          //         ? Border.all(color: Colors.white, width: 1.5)
+          //         : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -361,6 +367,7 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
               Icon(Icons.check_circle_outline, size: 14, color: textColor),
             if (showAsSelected && isAvailableSection) const SizedBox(width: 4),
             Text(tag.name, style: TextStyle(color: textColor, fontSize: 13)),
+            // Remove icon only shown for assigned tags (handled by onTap now)
             if (!isAvailableSection) const SizedBox(width: 4),
             if (!isAvailableSection)
               Icon(Icons.cancel, size: 14, color: textColor.withOpacity(0.8)),
@@ -373,11 +380,12 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
   @override
   Widget build(BuildContext context) {
     return KeyboardListener(
-      focusNode: FocusNode(),
+      focusNode: FocusNode(), // Use a local FocusNode for the listener
       onKeyEvent: (event) => _handleKeyEvent(_searchFocusNode, event),
       child: BlocBuilder<TrackManagementBloc, TrackManagementState>(
         builder: (context, state) {
           if (state is! TrackManagementLoaded) {
+            // Handle loading or error states if necessary, or show previous state
             return const Dialog(
               child: Padding(
                 padding: EdgeInsets.all(20.0),
@@ -388,17 +396,31 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
             );
           }
 
+          // --- Data Extraction ---
           final allTags = state.allTags;
+          // Sort available tags alphabetically for consistent display
+          final availableTagsSorted = List<Tag>.from(allTags)..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
+
           final filteredAvailableTags =
-              allTags
+              availableTagsSorted
                   .where((tag) => tag.name.toLowerCase().contains(_searchTerm))
                   .toList();
-          final assignedTags =
-              allTags.where((tag) => _selectedTags.contains(tag.name)).toList();
 
+          // Get assigned tags based on current _selectedTags set, preserving order if needed
+          final assignedTags =
+              availableTagsSorted // Filter from the same sorted list
+                  .where((tag) => _selectedTags.contains(tag.name))
+                  .toList();
+
+          // --- UI Styles ---
           final textStyle =
-              Theme.of(context).textTheme.titleMedium ?? const TextStyle();
-          final suggestionStyle = textStyle.copyWith(color: Colors.grey[400]);
+              Theme.of(context).textTheme.bodyLarge ??
+              const TextStyle(); // Use bodyLarge for text field
+          final suggestionStyle = textStyle.copyWith(
+            color: Colors.grey[500],
+          ); // Lighter grey for suggestion
 
           // Calculate the exact padding needed for the suggestion overlay
           final suggestionPadding = EdgeInsets.only(
@@ -412,9 +434,10 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
 
           return AlertDialog(
             title: const Text('Edit Track Tags'),
+            // Constrain content size
             content: SizedBox(
-              width: 400,
-              height: 500,
+              width: 450, // Slightly wider? Adjust as needed
+              height: 550, // Slightly taller? Adjust as needed
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -431,45 +454,61 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                             TextField(
                               controller: _searchController,
                               focusNode: _searchFocusNode,
-                              style: textStyle,
+                              style: textStyle, // Use defined textStyle
                               decoration: InputDecoration(
                                 hintText: 'Search or create tag...',
                                 prefixIcon: const Icon(Icons.search, size: 20),
                                 isDense: true,
                                 border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(20),
-                                  borderSide: BorderSide.none,
+                                  borderRadius: BorderRadius.circular(
+                                    8,
+                                  ), // Standard border radius
+                                  borderSide: BorderSide(
+                                    color: Colors.grey.shade300,
+                                  ), // Subtle border
                                 ),
-                                filled: true,
-                                fillColor: Colors.white,
-                                // Use the constant padding
-                                contentPadding: _textFieldPadding,
+                                enabledBorder: OutlineInputBorder(
+                                  // Border when enabled but not focused
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(
+                                    color: Colors.grey.shade300,
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  // Border when focused
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(
+                                    color: Theme.of(context).primaryColor,
+                                    width: 1.5,
+                                  ),
+                                ),
+                                // filled: true,
+                                // fillColor:
+                                //     Colors.white, // Clean white background
+                                contentPadding:
+                                    _textFieldPadding, // Use constant padding
                               ),
                             ),
                             // --- Suggestion Text Overlay ---
                             if (_suggestion != null &&
                                 _searchFocusNode.hasFocus)
-                              // *** Use Padding for alignment ***
                               Padding(
-                                padding:
-                                    suggestionPadding, // Apply calculated padding
+                                padding: suggestionPadding,
                                 child: IgnorePointer(
                                   child: RichText(
                                     text: TextSpan(
-                                      style: textStyle, // Base style
+                                      style: textStyle, // Base style from theme
                                       children: <TextSpan>[
-                                        // Invisible part matching typed text
                                         TextSpan(
                                           text: _searchController.text,
-                                          style: TextStyle(
+                                          style: const TextStyle(
                                             color: Colors.transparent,
-                                          ), // Make it invisible
+                                          ), // Invisible part
                                         ),
-                                        // Visible suggestion part
                                         TextSpan(
                                           text: _suggestion!,
                                           style:
-                                              suggestionStyle, // Suggestion style
+                                              suggestionStyle, // Visible suggestion part
                                         ),
                                       ],
                                     ),
@@ -483,7 +522,9 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                       ),
                       // --- Add Button ---
                       IconButton(
-                        icon: const Icon(Icons.add_circle),
+                        icon: const Icon(
+                          Icons.add_circle_outline,
+                        ), // Outline icon
                         tooltip: 'Add/Create Tag',
                         color: Theme.of(context).colorScheme.primary,
                         onPressed:
@@ -502,31 +543,40 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                   ),
                   const SizedBox(height: 8),
                   Container(
-                    constraints: const BoxConstraints(maxHeight: 100),
-                    child: SingleChildScrollView(
-                      child: Wrap(
-                        spacing: 6.0,
-                        runSpacing: 6.0,
-                        children:
-                            assignedTags.isEmpty
-                                ? [
-                                  const Text(
-                                    'None',
-                                    style: TextStyle(color: Colors.grey),
-                                  ),
-                                ]
-                                : assignedTags
-                                    .map(
-                                      (tag) => _buildTagChip(
-                                        context: context,
-                                        tag: tag,
-                                        isSelected: true,
-                                        isAvailableSection: false,
-                                      ),
-                                    )
-                                    .toList(),
-                      ),
-                    ),
+                    padding: const EdgeInsets.all(8),
+                    constraints: const BoxConstraints(
+                      maxHeight: 100,
+                    ), // Limit height
+                    // decoration: BoxDecoration(
+                    //   color: Colors.grey.shade100, // Subtle background
+                    //   borderRadius: BorderRadius.circular(4),
+                    // ),
+                    child:
+                        assignedTags.isEmpty
+                            ? const Center(
+                              child: Text(
+                                'None',
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                            )
+                            : SingleChildScrollView(
+                              child: Wrap(
+                                spacing: 6.0,
+                                runSpacing: 6.0,
+                                children:
+                                    assignedTags
+                                        .map(
+                                          (tag) => _buildTagChip(
+                                            context: context,
+                                            tag: tag,
+                                            isSelected:
+                                                true, // Always selected in this section
+                                            isAvailableSection: false,
+                                          ),
+                                        )
+                                        .toList(),
+                              ),
+                            ),
                   ),
 
                   const Divider(height: 25, thickness: 1),
@@ -545,17 +595,23 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                                 _searchTerm.isEmpty
                                     ? 'No tags created yet.'
                                     : 'No matching tags found.',
-                                style: TextStyle(color: Colors.grey),
+                                style: const TextStyle(color: Colors.grey),
                               ),
                             )
                             : Scrollbar(
+                              // Add Scrollbar
                               controller: _availableTagsScrollController,
-                              thumbVisibility: true,
+                              thumbVisibility:
+                                  true, // Make scrollbar always visible
                               child: SingleChildScrollView(
                                 controller: _availableTagsScrollController,
+                                padding: const EdgeInsets.only(
+                                  right: 8,
+                                  bottom: 10,
+                                ), // Padding for scrollbar and bottom space
                                 child: Wrap(
-                                  spacing: 6.0,
-                                  runSpacing: 6.0,
+                                  spacing: 6.0, // Horizontal space
+                                  runSpacing: 6.0, // Vertical space
                                   children:
                                       filteredAvailableTags
                                           .map(
