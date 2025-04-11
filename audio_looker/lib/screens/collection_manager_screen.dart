@@ -781,7 +781,7 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Create a Collection', // Updated title slightly
+                      'Create a Collection',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 16),
@@ -794,8 +794,10 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
                             context: sheetContext,
                             icon: Icons.folder_outlined,
                             title: 'New Local Collection',
+                            // --- MODIFIED Description ---
                             description:
-                                'Private collection stored only on this device.',
+                                'Private collection stored on this device. Can include tracks from multiple different folders.',
+                            // --- END MODIFICATION ---
                             onTap: () {
                               Navigator.pop(sheetContext);
                               _showCreateCollectionDialog(isShared: false);
@@ -810,15 +812,16 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
                             context: sheetContext,
                             icon: Icons.folder_shared_outlined,
                             title: 'New Shared Collection',
+                            // --- MODIFIED Description ---
                             description:
-                                'Collection in a folder, usable across devices (detects existing DB).', // Updated description
+                                'Stored in one folder, usable across devices (via cloud sync). Cannot link files outside its folder.',
+                            // --- END MODIFICATION ---
                             onTap: () {
                               Navigator.pop(sheetContext);
                               _showCreateCollectionDialog(isShared: true);
                             },
                           ),
                         ),
-                        // --- REMOVED Option 3 ---
                       ],
                     ),
                     const SizedBox(height: 16),
