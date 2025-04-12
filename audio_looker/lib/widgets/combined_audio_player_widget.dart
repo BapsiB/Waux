@@ -3,12 +3,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'dart:async'; // For Timer
+import 'dart:math' as math; // For finding next/prev tag
 
 // Import BLoCs and Services/Models
 import '../blocs/audio_player/audio_player_bloc.dart';
 import '../blocs/track_management/track_management_bloc.dart'; // Keep for collection state access
 import '../services/collection_service.dart'; // Keep for Track and Tag models
-// import '../services/audio_service.dart'; // AudioService likely not needed directly here
+import '../services/audio_service.dart'; // Needed for AudioTag definition
 
 // Import UI components
 import 'waveform_painter.dart';
@@ -18,16 +19,14 @@ class CombinedAudioPlayerWidget extends StatefulWidget {
   final Track track;
   final bool isMinimized;
   final VoidCallback onToggle;
-  // *** ADDED CALLBACKS ***
-  final VoidCallback? onPreviousPressed;
-  final VoidCallback? onNextPressed;
+  final VoidCallback? onPreviousPressed; // Keep for track skipping
+  final VoidCallback? onNextPressed; // Keep for track skipping
 
   const CombinedAudioPlayerWidget({
     Key? key,
     required this.track,
     required this.isMinimized,
     required this.onToggle,
-    // *** ADDED CALLBACKS TO CONSTRUCTOR ***
     this.onPreviousPressed,
     this.onNextPressed,
   }) : super(key: key);
@@ -37,7 +36,6 @@ class CombinedAudioPlayerWidget extends StatefulWidget {
       _CombinedAudioPlayerWidgetState();
 }
 
-// ADDED SingleTickerProviderStateMixin
 class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     with SingleTickerProviderStateMixin {
   // --- Animation State (Managed Internally) ---
@@ -328,8 +326,39 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     final position = playerState.position;
     final waveformData = playerState.waveformData;
     final timeTags = playerState.tags;
-    final canPrevious = duration > Duration.zero;
-    final canNext = duration > Duration.zero;
+    final canPreviousTrack =
+        widget.onPreviousPressed != null; // Check if callback exists
+    final canNextTrack =
+        widget.onNextPressed != null; // Check if callback exists
+
+    // --- Timestamp Navigation Logic ---
+    final currentPositionFraction =
+        duration > Duration.zero
+            ? (position.inMilliseconds / duration.inMilliseconds).clamp(
+              0.0,
+              1.0,
+            )
+            : 0.0;
+
+    // Find the timestamp immediately before the current position
+    AudioTag? previousTag =
+        timeTags
+            .where(
+              (tag) => tag.position < currentPositionFraction - 0.01,
+            ) // Add tolerance
+            .lastOrNull;
+
+    // Find the timestamp immediately after the current position
+    AudioTag? nextTag =
+        timeTags
+            .where(
+              (tag) => tag.position > currentPositionFraction + 0.01,
+            ) // Add tolerance
+            .firstOrNull;
+
+    final bool canGoToPreviousTag = previousTag != null;
+    final bool canGoToNextTag = nextTag != null;
+    // --- End Timestamp Navigation Logic ---
 
     // Get general tags for the current track from collection state
     List<String> currentGeneralTags = [];
@@ -649,40 +678,19 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              // --- Previous Track Button ---
               IconButton(
-                icon: const Icon(Icons.replay_10),
-                iconSize: 32,
-                tooltip: 'Rewind 10 seconds',
-                onPressed:
-                    duration == Duration.zero
-                        ? null
-                        : () {
-                          final bloc = context.read<AudioPlayerBloc>();
-                          final newPos = position - const Duration(seconds: 10);
-                          bloc.add(
-                            SeekAudio(
-                              position:
-                                  newPos < Duration.zero
-                                      ? Duration.zero
-                                      : newPos,
-                            ),
-                          );
-                        },
-              ),
-              const SizedBox(width: 10), // Spacing
-              // *** ADDED Previous Button ***
-              IconButton(
-                icon: const Icon(Icons.skip_previous),
+                icon: const Icon(Icons.fast_rewind), // Use track skip icon
                 iconSize: 40,
+                tooltip: 'Previous Track',
                 color:
-                    canPrevious
+                    canPreviousTrack
                         ? Theme.of(context).colorScheme.onSurface
                         : Theme.of(context).disabledColor,
-                onPressed: canPrevious ? widget.onPreviousPressed : null,
-                tooltip: 'Previous Track',
+                onPressed: canPreviousTrack ? widget.onPreviousPressed : null,
               ),
               const SizedBox(width: 10), // Spacing
-              // Play/Pause Button
+              // --- Play/Pause Button ---
               FloatingActionButton(
                 tooltip: isPlaying ? 'Pause' : 'Play',
                 onPressed:
@@ -707,45 +715,46 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 child: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
               ),
               const SizedBox(width: 10), // Spacing
-              // *** ADDED Next Button ***
+              // --- Next Track Button ---
               IconButton(
-                icon: const Icon(Icons.skip_next),
+                icon: const Icon(Icons.fast_forward), // Use track skip icon
                 iconSize: 40,
+                tooltip: 'Next Track',
                 color:
-                    canNext
+                    canNextTrack
                         ? Theme.of(context).colorScheme.onSurface
                         : Theme.of(context).disabledColor,
-                onPressed: canNext ? widget.onNextPressed : null,
-                tooltip: 'Next Track',
+                onPressed: canNextTrack ? widget.onNextPressed : null,
               ),
-              const SizedBox(width: 10), // Spacing
-
+              const SizedBox(width: 20), // Add some space before the tag button
+              // +++ ADDED: Add Time Tag Button (Icon only) +++
               IconButton(
-                icon: const Icon(Icons.forward_10),
-                iconSize: 32,
-                tooltip: 'Forward 10 seconds',
+                icon: const Icon(Icons.bookmark_add_outlined),
+                tooltip: 'Add Time Tag at Current Position',
+                iconSize: 28, // Adjust size as needed
+                color: Theme.of(context).colorScheme.secondary, // Example color
                 onPressed:
-                    duration == Duration.zero
+                    duration ==
+                            Duration
+                                .zero // Disable if no duration
                         ? null
                         : () {
-                          final bloc = context.read<AudioPlayerBloc>();
-                          final newPos = position + const Duration(seconds: 10);
-                          bloc.add(
-                            SeekAudio(
-                              position: newPos > duration ? duration : newPos,
-                            ),
-                          );
+                          if (mounted) {
+                            setState(() {
+                              _isTimeTaggingMode = true;
+                            });
+                          }
                         },
               ),
+              // --- End Added Button ---
             ],
           ),
           const SizedBox(height: 16),
 
-          // --- Time-based Tagging Controls (Expanded View) ---
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child:
-                _isTimeTaggingMode
+                _isTimeTaggingMode // Keep the text field row logic
                     ? Row(
                       children: [
                         Expanded(
@@ -782,24 +791,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                         ),
                       ],
                     )
-                    : ElevatedButton.icon(
-                      icon: const Icon(Icons.bookmark_add_outlined),
-                      label: const Text('Add Time Tag at Current Position'),
-                      onPressed:
-                          duration == Duration.zero
-                              ? null
-                              : () {
-                                setState(() {
-                                  _isTimeTaggingMode = true;
-                                });
-                              },
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(
-                          double.infinity,
-                          40,
-                        ), // Slightly smaller
-                      ),
-                    ),
+                    // --- REMOVED ElevatedButton.icon, replaced with SizedBox.shrink() ---
+                    : const SizedBox.shrink(), // Show nothing when not tagging
           ),
 
           // --- Notes Section (Reused from AudioPlayerWidget structure) ---
