@@ -1,0 +1,74 @@
+// lib/blocs/track_data/track_data_event.dart
+
+part of 'track_data_bloc.dart';
+
+abstract class TrackDataEvent extends Equatable {
+  const TrackDataEvent();
+  @override
+  List<Object?> get props => [];
+}
+
+/// Event to load tracks and root folders for the active collection.
+class LoadTracks extends TrackDataEvent {}
+
+/// Event to reload track/folder data, preserving current filters.
+class ReloadDataPreservingFilters extends TrackDataEvent {}
+
+/// Event to search tracks within the active collection.
+class SearchTracks extends TrackDataEvent {
+  final String query;
+  const SearchTracks(this.query);
+  @override
+  List<Object?> get props => [query];
+}
+
+/// Event to set the minimum rating filter.
+class SetRatingFilter extends TrackDataEvent {
+  final int? rating; // Nullable to represent "All"
+  const SetRatingFilter(this.rating);
+  @override
+  List<Object?> get props => [rating];
+}
+
+/// Event to trigger synchronization of files within root folders.
+class SyncFolders extends TrackDataEvent {}
+
+/// Event to add tracks from a list of file paths.
+class AddTracks extends TrackDataEvent {
+  final List<String> filePaths;
+  const AddTracks(this.filePaths);
+  @override
+  List<Object> get props => [filePaths];
+}
+
+/// Event to add a track from a URL.
+class AddTrackUrl extends TrackDataEvent {
+  final String url;
+  const AddTrackUrl(this.url);
+  @override
+  List<Object?> get props => [url];
+}
+
+/// Event to remove a track by its ID.
+class RemoveTrack extends TrackDataEvent {
+  final int trackId;
+  const RemoveTrack(this.trackId);
+  @override
+  List<Object?> get props => [trackId];
+}
+
+/// Event to add a root folder (for local collections).
+class AddRootFolder extends TrackDataEvent {
+  final String folderPath;
+  const AddRootFolder(this.folderPath);
+  @override
+  List<Object> get props => [folderPath];
+}
+
+/// Event to remove a root folder (for local collections).
+class RemoveRootFolder extends TrackDataEvent {
+  final String folderPath;
+  const RemoveRootFolder(this.folderPath);
+  @override
+  List<Object> get props => [folderPath];
+}

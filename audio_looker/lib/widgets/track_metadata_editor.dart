@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:audio_looker/blocs/track_management/track_management_bloc.dart';
+import 'package:audio_looker/blocs/track_management/track_metadata_bloc.dart';
+//           value: playlistService, // Provide PlaylistService
 import 'package:audio_looker/services/collection_service.dart';
 
 class TrackMetadataEditor extends StatefulWidget {
@@ -62,7 +63,7 @@ class _TrackMetadataEditorState extends State<TrackMetadataEditor> {
               ),
               onChanged: (value) {
                 // Update comment in real-time
-                BlocProvider.of<TrackManagementBloc>(
+                BlocProvider.of<TrackMetadataBloc>(
                   context,
                 ).add(UpdateTrackComment(widget.track.id!, value));
               },
@@ -87,7 +88,7 @@ class _TrackMetadataEditorState extends State<TrackMetadataEditor> {
                     label: Text(tag),
                     deleteIcon: const Icon(Icons.close, size: 18),
                     onDeleted: () {
-                      BlocProvider.of<TrackManagementBloc>(
+                      BlocProvider.of<TrackMetadataBloc>(
                         context,
                       ).add(RemoveTrackGeneralTag(widget.track.id!, tag));
                     },
@@ -113,7 +114,7 @@ class _TrackMetadataEditorState extends State<TrackMetadataEditor> {
                 ElevatedButton(
                   onPressed: () {
                     if (_tagController.text.isNotEmpty) {
-                      BlocProvider.of<TrackManagementBloc>(context).add(
+                      BlocProvider.of<TrackMetadataBloc>(context).add(
                         AddTrackGeneralTag(
                           widget.track.id!,
                           _tagController.text,
@@ -149,7 +150,7 @@ class _TrackMetadataEditorState extends State<TrackMetadataEditor> {
               ),
               onPressed: () {
                 // Update rating (index + 1 because rating is 1-5)
-                BlocProvider.of<TrackManagementBloc>(
+                BlocProvider.of<TrackMetadataBloc>(
                   context,
                 ).add(UpdateTrackRating(widget.track.id!, index + 1));
               },

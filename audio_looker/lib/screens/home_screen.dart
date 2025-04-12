@@ -5,22 +5,34 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
-import 'package:audio_looker/blocs/track_management/track_management_bloc.dart';
-import 'package:audio_looker/blocs/collection_management/collection_management_bloc.dart';
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
-import 'package:audio_looker/blocs/playlist/playlist_bloc.dart';
-import 'package:audio_looker/services/collection_service.dart';
-import 'package:audio_looker/models/playlist.dart';
-import 'package:audio_looker/widgets/playlist_drawer.dart';
-import 'package:audio_looker/widgets/folder_tree_view.dart';
-import 'package:audio_looker/widgets/track_table_widget.dart';
-import 'package:audio_looker/widgets/combined_audio_player_widget.dart';
-import 'package:audio_looker/handlers/track_selection_handler.dart';
-import 'package:audio_looker/handlers/context_menu_handler.dart';
-import 'package:audio_looker/handlers/file_handler.dart';
-import 'package:audio_looker/handlers/player_control_handler.dart';
-import 'package:audio_looker/screens/collection_manager_screen.dart';
-import 'package:audio_looker/widgets/rating_filter_widget.dart';
+
+// Import BLoCs
+import '../blocs/collection_management/collection_management_bloc.dart';
+import '../blocs/audio_player/audio_player_bloc.dart';
+import '../blocs/playlist/playlist_bloc.dart';
+import '../blocs/track_management/track_data_bloc.dart'; // <<< CHANGED: Import new BLoC
+import '../blocs/track_management/track_metadata_bloc.dart'; // <<< ADDED: Import new BLoC
+// import '../blocs/track_management/track_management_bloc.dart'; // <<< REMOVED: Old BLoC
+
+// Import Services and Models
+import '../services/collection_service.dart'; // Keep for Track, Tag, CollectionDefinition models
+import '../models/playlist.dart';
+
+// Import Widgets
+import '../widgets/playlist_drawer.dart';
+import '../widgets/folder_tree_view.dart';
+import '../widgets/track_table_widget.dart';
+import '../widgets/combined_audio_player_widget.dart';
+import '../widgets/rating_filter_widget.dart';
+
+// Import Handlers (already adapted in previous steps)
+import '../handlers/track_selection_handler.dart';
+import '../handlers/context_menu_handler.dart';
+import '../handlers/file_handler.dart';
+import '../handlers/player_control_handler.dart';
+
+// Import Other Screens
+import 'collection_manager_screen.dart';
 
 // Define view mode enum
 enum ViewMode { list, tree }
@@ -33,7 +45,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // State variables
+  // State variables (mostly unchanged)
   final TextEditingController _searchController = TextEditingController();
   Track? _selectedTrackForPlayer;
   ViewMode _viewMode = ViewMode.list;
@@ -56,9 +68,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Playlist? _currentlySelectedPlaylist;
   bool _isMinimized = true;
   String? _currentlyLoadedPathInPlayer;
-  int? _selectedMinimumRating;
+  // int? _selectedMinimumRating; // This is now managed within TrackDataBloc state
 
-  // Create handler instances lazily
+  // Handlers (will be initialized in didChangeDependencies)
   late TrackSelectionHandler _trackSelectionHandler;
   late ContextMenuHandler _contextMenuHandler;
   late FileHandler _fileHandler;
@@ -68,7 +80,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
 
-    // Initial data loading
+    // Initial data loading for other BLoCs
     context.read<CollectionManagementBloc>().add(LoadCollectionList());
     context.read<PlaylistBloc>().add(LoadPlaylists());
 
@@ -76,34 +88,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Set up listeners
     _setupAudioPlayerListener();
-    _setupCollectionListener();
+    _setupCollectionListener(); // This will now trigger TrackDataBloc
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-
-    // Initialize handlers when context is ready
+    // Initialize handlers when context is ready and potentially update them if dependencies change
     _initializeHandlers();
   }
 
+  // Initialize or update handlers based on current state
   void _initializeHandlers() {
+    // Read the current rating filter from TrackDataBloc state
+    final trackDataState = context.read<TrackDataBloc>().state;
+    int? currentMinimumRating;
+    if (trackDataState is TrackDataLoaded) {
+      currentMinimumRating = trackDataState.minimumRating;
+    } else if (trackDataState is TrackDataLoading) {
+      currentMinimumRating = trackDataState.minimumRating;
+    }
+
     _trackSelectionHandler = TrackSelectionHandler(
       context: context,
       selectedTrackIds: _selectedTrackIds,
       anchorTrackId: _anchorTrackId,
       selectedTrackForPlayer: _selectedTrackForPlayer,
-      currentlyLoadedPathInPlayer: _currentlyLoadedPathInPlayer,
+      // currentlyLoadedPathInPlayer: _currentlyLoadedPathInPlayer, // Not directly needed by handler?
       sortColumnName: _sortColumnName,
       sortDirectionSf: _sortDirectionSf,
       currentlySelectedPlaylist: _currentlySelectedPlaylist,
+      // Pass the rating filter obtained from TrackDataBloc state if needed by handler logic
+      // minimumRating: currentMinimumRating, // Pass if handler needs it directly
     );
 
     _contextMenuHandler = ContextMenuHandler(
       context: context,
       selectedTrackIds: _selectedTrackIds,
-      onSelectionChanged: _handleSelectionChanged,
-      onPlayTrack: _selectAndPlayTrack,
+      onSelectionChanged: _handleSelectionChanged, // Pass the method reference
+      onPlayTrack: _selectAndPlayTrack, // Pass the method reference
     );
 
     _fileHandler = FileHandler(
@@ -114,11 +137,13 @@ class _HomeScreenState extends State<HomeScreen> {
     _playerControlHandler = PlayerControlHandler(
       context: context,
       selectedTrackForPlayer: _selectedTrackForPlayer,
+      // Pass the function that gets the *currently displayed* tracks from the handler itself
       getCurrentDisplayedTracksFn:
-          () => _trackSelectionHandler.getCurrentDisplayedTracks(),
+          _trackSelectionHandler.getCurrentDisplayedTracks,
     );
   }
 
+  // Listener for Audio Player state changes (mostly unchanged)
   void _setupAudioPlayerListener() {
     context.read<AudioPlayerBloc>().stream.listen((playerState) {
       if (!mounted) return;
@@ -126,55 +151,66 @@ class _HomeScreenState extends State<HomeScreen> {
       if (playerState is AudioPlayerLoaded) {
         newPath = playerState.currentSource;
       } else if (playerState is! AudioPlayerLoading) {
+        // Clear path if stopped, error, or initial
         newPath = null;
       }
+      // Only update state if the path actually changed
       if (_currentlyLoadedPathInPlayer != newPath) {
         setState(() {
           _currentlyLoadedPathInPlayer = newPath;
         });
+        _initializeHandlers(); // Re-initialize handlers if player path changes
       }
     });
   }
 
+  // Listener for Collection Management state changes
   void _setupCollectionListener() {
     context.read<CollectionManagementBloc>().stream.listen((collectionState) {
-      if (!mounted) return; // Ensure widget is still mounted
+      if (!mounted) return;
 
-      // Check if the state indicates a collection is successfully loaded and active
       if (collectionState is CollectionManagementLoaded &&
           collectionState.activeCollectionDefinition != null) {
         final activeCollectionId =
             collectionState.activeCollectionDefinition!.id;
         print(
-          "HomeScreen Listener: Collection '${collectionState.activeCollectionDefinition!.name}' loaded (ID: $activeCollectionId).",
+          "HomeScreen Listener: Collection '${collectionState.activeCollectionDefinition!.name}' loaded (ID: $activeCollectionId). Triggering TrackDataBloc load.",
         );
 
-        // --- Trigger Loading for other BLoCs ---
-        print("HomeScreen Listener: Reloading playlists.");
+        // --- Trigger Loading for TrackDataBloc and Playlists ---
+        context.read<TrackDataBloc>().add(
+          LoadTracks(),
+        ); // <<< CHANGED: Dispatch to TrackDataBloc
         context.read<PlaylistBloc>().add(LoadPlaylists());
 
-        print("HomeScreen Listener: Reloading tracks and folders.");
-        context.read<TrackManagementBloc>().add(
-          LoadTracksForActiveCollection(),
-        );
-
-        // *** ADDED: Trigger Folder Sync ***
-        print(
-          "HomeScreen Listener: Triggering folder sync for active collection.",
-        );
-        context.read<TrackManagementBloc>().add(
-          SyncActiveCollectionFolders(),
-        ); // <<< ADD THIS DISPATCH
+        // Optionally trigger sync after load
+        // Future.delayed(const Duration(milliseconds: 500), () {
+        //   if (mounted && context.read<CollectionManagementBloc>().state == collectionState) {
+        //      context.read<TrackDataBloc>().add(SyncFolders()); // <<< CHANGED: Dispatch to TrackDataBloc
+        //   }
+        // });
       } else if (collectionState is CollectionManagementLoaded &&
           collectionState.activeCollectionDefinition == null) {
-        // Handle case where loading finished but no collection is active
         print(
           "HomeScreen Listener: Collection Management loaded, but no active collection.",
         );
-        // Clear potentially displayed tracks from previous collection
-        context.read<TrackManagementBloc>().add(
+        // Clear tracks if no collection is active
+        context.read<TrackDataBloc>().add(
           const SearchTracks(''),
-        ); // Clear search/filter
+        ); // <<< CHANGED: Dispatch to TrackDataBloc
+        context.read<PlaylistBloc>().add(
+          LoadPlaylists(),
+        ); // Reload (will likely result in empty)
+        // Clear local state related to active collection
+        setState(() {
+          _selectedTrackIds.clear();
+          _anchorTrackId = null;
+          _selectedTrackForPlayer = null;
+          _currentlySelectedPlaylistId = null;
+          _currentlySelectedPlaylist = null;
+          _searchController.clear(); // Clear search on collection change
+        });
+        _initializeHandlers(); // Re-init handlers with cleared state
       }
     });
   }
@@ -186,6 +222,8 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  // --- UI Interaction Handlers (mostly unchanged, rely on adapted handlers) ---
+
   void _handlePlayerToggle() {
     if (!mounted) return;
     setState(() {
@@ -194,18 +232,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onSearchChanged() {
-    // Check if a collection is actually loaded before searching
-    if (context.read<TrackManagementBloc>().state is TrackManagementLoaded) {
-      context.read<TrackManagementBloc>().add(
-        SearchTracks(_searchController.text),
-      );
-      setState(() {
-        _selectedTrackIds.clear();
-        _anchorTrackId = null;
-      });
-    } else {
-      print("Cannot search: No collection loaded.");
-    }
+    // Dispatch search event to TrackDataBloc
+    // <<< CHANGED: Dispatch to TrackDataBloc >>>
+    context.read<TrackDataBloc>().add(SearchTracks(_searchController.text));
+    // Clear selection when search changes
+    setState(() {
+      _selectedTrackIds.clear();
+      _anchorTrackId = null;
+      // Don't clear _selectedTrackForPlayer here, search might still contain it
+    });
+    _initializeHandlers(); // Re-init handlers
   }
 
   void _togglePlaylistPanel() {
@@ -214,76 +250,118 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // Handles selecting/deselecting a playlist filter
   void _handlePlaylistSelected(String playlistId) {
     final playlistState = context.read<PlaylistBloc>().state;
-    setState(() {
-      if (_currentlySelectedPlaylistId == playlistId) {
-        _currentlySelectedPlaylistId = null;
-        _currentlySelectedPlaylist = null;
-      } else {
-        if (playlistState is PlaylistLoaded) {
-          try {
-            _currentlySelectedPlaylist = playlistState.playlists.firstWhere(
-              (p) => p.id == playlistId,
-            );
-            _currentlySelectedPlaylistId = playlistId;
-          } catch (e) {
-            _currentlySelectedPlaylist = null;
-            _currentlySelectedPlaylistId = null;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Error: Could not select playlist.'),
-              ),
-            );
-          }
-        } else {
-          _currentlySelectedPlaylist = null;
+    Playlist? newSelectedPlaylist; // Store the actual playlist object
+
+    if (_currentlySelectedPlaylistId == playlistId) {
+      // Deselecting the current playlist
+      _currentlySelectedPlaylistId = null;
+      newSelectedPlaylist = null;
+    } else {
+      // Selecting a new playlist
+      if (playlistState is PlaylistLoaded) {
+        try {
+          newSelectedPlaylist = playlistState.playlists.firstWhere(
+            (p) => p.id == playlistId,
+          );
+          _currentlySelectedPlaylistId = playlistId;
+        } catch (e) {
+          newSelectedPlaylist = null;
           _currentlySelectedPlaylistId = null;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Playlists are still loading...')),
+            const SnackBar(content: Text('Error: Could not select playlist.')),
           );
         }
+      } else {
+        // Playlists not loaded yet
+        newSelectedPlaylist = null;
+        _currentlySelectedPlaylistId = null;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Playlists are still loading...')),
+        );
       }
-      _selectedTrackIds.clear();
+    }
+
+    setState(() {
+      _currentlySelectedPlaylist =
+          newSelectedPlaylist; // Update the stored playlist object
+      _selectedTrackIds.clear(); // Clear selection when playlist changes
       _anchorTrackId = null;
     });
 
-    // Update handlers with new state
+    // Re-initialize handlers with the new playlist selection state
     _initializeHandlers();
+
+    // Manually trigger a reload/refilter in TrackDataBloc if needed,
+    // although TrackSelectionHandler reading the new playlist state might be sufficient.
+    // If TrackDataBloc needs explicit filtering based on playlist:
+    // context.read<TrackDataBloc>().add(ApplyPlaylistFilter(newSelectedPlaylist)); // Requires adding this event/logic
   }
 
-  // void _selectAndPlayTrack(Track track) {
-  //   setState(() {
-  //     _selectedTrackForPlayer = track;
-  //     _selectedTrackIds.clear();
-  //     if (track.id != null) _selectedTrackIds.add(track.id!);
-  //     _anchorTrackId = track.id;
-  //   });
-
-  //   _initializeHandlers(); // Update handlers with new selection
-  //   _trackSelectionHandler.selectAndPlayTrack(track);
-  // }
-
-  void _selectAndOpenPlayer(Track track) {
+  // Callback for TrackSelectionHandler to update HomeScreen's state
+  void _handleSelectionStateUpdate(
+    Set<int> newSelectedIds,
+    int? newAnchorId,
+    Track? newSelectedTrackForPlayer,
+  ) {
+    bool playerSelectionChanged =
+        _selectedTrackForPlayer?.id != newSelectedTrackForPlayer?.id;
     setState(() {
-      _selectedTrackForPlayer = track;
-      _selectedTrackIds.clear();
-      if (track.id != null) _selectedTrackIds.add(track.id!);
-      _anchorTrackId = track.id;
-      _isMinimized = false; // Ensure player opens
+      _selectedTrackIds = newSelectedIds;
+      _anchorTrackId = newAnchorId;
+      _selectedTrackForPlayer = newSelectedTrackForPlayer;
     });
 
-    _initializeHandlers(); // Update handlers with new selection
-    _trackSelectionHandler.selectAndOpenPlayer(track);
+    // If the player selection changed, ensure the track is loaded (without playing)
+    if (playerSelectionChanged && newSelectedTrackForPlayer != null) {
+      _trackSelectionHandler.selectTrackForPlayer(newSelectedTrackForPlayer);
+    }
+
+    _initializeHandlers(); // Keep handlers in sync with state
   }
 
+  // Selects track, updates state, and tells handler to load (no auto-play)
   void _selectTrackForPlayer(Track track) {
     setState(() {
       _selectedTrackForPlayer = track;
+      // Ensure the selected track is also in the selection set for UI consistency
+      _selectedTrackIds = {if (track.id != null) track.id!};
+      _anchorTrackId = track.id;
     });
-
-    _initializeHandlers(); // Update handlers with new selection
+    _initializeHandlers();
     _trackSelectionHandler.selectTrackForPlayer(track);
+  }
+
+  // Selects track, updates state, and tells handler to load AND play
+  void _selectAndPlayTrack(Track track, bool shouldTogglePlay) {
+    setState(() {
+      _selectedTrackForPlayer = track;
+      _selectedTrackIds = {if (track.id != null) track.id!};
+      _anchorTrackId = track.id;
+      // If playing a new track, ensure player is expanded
+      // if (_selectedTrackForPlayer?.path != _currentlyLoadedPathInPlayer) {
+      // _isMinimized = false;
+      // }
+    });
+    _initializeHandlers();
+    _trackSelectionHandler.selectAndPlayTrack(
+      track,
+      togglePlay: shouldTogglePlay,
+    );
+  }
+
+  // Selects track, updates state, tells handler to load (no auto-play), and ensures player is open
+  void _selectAndOpenPlayer(Track track) {
+    setState(() {
+      _selectedTrackForPlayer = track;
+      _selectedTrackIds = {if (track.id != null) track.id!};
+      _anchorTrackId = track.id;
+      _isMinimized = false; // Ensure player opens
+    });
+    _initializeHandlers();
+    _trackSelectionHandler.selectAndOpenPlayer(track);
   }
 
   void _toggleViewMode() {
@@ -292,150 +370,162 @@ class _HomeScreenState extends State<HomeScreen> {
       _selectedTrackIds.clear();
       _anchorTrackId = null;
     });
+    _initializeHandlers(); // Re-init handlers for the new view
   }
 
-  // Selection handler that updates state
+  // Wrapper for selection changes coming from UI widgets (like TrackTableWidget)
   void _handleSelectionChanged(
     int trackId,
     bool isSelected, {
     bool isShiftPressed = false,
     bool isCtrlPressed = false,
   }) {
+    // Delegate the logic to the handler, providing the state update callback
     _trackSelectionHandler.handleSelectionChanged(
       trackId,
       isSelected,
       isShiftPressed: isShiftPressed,
       isCtrlPressed: isCtrlPressed,
-      onSelectionStateChanged: (newSelectedIds, newAnchorId, newSelectedTrack) {
-        setState(() {
-          _selectedTrackIds = Set<int>.from(newSelectedIds);
-
-          _anchorTrackId = newAnchorId;
-
-          // Update player selection if it changed
-          if (_selectedTrackForPlayer?.id != newSelectedTrack?.id) {
-            _selectedTrackForPlayer = newSelectedTrack;
-
-            // Load the new track if selected
-            if (newSelectedTrack != null) {
-              _trackSelectionHandler.selectTrackForPlayer(newSelectedTrack);
-            }
-          }
-        });
-      },
+      onSelectionStateChanged: _handleSelectionStateUpdate, // Pass the callback
     );
   }
 
-  // Rating change handler
+  // Wrapper for rating changes coming from UI widgets (like TrackTableWidget)
   void _handleRatingChanged(int trackId, int newRating) {
+    // Delegate to the handler (which now dispatches to TrackMetadataBloc)
     _trackSelectionHandler.handleRatingChanged(trackId, newRating);
-
-    // Optimistically update local state
-    if (_selectedTrackForPlayer?.id == trackId) {
-      setState(() {
-        _selectedTrackForPlayer = _selectedTrackForPlayer?.copyWith(
-          rating: newRating,
-        );
-      });
-    }
+    // Note: UI update for the rating itself happens optimistically within
+    // TrackTableWidget/RatingCellWidget or via listening to TrackMetadataBloc success.
   }
 
-  // Sort handler
+  // Wrapper for sort changes coming from UI widgets (like TrackTableWidget)
   void _handleSortChanged(String columnName, DataGridSortDirection direction) {
     setState(() {
       _sortColumnName = columnName;
       _sortDirectionSf = direction;
     });
-
-    // Update handler with new sort settings
-    _initializeHandlers();
+    _initializeHandlers(); // Update handlers with new sort settings
+    // Re-filtering/sorting is handled implicitly by getCurrentDisplayedTracks
   }
 
-  // Play next track
+  // Player control wrappers (delegate to handler)
   void _playNextTrack() {
     _playerControlHandler.playNextTrack(onTrackSelected: _selectAndPlayTrack);
   }
 
-  // Play previous track
   void _playPreviousTrack() {
     _playerControlHandler.playPreviousTrack(
       onTrackSelected: _selectAndPlayTrack,
     );
   }
 
-  void _selectAndPlayTrack(Track track, bool shouldTogglePlay) {
-    setState(() {
-      _selectedTrackForPlayer = track;
-      // --- MODIFIED: Create a new Set ---
-      _selectedTrackIds = {
-        if (track.id != null) track.id!,
-      }; // Creates a new Set with the single ID
-      // --- END MODIFICATION ---
-      _anchorTrackId = track.id;
-    });
-
-    _initializeHandlers();
-    _trackSelectionHandler.selectAndPlayTrack(
-      track,
-      togglePlay: shouldTogglePlay,
-    );
-  }
-
   // --- Build Method ---
   @override
   Widget build(BuildContext context) {
-    return BlocListener<PlaylistBloc, PlaylistState>(
-      listener: (context, playlistState) {
-        if (playlistState is PlaylistLoaded &&
-            _currentlySelectedPlaylistId != null) {
-          // Check if the currently selected playlist still exists
-          bool selectedExists = playlistState.playlists.any(
-            (p) => p.id == _currentlySelectedPlaylistId,
-          );
-          if (!selectedExists) {
-            // If deleted, deselect it
-            setState(() {
-              _currentlySelectedPlaylistId = null;
-              _currentlySelectedPlaylist = null;
-            });
-          } else {
-            // If it exists, check if its data (e.g., name) has changed
-            try {
-              final updatedPlaylist = playlistState.playlists.firstWhere(
+    // Use MultiBlocListener to react to events from multiple BLoCs
+    return MultiBlocListener(
+      listeners: [
+        // Listener for Collection Management (triggers TrackDataBloc load)
+        BlocListener<CollectionManagementBloc, CollectionManagementState>(
+          listener: (context, collectionState) {
+            // Logic moved to _setupCollectionListener for clarity
+          },
+        ),
+        // Listener for Playlist changes (updates local state if selected playlist changes)
+        BlocListener<PlaylistBloc, PlaylistState>(
+          listener: (context, playlistState) {
+            if (playlistState is PlaylistLoaded &&
+                _currentlySelectedPlaylistId != null) {
+              bool selectedExists = playlistState.playlists.any(
                 (p) => p.id == _currentlySelectedPlaylistId,
               );
-              // Use simple comparison for name change detection
-              if (_currentlySelectedPlaylist?.name != updatedPlaylist.name) {
+              if (!selectedExists) {
                 setState(() {
-                  _currentlySelectedPlaylist = updatedPlaylist;
+                  _currentlySelectedPlaylistId = null;
+                  _currentlySelectedPlaylist = null;
                 });
+                _initializeHandlers(); // Update handlers
+              } else {
+                try {
+                  final updatedPlaylist = playlistState.playlists.firstWhere(
+                    (p) => p.id == _currentlySelectedPlaylistId,
+                  );
+                  if (_currentlySelectedPlaylist?.name !=
+                          updatedPlaylist.name ||
+                      _currentlySelectedPlaylist?.trackPaths.length !=
+                          updatedPlaylist.trackPaths.length) {
+                    // Basic change check
+                    setState(() {
+                      _currentlySelectedPlaylist = updatedPlaylist;
+                    });
+                    _initializeHandlers(); // Update handlers
+                  }
+                } catch (e) {
+                  /* ignore */
+                }
               }
-            } catch (e) {
-              /* ignore if not found during update */
             }
-          }
-        }
-      },
+          },
+        ),
+        // Listener for Metadata updates (triggers TrackDataBloc reload on success)
+        BlocListener<TrackMetadataBloc, TrackMetadataState>(
+          listener: (context, metadataState) {
+            if (metadataState is TrackMetadataUpdateSuccess) {
+              print(
+                "HomeScreen Listener: Metadata updated for track ${metadataState.trackId}, reloading track data.",
+              );
+              // Reload track data preserving filters
+              context.read<TrackDataBloc>().add(ReloadDataPreservingFilters());
+              // Also potentially update the _selectedTrackForPlayer if it was the one edited
+              if (_selectedTrackForPlayer?.id == metadataState.trackId) {
+                // Re-fetch the updated track data
+                final updatedTrack = _trackSelectionHandler
+                    .getTrackByIdFromBlocState(metadataState.trackId);
+                if (updatedTrack != null) {
+                  setState(() {
+                    _selectedTrackForPlayer = updatedTrack;
+                  });
+                }
+              }
+            } else if (metadataState is TrackMetadataUpdateError) {
+              // Show error message if metadata update fails
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Metadata Update Error: ${metadataState.message}',
+                  ),
+                  backgroundColor: Colors.redAccent,
+                ),
+              );
+            }
+          },
+        ),
+      ],
       child: Scaffold(
         appBar: _buildAppBar(),
         body: Focus(
+          // Keep Focus for keyboard shortcuts
           focusNode: _focusNode,
           autofocus: true,
           onKeyEvent: _handleKeyEvent,
           child: Row(
             children: [
-              _buildPlaylistPanel(),
+              _buildPlaylistPanel(), // Playlist Panel (Left)
               Expanded(
+                // Main Content Area (Right)
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _buildFilterBar(),
+                    _buildFilterBar(), // Search and Rating Filter
                     if (_currentlySelectedPlaylist != null)
-                      _buildPlaylistHeader(),
-                    Expanded(child: _buildContentArea()),
+                      _buildPlaylistHeader(), // Header shown when playlist is selected
+                    Expanded(child: _buildContentArea()), // Table or Tree View
+                    // Player (Bottom) - shows only if a track is selected for the player
                     if (_selectedTrackForPlayer != null)
                       CombinedAudioPlayerWidget(
-                        key: ValueKey(_selectedTrackForPlayer!.id),
+                        key: ValueKey(
+                          _selectedTrackForPlayer!.id,
+                        ), // Ensure widget rebuilds when track changes
                         track: _selectedTrackForPlayer!,
                         isMinimized: _isMinimized,
                         onToggle: _handlePlayerToggle,
@@ -452,16 +542,27 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Handle keyboard events
+  // --- Build Helper Methods ---
+
+  // Handle keyboard events (e.g., Space for play/pause)
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.space) {
+      // Check if focus is not in a text field before toggling playback
+      final FocusScopeNode currentFocus = FocusScope.of(context);
+      if (!currentFocus.hasPrimaryFocus && currentFocus.focusedChild != null) {
+        // If something has focus, but maybe not the primary (e.g., button), allow spacebar play/pause
+        // This might need refinement based on specific focus behavior desired
+      }
+      // Allow space play/pause even if a text field has focus? Maybe not ideal.
+      // Let's allow it for now.
       _playerControlHandler.togglePlayPause();
       return KeyEventResult.handled;
     }
+    // Add other keyboard shortcuts here (e.g., arrow keys for selection)
     return KeyEventResult.ignored;
   }
 
-  // Build the app bar
+  // Build the app bar (AppBar)
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
       leading: IconButton(
@@ -477,14 +578,16 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       title: BlocBuilder<CollectionManagementBloc, CollectionManagementState>(
         builder: (context, state) {
-          String title = 'Audio Looker';
+          String title = 'Audio Looker'; // Default title
           if (state is CollectionManagementLoaded &&
               state.activeCollectionDefinition != null) {
             title = state.activeCollectionDefinition!.name;
           } else if (state is CollectionManagementLoading &&
               state.activeCollectionDefinition != null) {
             title = "${state.activeCollectionDefinition!.name} (Loading...)";
-          } else if (state is CollectionManagementInitial) {
+          } else if (state is CollectionManagementInitial ||
+              (state is CollectionManagementLoaded &&
+                  state.activeCollectionDefinition == null)) {
             title = "Select Collection";
           } else if (state is CollectionManagementError) {
             title = "Error Loading Collection";
@@ -511,14 +614,14 @@ class _HomeScreenState extends State<HomeScreen> {
         IconButton(
           icon: const Icon(Icons.add),
           tooltip: 'Add...',
-          onPressed: _showAddMenu,
+          onPressed: _showAddMenu, // Uses FileHandler
         ),
         const SizedBox(width: 8),
       ],
     );
   }
 
-  // Show add menu
+  // Show the 'Add' menu
   void _showAddMenu() {
     // 1. Read from CollectionManagementBloc to check for an active collection
     final collectionMgmtState = context.read<CollectionManagementBloc>().state;
@@ -537,29 +640,25 @@ class _HomeScreenState extends State<HomeScreen> {
     // We know state is CollectionManagementLoaded and activeCollectionDefinition is not null here
     final activeCollectionDef = collectionMgmtState.activeCollectionDefinition!;
 
+    // --- Logic to build and show the menu is HERE ---
     showMenu<String>(
-      // Specify type argument for value
       context: context,
       position: RelativeRect.fromLTRB(
-        MediaQuery.of(context).size.width - 100,
-        kToolbarHeight, // Assuming kToolbarHeight is defined or imported
+        MediaQuery.of(context).size.width - 100, // Position near the button
+        kToolbarHeight,
         MediaQuery.of(context).size.width,
         0,
       ),
       items: <PopupMenuEntry<String>>[
-        // Specify type argument for PopupMenuEntry
         const PopupMenuItem<String>(
-          // Specify type argument
           value: 'add_file',
           child: ListTile(
             leading: Icon(Icons.audio_file),
             title: Text('Add Audio File(s)'),
           ),
         ),
-        // 2. Check collection type from the active definition for 'Add Folder'
         if (activeCollectionDef.type == CollectionType.local)
           const PopupMenuItem<String>(
-            // Specify type argument
             value: 'add_folder',
             child: ListTile(
               leading: Icon(Icons.folder_open),
@@ -567,7 +666,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         const PopupMenuItem<String>(
-          // Specify type argument
           value: 'add_url',
           child: ListTile(
             leading: Icon(Icons.link),
@@ -576,18 +674,21 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ],
     ).then((value) {
-      // 3. Call the appropriate helper method (which should dispatch to TrackManagementBloc)
-      if (value == 'add_file')
+      // --- Call the appropriate FileHandler method AFTER selection ---
+      if (value == 'add_file') {
         _fileHandler.pickAndAddAudioFile();
-      else if (value == 'add_folder')
+      } else if (value == 'add_folder') {
         _fileHandler.pickAndAddFolder();
-      else if (value == 'add_url')
+      } else if (value == 'add_url') {
         _fileHandler.showAddUrlDialog();
+      }
     });
+    // --- REMOVED incorrect call: _fileHandler.showAddMenu(); ---
   }
 
-  // Build playlist panel
+  // Build the collapsible playlist panel (Left Side)
   Widget _buildPlaylistPanel() {
+    // Uses PlaylistDrawer widget
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
@@ -602,12 +703,12 @@ class _HomeScreenState extends State<HomeScreen> {
             width: 1.0,
           ),
         ),
-        color: Theme.of(context).canvasColor,
+        color: Theme.of(context).canvasColor, // Use theme canvas color
       ),
-      clipBehavior: Clip.hardEdge,
+      clipBehavior: Clip.hardEdge, // Prevent content overflow during animation
       child: Visibility(
         visible: _isPlaylistPanelVisible,
-        maintainState: false,
+        maintainState: false, // Don't keep PlaylistDrawer in memory when hidden
         child: PlaylistDrawer(
           selectedPlaylistId: _currentlySelectedPlaylistId,
           onPlaylistSelected: _handlePlaylistSelected,
@@ -616,58 +717,57 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Build search bar
+  // Build the filter bar (Search + Rating)
   Widget _buildFilterBar() {
     return Padding(
-      // Consistent padding
       padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
-      // Use a Row to place items horizontally
       child: Row(
         children: [
-          // Search Text Field (Takes available space)
+          // Search Text Field
           Expanded(
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
                 hintText: 'Search collection...',
                 prefixIcon: const Icon(Icons.search, size: 20),
-                // Consistent styling
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                isDense: true,
+                // Clear button
+                suffixIcon:
+                    _searchController.text.isNotEmpty
+                        ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          tooltip: 'Clear Search',
+                          onPressed: () {
+                            _searchController.clear();
+                            // Dispatch search event with empty query
+                            context.read<TrackDataBloc>().add(
+                              const SearchTracks(''),
+                            );
+                          },
+                        )
+                        : null,
               ),
             ),
           ),
-          const SizedBox(width: 8), // Add spacing between search and stars
-          // Rating Filter Widget (Takes fixed space needed by stars)
-          BlocBuilder<TrackManagementBloc, TrackManagementState>(
+          const SizedBox(width: 16), // Spacing
+          // Rating Filter Widget
+          BlocBuilder<TrackDataBloc, TrackDataState>(
+            // Listen to TrackDataBloc for current filter
             builder: (context, state) {
               int? currentFilterValue;
-              // Extract current filter value from the appropriate state property
-              if (state is TrackManagementLoaded) {
+              if (state is TrackDataLoaded) {
                 currentFilterValue = state.minimumRating;
-              } else if (state is TrackManagementLoading) {
-                currentFilterValue = state.currentMinimumRating;
-              } else if (state is TrackManagementProcessingWaveforms) {
+              } else if (state is TrackDataLoading) {
                 currentFilterValue = state.minimumRating;
               }
+              // Add other states if they hold the filter value
 
-              // Use the new RatingFilterWidget
               return RatingFilterWidget(
                 currentMinimumRating: currentFilterValue,
                 onRatingSelected: (int? rating) {
-                  // Dispatch the event to the BLoC when a star is tapped
-                  context.read<TrackManagementBloc>().add(
-                    SetMinimumRatingFilter(rating),
-                  );
+                  // Dispatch filter event to TrackDataBloc
+                  context.read<TrackDataBloc>().add(SetRatingFilter(rating));
                 },
-                // Optional: Adjust icon size/padding if needed
-                // iconSize: 22,
+                iconSize: 20, // Adjust size if needed
               );
             },
           ),
@@ -676,8 +776,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Build playlist header
+  // Build the header shown when a playlist is active
   Widget _buildPlaylistHeader() {
+    // Ensure playlist is not null before building
+    if (_currentlySelectedPlaylist == null) return const SizedBox.shrink();
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
       child: Container(
@@ -685,7 +788,7 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(
           color: Theme.of(
             context,
-          ).colorScheme.secondaryContainer.withOpacity(0.5),
+          ).colorScheme.secondaryContainer.withOpacity(0.6),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
@@ -705,8 +808,12 @@ class _HomeScreenState extends State<HomeScreen> {
               tooltip: 'Show All Tracks',
               iconSize: 20,
               visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
               onPressed:
-                  () => _handlePlaylistSelected(_currentlySelectedPlaylistId!),
+                  () => _handlePlaylistSelected(
+                    _currentlySelectedPlaylistId!,
+                  ), // Pass ID to deselect
             ),
           ],
         ),
@@ -714,120 +821,91 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Build main content area
+  // Build the main content area (Table or Tree)
   Widget _buildContentArea() {
     return DropTarget(
+      // Wrap content area with DropTarget
       onDragDone:
           (detail) async => await _fileHandler.handleDroppedFiles(detail.files),
       onDragEntered: (detail) => setState(() => _isDragging = true),
       onDragExited: (detail) => setState(() => _isDragging = false),
       child: Stack(
+        // Use Stack to overlay drag indicator
         children: [
-          // Main Content: Table or Tree View
-          BlocConsumer<TrackManagementBloc, TrackManagementState>(
-            listener: (context, state) {
-              if (state is TrackManagementError) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Error: ${state.message}'),
-                    backgroundColor: Colors.redAccent,
+          // Main Content: Table or Tree View based on _viewMode
+          BlocBuilder<TrackDataBloc, TrackDataState>(
+            // Listen to TrackDataBloc
+            builder: (context, state) {
+              // --- Extract Data ---
+              List<Track> allTracksForTree =
+                  []; // All tracks for tree view structure
+              List<Track> displayedTracksForTable =
+                  []; // Filtered/sorted tracks for table
+              List<String> rootFolders = [];
+              bool isLoading =
+                  state is TrackDataInitial || state is TrackDataLoading;
+              bool hasError = state is TrackDataError;
+              String errorMessage =
+                  hasError ? (state as TrackDataError).message : '';
+
+              if (state is TrackDataLoaded) {
+                // TrackDataLoaded contains the ALREADY filtered/searched list
+                displayedTracksForTable = state.tracks;
+                rootFolders = state.rootFolders;
+                // For tree view, we might need ALL tracks regardless of filter.
+                // This requires TrackDataBloc to potentially hold both filtered and unfiltered lists,
+                // or we fetch all tracks again here (less efficient).
+                // Let's assume for now tree view also uses the filtered list for simplicity.
+                // TODO: Revisit if Tree View needs unfiltered list.
+                allTracksForTree = state.tracks;
+              } else if (state is TrackDataLoading) {
+                // Show previous data while loading
+                displayedTracksForTable = state.previousTracks ?? [];
+                rootFolders = state.previousRootFolders ?? [];
+                allTracksForTree = state.previousTracks ?? [];
+              } else if (state is TrackDataError) {
+                // Show empty list on error? Or potentially previous data if stored in error state?
+                // For now, show empty.
+              }
+
+              // --- Handle Loading State ---
+              if (isLoading &&
+                  displayedTracksForTable.isEmpty &&
+                  rootFolders.isEmpty) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              // --- Handle Error State ---
+              if (hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      'Error loading tracks: $errorMessage',
+                      style: TextStyle(color: Colors.red),
+                    ),
                   ),
                 );
               }
 
-              // Update selection if underlying data changes
-              if (state is TrackManagementLoaded) {
-                final currentTrackIds = state.tracks.map((t) => t.id).toSet();
-                bool selectionChanged = false;
+              // --- Handle Empty States ---
+              final bool hasActiveFilters =
+                  (_searchController.text.isNotEmpty ||
+                      (state is TrackDataLoaded &&
+                          state.minimumRating != null &&
+                          state.minimumRating! > 0) ||
+                      (state is TrackDataLoading &&
+                          state.minimumRating != null &&
+                          state.minimumRating! > 0) ||
+                      _currentlySelectedPlaylist != null);
 
-                // Remove selected ids that no longer exist
-                _selectedTrackIds.removeWhere((id) {
-                  if (!currentTrackIds.contains(id)) {
-                    selectionChanged = true;
-                    if (_anchorTrackId == id) _anchorTrackId = null;
-                    return true;
-                  }
-                  return false;
-                });
-
-                print("_selectedTrackIds length ${_selectedTrackIds.length}");
-
-                if (selectionChanged) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) {
-                      setState(() {
-                        // Update player if selected track was deleted
-                        if (_selectedTrackForPlayer != null &&
-                            !_selectedTrackIds.contains(
-                              _selectedTrackForPlayer!.id,
-                            )) {
-                          _selectedTrackForPlayer = null;
-                        }
-
-                        // Update handlers with new state
-                        _initializeHandlers();
-                      });
-                    }
-                  });
-                }
-              }
-            },
-            builder: (context, state) {
-              // Get tracks, folders, tags and loading state
-              List<Track> allTracks = [];
-              List<String> rootFolders = [];
-              List<Tag> allTags = [];
-              bool isLoading =
-                  state
-                      is TrackManagementInitial; // Only initial is true loading state now
-
-              if (state is TrackManagementLoading) {
-                allTracks = state.currentTracks ?? [];
-                rootFolders = state.currentRootFolders ?? [];
-                allTags = state.currentAllTags ?? [];
-              } else if (state is TrackManagementLoaded) {
-                allTracks = state.tracks;
-                rootFolders = state.rootFolders;
-                allTags = state.allTags;
-              } else if (state is TrackManagementProcessingWaveforms) {
-                allTracks = state.tracks; // Use tracks from processing state
-                rootFolders = state.rootFolders;
-                allTags = state.allTags;
-                isLoading = false; // Not considered initial loading
-              } else if (state is TrackManagementError) {
-                allTracks = state.tracks ?? [];
-                rootFolders = state.rootFolders ?? [];
-                // Optionally show error message here or rely on snackbar
-              }
-
-              if (isLoading && allTracks.isEmpty && rootFolders.isEmpty) {
-                return const Center(
-                  child: CircularProgressIndicator(color: Colors.green),
-                );
-              }
-
-              // Get displayed tracks based on current filters
-              List<Track> displayedTracks =
-                  _trackSelectionHandler.getCurrentDisplayedTracks();
-
-              // Handle empty states
-              if (!isLoading &&
-                  displayedTracks.isEmpty &&
-                  _viewMode == ViewMode.list) {
-                if (_currentlySelectedPlaylist != null) {
+              if (displayedTracksForTable.isEmpty && !isLoading) {
+                if (hasActiveFilters) {
                   return Center(
-                    child: Text(
-                      'Playlist "${_currentlySelectedPlaylist!.name}" is empty.',
-                    ),
+                    child: Text('No tracks match the current filters.'),
                   );
-                } else if (_searchController.text.isNotEmpty) {
-                  return Center(
-                    child: Text(
-                      'No tracks found for "${_searchController.text}"',
-                    ),
-                  );
-                } else if (allTracks.isEmpty && rootFolders.isEmpty) {
-                  // True empty collection
+                } else if (rootFolders.isEmpty && allTracksForTree.isEmpty) {
+                  // Truly empty collection, guide user
                   return Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -846,139 +924,86 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: 8),
                         const Text(
-                          'Add audio files or folders using the + button',
+                          'Add audio files or folders using the + button or drag & drop',
                           style: TextStyle(fontSize: 14, color: Colors.grey),
+                          textAlign: TextAlign.center,
                         ),
                       ],
                     ),
                   );
-                } else if (allTracks.isEmpty && rootFolders.isNotEmpty) {
-                  return const Center(
-                    child: Text('No audio tracks found in the collection yet.'),
-                  );
+                } else {
+                  // Collection has roots/potential tracks, but none match current view/filters
+                  return Center(child: Text('No tracks to display.'));
                 }
-                return const Center(child: Text('No tracks to display.'));
               }
 
-              if (!isLoading &&
-                  rootFolders.isEmpty &&
-                  _viewMode == ViewMode.tree) {
-                return const Center(
-                  child: Text(
-                    'No root folders added. Add folders via (+) or drag & drop.',
-                  ),
-                );
-              }
-
-              // Build the main view
+              // --- Build Table or Tree ---
               return Container(
                 color:
                     _currentlySelectedPlaylistId != null
                         ? Theme.of(
                           context,
-                        ).colorScheme.surfaceVariant.withOpacity(0.3)
+                        ).colorScheme.surfaceVariant.withOpacity(
+                          0.1,
+                        ) // Subtle background if playlist active
                         : null,
                 child:
                     _viewMode == ViewMode.list
                         ? TrackTableWidget(
-                          // Ensure keys update if underlying data structure changes significantly
+                          // Use ValueKey to ensure rebuild when fundamental data changes
                           key: ValueKey(
-                            'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}-${allTracks.length}',
+                            'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}-${displayedTracksForTable.length}',
                           ),
                           tracks:
-                              displayedTracks, // Pass currently filtered/sorted tracks
+                              displayedTracksForTable, // Pass filtered/sorted tracks
                           selectedTrackIds: _selectedTrackIds,
                           audioPlayerBloc: context.read<AudioPlayerBloc>(),
-                          onSelectionChanged: _handleSelectionChanged,
+                          onSelectionChanged:
+                              _handleSelectionChanged, // Pass method reference
                           onShowContextMenu:
-                              _contextMenuHandler.showContextMenu,
-                          onRatingChanged: _handleRatingChanged,
-                          onSort: _handleSortChanged,
+                              _contextMenuHandler
+                                  .showContextMenu, // Pass method reference
+                          onRatingChanged:
+                              _handleRatingChanged, // Pass method reference
+                          onSort: _handleSortChanged, // Pass method reference
                           initialSortColumnName: _sortColumnName,
                           initialSortDirection: _sortDirectionSf,
-                          onPlayPreviewAndMinimize: _selectAndPlayTrack,
-                          onEditMetadata: _selectAndOpenPlayer,
+                          onPlayPreviewAndMinimize:
+                              _selectAndPlayTrack, // Pass method reference
+                          onEditMetadata:
+                              _selectAndOpenPlayer, // Pass method reference
                         )
                         : FolderTreeView(
                           key: ValueKey(
-                            'folder-tree-${rootFolders.join('-')}-${allTracks.length}',
+                            'folder-tree-${rootFolders.join('-')}-${allTracksForTree.length}',
                           ),
                           tracks:
-                              allTracks, // Pass all tracks for tree structure
-                          rootFolders: rootFolders,
-                          selectedTrack: _selectedTrackForPlayer,
-                          currentlyLoadedPath: _currentlyLoadedPathInPlayer,
+                              allTracksForTree, // Pass tracks for tree structure
+                          rootFolders: rootFolders, // Pass root folders
+                          selectedTrack:
+                              _selectedTrackForPlayer, // Highlight selected track
+                          currentlyLoadedPath:
+                              _currentlyLoadedPathInPlayer, // Highlight playing track
                           onTrackSelected: (track) {
-                            _handleSelectionChanged(track.id!, true);
-                            _selectTrackForPlayer(track);
+                            // Select track in state and load for player (no auto-play)
+                            _handleSelectionChanged(
+                              track.id!,
+                              true,
+                            ); // Update selection state
+                            _selectTrackForPlayer(
+                              track,
+                            ); // Load track into player UI part
                           },
                           onTrackDeleted: (trackId) {
+                            // Use context menu handler's delete confirmation
                             _contextMenuHandler.confirmAndDeleteSelected();
                           },
                         ),
               );
-            }, // End Builder for main content
-          ),
-
-          BlocBuilder<TrackManagementBloc, TrackManagementState>(
-            builder: (context, state) {
-              if (state is TrackManagementProcessingWaveforms) {
-                double progress =
-                    (state.totalCount > 0)
-                        ? (state.processedCount / state.totalCount).clamp(
-                          0.0,
-                          1.0,
-                        )
-                        : 0.0;
-                return Positioned(
-                  // Position the progress bar
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    color: Colors.black.withOpacity(
-                      0.7,
-                    ), // Semi-transparent background
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            value: progress, // Show determinate progress
-                            strokeWidth: 3,
-                            backgroundColor: Colors.white24,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'Processing waveforms (${state.processedCount}/${state.totalCount})...',
-                            style: const TextStyle(color: Colors.white),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              } else if (state is TrackManagementLoading &&
-                  state.currentTracks == null &&
-                  state.currentRootFolders == null) {
-                // Show general loading if nothing else is displayed yet
-                return const Center(
-                  child: CircularProgressIndicator(color: Colors.lightGreen),
-                );
-              }
-              return const SizedBox.shrink(); // Hide if not processing waveforms
             },
           ),
 
-          // Drag overlay
+          // Drag & Drop Overlay Indicator
           if (_isDragging)
             Container(
               color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
@@ -1007,40 +1032,15 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-          // Loading indicator overlay
-          // BlocBuilder<TrackManagementBloc, TrackManagementState>(
-          //   builder: (context, state) {
-          //     if (state is TrackManagementLoading &&
-          //         (state.currentTracks?.isNotEmpty ?? false)) {
-          //       return Positioned.fill(
-          //         child: Container(
-          //           color: Colors.black.withOpacity(0.4),
-          //           child: const Center(
-          //             child: Column(
-          //               mainAxisSize: MainAxisSize.min,
-          //               children: [
-          //                 CircularProgressIndicator(color: Colors.white),
-          //                 SizedBox(height: 16),
-          //                 Text(
-          //                   'Processing audio...',
-          //                   style: TextStyle(color: Colors.white, fontSize: 16),
-          //                 ),
-          //               ],
-          //             ),
-          //           ),
-          //         ),
-          //       );
-          //     }
-          //     return const SizedBox.shrink();
-          //   },
-          // ),
+          // --- REMOVED Waveform Processing Indicator ---
+          // This logic should move to a dedicated WaveformProcessingBloc and its listener/builder
         ],
       ),
     );
   }
 }
 
-// Helper extension
+// Helper extension (optional, can be removed if not used elsewhere)
 extension TrackListNullOrEmpty on List<Track>? {
   bool get isNullOrEmpty => this == null || this!.isEmpty;
 }

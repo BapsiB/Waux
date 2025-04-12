@@ -1,98 +1,97 @@
 // lib/handlers/track_selection_handler.dart
 
-import 'package:audio_looker/blocs/track_management/track_management_bloc.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 // Import BLoCs
-// import 'package:audio_looker/blocs/collection_management/collection_management_bloc.dart';
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
+import '../blocs/track_management/track_data_bloc.dart'; // <<< CHANGED: Import new BLoC
+import '../blocs/track_management/track_metadata_bloc.dart'; // <<< ADDED: Import new BLoC
+import '../blocs/audio_player/audio_player_bloc.dart';
 
 // Import models
-import 'package:audio_looker/models/playlist.dart';
-import 'package:audio_looker/services/collection_service.dart';
+import '../models/playlist.dart';
+import '../services/collection_service.dart'; // For Track model
 
-/// Handles track selection and sorting functions
+/// Handles track selection logic, sorting, and interaction with player/metadata BLoCs.
 class TrackSelectionHandler {
   final BuildContext context;
   final Set<int> selectedTrackIds;
   final int? anchorTrackId;
-  final Track? selectedTrackForPlayer;
-  final String? currentlyLoadedPathInPlayer;
+  final Track?
+  selectedTrackForPlayer; // The track currently loaded/selected in the player UI part
   final String sortColumnName;
   final DataGridSortDirection sortDirectionSf;
-  final Playlist? currentlySelectedPlaylist;
+  final Playlist? currentlySelectedPlaylist; // Used for filtering
 
   TrackSelectionHandler({
     required this.context,
     required this.selectedTrackIds,
     this.anchorTrackId,
     this.selectedTrackForPlayer,
-    this.currentlyLoadedPathInPlayer,
     required this.sortColumnName,
     required this.sortDirectionSf,
     this.currentlySelectedPlaylist,
   });
 
+  /// Gets the list of tracks currently displayed, applying playlist and rating filters, and sorting.
+  /// Reads data from TrackDataBloc.
   List<Track> getCurrentDisplayedTracks() {
-    final collectionState = context.read<TrackManagementBloc>().state;
+    // <<< CHANGED: Read state from TrackDataBloc >>>
+    final trackDataState = context.read<TrackDataBloc>().state;
     List<Track> sourceTracks = [];
     int? minimumRating; // Variable to hold the filter value
 
-    // Get tracks and minimumRating from the current state
-    if (collectionState is TrackManagementLoaded) {
-      sourceTracks = collectionState.tracks;
-      minimumRating = collectionState.minimumRating; // <<< Get rating
-    } else if (collectionState is TrackManagementLoading &&
-        collectionState.currentTracks != null) {
-      sourceTracks = collectionState.currentTracks!;
-      minimumRating = collectionState.currentMinimumRating; // <<< Get rating
-    } else if (collectionState is TrackManagementError &&
-        collectionState.tracks != null) {
-      sourceTracks = collectionState.tracks!;
-      // Assume no filter on error, or get from state if added there
-    } else if (collectionState is TrackManagementProcessingWaveforms) {
-      sourceTracks = collectionState.tracks;
-      minimumRating = collectionState.minimumRating; // <<< Get rating
+    // Get tracks and minimumRating from the current TrackDataBloc state
+    if (trackDataState is TrackDataLoaded) {
+      sourceTracks = trackDataState.tracks;
+      minimumRating = trackDataState.minimumRating;
+    } else if (trackDataState is TrackDataLoading &&
+        trackDataState.previousTracks != null) {
+      // Use previous tracks if loading
+      sourceTracks = trackDataState.previousTracks!;
+      minimumRating =
+          trackDataState.minimumRating; // Use filter from loading state
     }
+    // Note: TrackDataError state doesn't hold tracks in the new design
 
-    List<Track> ratingFilteredTracks;
-    if (minimumRating != null && minimumRating > 0) {
-      // Filter tracks where rating is greater than or equal to the minimum
-      ratingFilteredTracks =
-          sourceTracks
-              .where((track) => track.rating >= minimumRating!)
-              .toList();
-      print(
-        "Applying rating filter: >= $minimumRating stars. Found ${ratingFilteredTracks.length} tracks.",
-      );
-    } else {
-      ratingFilteredTracks = sourceTracks; // No filter or 0 stars selected
-      print("No rating filter applied (minimumRating is $minimumRating).");
-    }
-
-    // Apply playlist filter AFTER rating filter
+    // Apply playlist filter first (if a playlist is selected)
     List<Track> playlistFilteredTracks;
     if (currentlySelectedPlaylist != null) {
       final playlistTrackPaths = Set<String>.from(
         currentlySelectedPlaylist!.trackPaths,
       );
-      // Filter the RATING-FILTERED tracks
       playlistFilteredTracks =
-          ratingFilteredTracks
+          sourceTracks
               .where((track) => playlistTrackPaths.contains(track.path))
               .toList();
     } else {
-      // If no playlist selected, use the rating-filtered list
-      playlistFilteredTracks = ratingFilteredTracks;
+      // If no playlist selected, use all tracks from the state
+      playlistFilteredTracks = sourceTracks;
+    }
+
+    // Apply rating filter AFTER playlist filter
+    List<Track> ratingFilteredTracks;
+    if (minimumRating != null && minimumRating > 0) {
+      // Filter the PLAYLIST-FILTERED tracks
+      ratingFilteredTracks =
+          playlistFilteredTracks
+              .where((track) => track.rating >= minimumRating!)
+              .toList();
+      // print(
+      //   "Applying rating filter: >= $minimumRating stars. Found ${ratingFilteredTracks.length} tracks.",
+      // );
+    } else {
+      ratingFilteredTracks = playlistFilteredTracks; // No rating filter
+      // print("No rating filter applied (minimumRating is $minimumRating).");
     }
 
     // Sort the final filtered list
-    return getSortedTracks(playlistFilteredTracks);
+    return getSortedTracks(ratingFilteredTracks);
   }
 
-  /// Sorts tracks based on current sort column and direction
+  /// Sorts a given list of tracks based on current sort column and direction.
+  /// (This method remains the same internally)
   List<Track> getSortedTracks(List<Track> tracks) {
     List<Track> sortedTracks = List.from(tracks);
     sortedTracks.sort((a, b) {
@@ -111,10 +110,11 @@ class TrackSelectionHandler {
           comparison = a.rating.compareTo(b.rating);
           break;
         case 'tags':
+          // Handle potential empty tags for sorting
           String aTag =
               a.generalTags.isNotEmpty
                   ? a.generalTags.join(',').toLowerCase()
-                  : '\uffff';
+                  : '\uffff'; // Place empty tags last
           String bTag =
               b.generalTags.isNotEmpty
                   ? b.generalTags.join(',').toLowerCase()
@@ -134,7 +134,9 @@ class TrackSelectionHandler {
     return sortedTracks;
   }
 
-  /// Handles track selection changes
+  /// Handles track selection changes in the UI (e.g., DataGrid).
+  /// Calculates the new selection state based on modifiers (Shift, Ctrl/Meta).
+  /// Calls the [onSelectionStateChanged] callback with the updated state.
   void handleSelectionChanged(
     int trackId,
     bool isSelected, {
@@ -150,22 +152,29 @@ class TrackSelectionHandler {
     final Set<int> newSelectedIds = Set.from(selectedTrackIds);
     int? newAnchorId = anchorTrackId;
 
+    // Use the current *displayed* tracks for shift-selection logic
     final List<Track> currentDisplayedTracks = getCurrentDisplayedTracks();
 
     if (isSelected) {
       if (isCtrlPressed) {
+        // Add/remove single item without affecting others
         newSelectedIds.add(trackId);
-        newAnchorId = trackId;
+        newAnchorId = trackId; // Set anchor to the last clicked item
       } else if (isShiftPressed && newAnchorId != null) {
+        // Range selection
         final anchorIndex = currentDisplayedTracks.indexWhere(
           (t) => t.id == newAnchorId,
         );
         final clickedIndex = currentDisplayedTracks.indexWhere(
           (t) => t.id == trackId,
         );
+
         if (anchorIndex != -1 && clickedIndex != -1) {
           final start = anchorIndex < clickedIndex ? anchorIndex : clickedIndex;
           final end = anchorIndex > clickedIndex ? anchorIndex : clickedIndex;
+          // Add the range to the *existing* selection if Ctrl/Meta is also held
+          // Otherwise, clear the selection first. For simplicity, let's assume Shift clears first.
+          // TODO: Refine this based on standard platform behavior if needed (Shift+Ctrl)
           newSelectedIds.clear();
           for (int i = start; i <= end; i++) {
             if (i >= 0 &&
@@ -174,8 +183,9 @@ class TrackSelectionHandler {
               newSelectedIds.add(currentDisplayedTracks[i].id!);
             }
           }
-          // Keep the anchor where the shift-select *started* for subsequent shifts
+          // Anchor remains the same for subsequent shift clicks
         } else {
+          // Anchor not found or clicked item not found in current view
           newSelectedIds.clear();
           newSelectedIds.add(trackId);
           newAnchorId = trackId;
@@ -189,53 +199,81 @@ class TrackSelectionHandler {
     } else {
       // Deselecting
       if (isCtrlPressed) {
+        // Remove single item
         newSelectedIds.remove(trackId);
-        if (newAnchorId == trackId) newAnchorId = null;
+        // If the deselected item was the anchor, clear the anchor
+        if (newAnchorId == trackId)
+          newAnchorId = newSelectedIds.isNotEmpty ? newSelectedIds.last : null;
       } else {
-        // Simple deselection or deselecting one from a shift-selection
+        // Simple deselection (e.g., clicking already selected item without modifier)
+        // This case might be handled by the DataGrid itself depending on selection mode.
+        // If called, assume it means deselecting this specific item.
         newSelectedIds.remove(trackId);
-        if (newAnchorId == trackId) newAnchorId = null;
-        // If deselecting the only selected item without modifier, clear anchor
+        if (newAnchorId == trackId)
+          newAnchorId = newSelectedIds.isNotEmpty ? newSelectedIds.last : null;
+        // If deselecting the only selected item, clear anchor
         if (newSelectedIds.isEmpty) newAnchorId = null;
       }
     }
 
-    // Update player based on new selection
-    Track? newSelectedTrack;
+    // Determine the track to be potentially loaded in the player
+    Track? newSelectedTrackForPlayer;
     if (newSelectedIds.length == 1) {
       final newSelectedId = newSelectedIds.first;
-      newSelectedTrack = getTrackById(newSelectedId);
+      // Get the track data from the currently displayed list to avoid extra lookups
+      try {
+        newSelectedTrackForPlayer = currentDisplayedTracks.firstWhere(
+          (t) => t.id == newSelectedId,
+        );
+      } catch (e) {
+        // Fallback: try getting from the BLoC state directly if not in displayed list (shouldn't happen often)
+        newSelectedTrackForPlayer = getTrackByIdFromBlocState(newSelectedId);
+        print(
+          "Warning: Selected track $newSelectedId not found in displayed list, using fallback lookup.",
+        );
+      }
     }
 
-    // Return updated selection state
-    onSelectionStateChanged(newSelectedIds, newAnchorId, newSelectedTrack);
+    // Call the callback provided by HomeScreen to update its state
+    onSelectionStateChanged(
+      newSelectedIds,
+      newAnchorId,
+      newSelectedTrackForPlayer,
+    );
   }
 
-  /// Gets a track by its ID
-  Track? getTrackById(int id) {
-    final state = context.read<TrackManagementBloc>().state;
+  /// Gets a track by its ID directly from the current TrackDataBloc state.
+  /// Used as a fallback or for direct lookups.
+  Track? getTrackByIdFromBlocState(int id) {
+    // <<< CHANGED: Read state from TrackDataBloc >>>
+    final trackDataState = context.read<TrackDataBloc>().state;
     List<Track> sourceList = [];
-    if (state is TrackManagementLoaded) {
-      sourceList = state.tracks;
-    } else if (state is TrackManagementLoading && state.currentTracks != null) {
-      sourceList = state.currentTracks!;
-    } else if (state is TrackManagementError && state.tracks != null) {
-      sourceList = state.tracks!;
+
+    if (trackDataState is TrackDataLoaded) {
+      sourceList = trackDataState.tracks;
+    } else if (trackDataState is TrackDataLoading &&
+        trackDataState.previousTracks != null) {
+      sourceList = trackDataState.previousTracks!;
     }
+    // Add other states if needed
 
     try {
+      // Search within the sourceList obtained from the BLoC state
       return sourceList.firstWhere((t) => t.id == id);
     } catch (e) {
       return null; // Not found
     }
   }
 
-  /// Handles updating player track selection state
+  /// Selects a track to be loaded into the player UI, dispatches LoadAudio to AudioPlayerBloc.
+  /// Does not automatically play.
   void selectTrackForPlayer(Track track) {
     print("Selecting track for player: ${track.title}");
     final bloc = context.read<AudioPlayerBloc>();
     final currentBlocState = bloc.state;
     bool needsLoad = true;
+
+    // Check if the player already has this track loaded
     if (currentBlocState is AudioPlayerLoaded &&
         currentBlocState.currentSource == track.path) {
       needsLoad = false;
@@ -243,65 +281,108 @@ class TrackSelectionHandler {
 
     if (needsLoad) {
       bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
+    } else {
+      print("Track already loaded in player.");
+      // Optionally seek to beginning if desired when re-selecting an already loaded track
+      // bloc.add(const SeekAudio(position: Duration.zero));
     }
   }
 
-  /// Select and load a track, then play it
+  /// Selects a track, loads it via AudioPlayerBloc, and requests playback.
   void selectAndPlayTrack(Track track, {bool togglePlay = false}) {
     print("Selecting and playing track: ${track.title}");
     final bloc = context.read<AudioPlayerBloc>();
     final currentBlocState = bloc.state;
     bool needsLoad = true;
+
     if (currentBlocState is AudioPlayerLoaded &&
         currentBlocState.currentSource == track.path) {
       needsLoad = false;
     }
 
     if (needsLoad) {
-      // Dispatch LoadAudio with the new flag set to true
+      // Dispatch LoadAudio with playWhenReady set to true
       bloc.add(
         LoadAudio(
           source: track.path,
           isUrl: track.isUrl,
-          playWhenReady: true, // <<< TELL THE BLOC TO PLAY
+          playWhenReady: true, // Tell the BLoC to play after loading
         ),
       );
     } else {
-      if (togglePlay) {
-        if (currentBlocState is AudioPlayerLoaded &&
-            currentBlocState.isPlaying) {
+      // Track is already loaded
+      if (togglePlay && currentBlocState is AudioPlayerLoaded) {
+        // If togglePlay is true, toggle the current state
+        if (currentBlocState.isPlaying) {
           bloc.add(PauseAudio());
+        } else {
+          // Handle playing from end
+          if (currentBlocState.position >= currentBlocState.duration &&
+              currentBlocState.duration > Duration.zero) {
+            bloc.add(const SeekAudio(position: Duration.zero));
+            // Add small delay before playing after seek
+            Future.delayed(
+              const Duration(milliseconds: 50),
+              () => bloc.add(PlayAudio()),
+            );
+          } else {
+            bloc.add(PlayAudio());
+          }
+        }
+      } else {
+        // If togglePlay is false, just ensure it plays
+        if (currentBlocState is AudioPlayerLoaded &&
+            currentBlocState.position >= currentBlocState.duration &&
+            currentBlocState.duration > Duration.zero) {
+          bloc.add(const SeekAudio(position: Duration.zero));
+          // Add small delay before playing after seek
+          Future.delayed(
+            const Duration(milliseconds: 50),
+            () => bloc.add(PlayAudio()),
+          );
         } else {
           bloc.add(PlayAudio());
         }
-      } else {
-        bloc.add(PlayAudio());
       }
     }
   }
 
-  /// Open player with track loaded but don't play
+  /// Selects a track and ensures it's loaded in the player (via AudioPlayerBloc), but doesn't play.
+  /// Typically used when opening the player for editing metadata.
   void selectAndOpenPlayer(Track track) {
     print("Selecting and opening player for track: ${track.title}");
     final bloc = context.read<AudioPlayerBloc>();
     final currentBlocState = bloc.state;
     bool needsLoad = true;
+
     if (currentBlocState is AudioPlayerLoaded &&
         currentBlocState.currentSource == track.path) {
       needsLoad = false;
     }
 
     if (needsLoad) {
-      bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
-      // Optional: Auto-play when opening via edit? Maybe not.
+      // Load without requesting play
+      bloc.add(
+        LoadAudio(source: track.path, isUrl: track.isUrl, playWhenReady: false),
+      );
+    } else {
+      print("Track already loaded, not reloading for opening player.");
+      // Ensure player is paused if it was playing something else? Optional.
+      // if (currentBlocState is AudioPlayerLoaded && currentBlocState.isPlaying) {
+      //    bloc.add(PauseAudio());
+      // }
     }
   }
 
-  /// Handle rating changes
+  /// Handles rating changes triggered from the UI (e.g., RatingCellWidget).
+  /// Dispatches the update event to TrackMetadataBloc.
   void handleRatingChanged(int trackId, int newRating) {
     print("Rating changed in table: Track $trackId -> $newRating stars");
-    context.read<TrackManagementBloc>().add(
+    // <<< CHANGED: Dispatch event to TrackMetadataBloc >>>
+    context.read<TrackMetadataBloc>().add(
       UpdateTrackRating(trackId, newRating),
     );
+    // Note: The UI (e.g., HomeScreen) should listen to TrackMetadataBloc's
+    // success state and trigger a reload in TrackDataBloc if needed.
   }
 }

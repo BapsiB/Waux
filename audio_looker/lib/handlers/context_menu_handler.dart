@@ -7,7 +7,7 @@ import 'dart:io'; // Import for Platform checks
 import 'package:path/path.dart' as path_lib; // Import for path manipulation
 
 // Import BLoCs
-import 'package:audio_looker/blocs/track_management/track_management_bloc.dart';
+import 'package:audio_looker/blocs/track_management/track_data_bloc.dart';
 import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
 import 'package:audio_looker/blocs/playlist/playlist_bloc.dart';
 
@@ -271,10 +271,10 @@ class ContextMenuHandler {
   void _handleAddToPlaylist(String playlistId) {
     // ... (implementation remains the same) ...
     final addedTrackIds = Set<int>.from(selectedTrackIds); // Copy selection
-    final collectionState = context.read<TrackManagementBloc>().state;
+    final collectionState = context.read<TrackDataBloc>().state;
     final playlistBloc = context.read<PlaylistBloc>();
 
-    if (collectionState is TrackManagementLoaded) {
+    if (collectionState is TrackDataLoaded) {
       int addedCount = 0;
       for (final trackId in addedTrackIds) {
         try {
@@ -346,7 +346,7 @@ class ContextMenuHandler {
   /// Actually delete the selected tracks
   void _performDelete() {
     // ... (implementation remains the same) ...
-    final collectionBloc = context.read<TrackManagementBloc>();
+    final collectionBloc = context.read<TrackDataBloc>();
     final audioPlayerBloc = context.read<AudioPlayerBloc>();
     final idsToDelete = List<int>.from(selectedTrackIds); // Copy IDs for safety
 
@@ -373,18 +373,19 @@ class ContextMenuHandler {
     // ... (implementation remains the same) ...
     if (selectedTrackIds.length != 1) return null;
 
-    final state = context.read<TrackManagementBloc>().state;
-    List<Track> tracks = [];
+    final trackDataState =
+        context.read<TrackDataBloc>().state; // Or BlocProvider.of
+
+    List<Track> tracks = []; // Default to empty list
 
     // Get tracks from the appropriate state
-    if (state is TrackManagementLoaded) {
-      tracks = state.tracks;
-    } else if (state is TrackManagementLoading && state.currentTracks != null) {
-      tracks = state.currentTracks!;
-    } else if (state is TrackManagementError && state.tracks != null) {
-      tracks = state.tracks!;
-    } else if (state is TrackManagementProcessingWaveforms) {
-      tracks = state.tracks;
+    if (trackDataState is TrackDataLoaded) {
+      // If loaded, use the tracks from this state
+      tracks = trackDataState.tracks;
+    } else if (trackDataState is TrackDataLoading &&
+        trackDataState.previousTracks != null) {
+      // If loading, use the tracks from the *previous* loaded state
+      tracks = trackDataState.previousTracks!;
     }
 
     if (tracks.isEmpty) return null;

@@ -6,14 +6,15 @@ import 'package:provider/provider.dart'; // Import Provider
 
 // Import your BLoCs and Services
 import 'blocs/audio_player/audio_player_bloc.dart';
-import 'blocs/collection_management/collection_management_bloc.dart'; // Import the new management BLoC
-import 'blocs/track_management/track_management_bloc.dart'; // Import the new track BLoC
+import 'blocs/collection_management/collection_management_bloc.dart';
+import 'blocs/playlist/playlist_bloc.dart';
+import 'blocs/track_management/track_data_bloc.dart'; // <<< ADDED: Import new BLoC
+import 'blocs/track_management/track_metadata_bloc.dart'; // <<< ADDED: Import new BLoC
 // Import necessary events if you add initial events
 
-import 'blocs/playlist/playlist_bloc.dart'; // Import PlaylistBloc
 import 'services/audio_service.dart';
 import 'services/collection_service.dart';
-import 'services/playlist_service.dart'; // Import PlaylistService
+import 'services/playlist_service.dart';
 import 'screens/home_screen.dart';
 // Import other necessary files
 
@@ -74,47 +75,87 @@ class MyApp extends StatelessWidget {
                   playlistService: context.read<PlaylistService>(),
                   // PlaylistBloc depends on CollectionService to know the active collection
                   collectionService: context.read<CollectionService>(),
-                )..add(LoadPlaylists()),
+                )..add(LoadPlaylists()), // Load playlists initially
           ),
-
-          // --- REMOVE Old CollectionBloc Provider ---
-          // BlocProvider<CollectionBloc>(
-          //   create: (context) => CollectionBloc(context.read<CollectionService>())
-          //     ..add(LoadCollection()), // Old initial event
-          // ),
-
-          // +++ ADD New BLoC Providers +++
-
-          // 1. CollectionManagementBloc
           BlocProvider<CollectionManagementBloc>(
             create:
                 (context) => CollectionManagementBloc(
-                    // Assuming CollectionManagementBloc takes CollectionService
-                    context.read<CollectionService>(),
-                  )
-                  // Add an initial event to load the list of collections
-                  ..add(LoadCollectionList()), // Or similar initial event
+                  context.read<CollectionService>(),
+                )..add(LoadCollectionList()), // Load collection list initially
           ),
 
-          // 2. TrackManagementBloc
-          BlocProvider<TrackManagementBloc>(
+          // --- REMOVED Old TrackManagementBloc Provider ---
+          // BlocProvider<TrackManagementBloc>( ... ),
+
+          // +++ ADDED New BLoC Providers +++
+
+          // 1. TrackDataBloc
+          BlocProvider<TrackDataBloc>(
             create:
-                (context) => TrackManagementBloc(
-                  // TrackManagementBloc takes CollectionService
-                  context.read<CollectionService>(),
-                  // If TrackManagementBloc needs AudioService directly:
-                  // audioService: context.read<AudioService>(),
-                ),
+                (context) => TrackDataBloc(context.read<CollectionService>()),
+            // Note: Initial data loading for TrackDataBloc is typically triggered
+            // by the UI (e.g., HomeScreen) listening to CollectionManagementBloc
+            // and dispatching LoadTracks when a collection becomes active.
           ),
-          // Add other BLoCs if needed
+
+          // 2. TrackMetadataBloc
+          BlocProvider<TrackMetadataBloc>(
+            create:
+                (context) =>
+                    TrackMetadataBloc(context.read<CollectionService>()),
+          ),
+          // Add other BLoCs if needed (e.g., GlobalTagBloc, WaveformProcessingBloc later)
         ],
         child: MaterialApp(
-          title: 'Audio Organizer App',
+          title: 'Audio Looker', // Updated App Name
           theme: ThemeData(
-            primarySwatch: Colors.blue,
+            // Consider using a seed color for Material 3 theming
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+            useMaterial3: true,
             visualDensity: VisualDensity.adaptivePlatformDensity,
-            useMaterial3: true, // Optional: Use Material 3 design
+            // Optional: Define specific theme components
+            cardTheme: CardTheme(
+              elevation: 1,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            inputDecorationTheme: InputDecorationTheme(
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
+            ),
           ),
+          darkTheme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: Colors.deepPurple,
+              brightness: Brightness.dark, // Dark mode
+            ),
+            useMaterial3: true,
+            visualDensity: VisualDensity.adaptivePlatformDensity,
+            cardTheme: CardTheme(
+              elevation: 1,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            inputDecorationTheme: InputDecorationTheme(
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
+            ),
+          ),
+          themeMode: ThemeMode.system, // Or ThemeMode.light / ThemeMode.dark
           home: const HomeScreen(),
           // Define routes if you have more screens
         ),

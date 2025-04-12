@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:audio_looker/blocs/track_management/track_management_bloc.dart';
+import 'package:audio_looker/blocs/track_management/track_data_bloc.dart';
 import 'package:audio_looker/blocs/playlist/playlist_bloc.dart';
 
 class LoadingIndicator extends StatelessWidget {
@@ -10,18 +10,18 @@ class LoadingIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<TrackManagementBloc, TrackManagementState>(
+    return BlocBuilder<TrackDataBloc, TrackDataState>(
       builder: (context, state) {
         if (state is PlaylistLoading && state is! PlaylistLoaded) {
           // Provide the required 'child' argument to LoadingIndicator
           return Center(
             child: LoadingIndicator(child: Container()),
           ); // Pass an empty Container
-        } else if (state is TrackManagementLoading) {
+        } else if (state is TrackDataLoading) {
           return Stack(
             children: [
               // Show existing content if available
-              if (state.currentTracks != null)
+              if (state.previousTracks != null)
                 Opacity(opacity: 0.5, child: child),
 
               // Loading overlay

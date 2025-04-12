@@ -9,11 +9,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as pathLib;
 
 // Import BLoCs
-import 'package:audio_looker/blocs/track_management/track_management_bloc.dart';
-import 'package:audio_looker/blocs/collection_management/collection_management_bloc.dart';
+import '../blocs/track_management/track_data_bloc.dart'; // <<< CHANGED: Import new BLoC
+import '../blocs/collection_management/collection_management_bloc.dart';
 
 // Import models
-import 'package:audio_looker/services/collection_service.dart';
+import '../services/collection_service.dart';
 
 /// Handles file operations, imports, and drag & drop
 class FileHandler {
@@ -26,7 +26,8 @@ class FileHandler {
   Future<void> handleDroppedFiles(List<DropItem> items) async {
     if (items.isEmpty) return;
 
-    final collectionBloc = context.read<TrackManagementBloc>();
+    // <<< CHANGED: Read from TrackDataBloc >>>
+    final trackDataBloc = context.read<TrackDataBloc>();
     final activeCollection = _getActiveCollection();
 
     if (activeCollection == null) {
@@ -44,13 +45,13 @@ class FileHandler {
 
     List<String> filesToAdd = [];
     List<String> foldersToProcess = []; // For adding tracks within folder
+    List<String> rootsToAdd = []; // For adding root folders (local only)
 
     for (final item in items) {
       final path = item.path;
       try {
         print("Processing dropped path: $path");
         if (path.startsWith("web:")) {
-          // Handle web drops if necessary
           continue;
         }
         var type = await FileSystemEntity.type(path, followLinks: false);
@@ -58,7 +59,8 @@ class FileHandler {
         if (type == FileSystemEntityType.directory) {
           // Only add as ROOT folder if the active collection is LOCAL
           if (activeCollection.type == CollectionType.local) {
-            collectionBloc.add(AddRootFolder(path));
+            // trackDataBloc.add(AddRootFolder(path)); // <<< Dispatch to TrackDataBloc
+            rootsToAdd.add(path); // Collect roots to add
           }
           // Always process folder to add tracks inside it to the active collection
           foldersToProcess.add(path);
@@ -85,9 +87,15 @@ class FileHandler {
       }
     }
 
+    // Add Root Folders (if any)
+    for (final rootPath in rootsToAdd) {
+      trackDataBloc.add(AddRootFolder(rootPath));
+    }
+
     // Add individual files to the active collection
     if (filesToAdd.isNotEmpty) {
-      collectionBloc.add(AddTracksFromPaths(filesToAdd));
+      // <<< CHANGED: Use AddTracks event >>>
+      trackDataBloc.add(AddTracks(filesToAdd));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Adding ${filesToAdd.length} dropped files...")),
       );
@@ -95,12 +103,14 @@ class FileHandler {
 
     // Process tracks within dropped folders for the active collection
     for (final folderPath in foldersToProcess) {
-      await addTracksFromFolder(folderPath);
+      await addTracksFromFolder(folderPath); // This will dispatch AddTracks
     }
   }
 
   /// Picks and adds a folder to the collection
   Future<void> pickAndAddFolder() async {
+    // <<< CHANGED: Read from TrackDataBloc >>>
+    final trackDataBloc = context.read<TrackDataBloc>();
     final activeCollection = _getActiveCollection();
 
     if (activeCollection?.type != CollectionType.local) {
@@ -119,9 +129,8 @@ class FileHandler {
         dialogTitle: 'Select Folder to Add to Local Collection',
       );
       if (result != null) {
-        context.read<TrackManagementBloc>().add(
-          AddRootFolder(result),
-        ); // Add as root
+        // <<< CHANGED: Dispatch AddRootFolder to TrackDataBloc >>>
+        trackDataBloc.add(AddRootFolder(result));
         await addTracksFromFolder(result); // Also add tracks within
       }
     } catch (e) {
@@ -134,8 +143,11 @@ class FileHandler {
 
   /// Picks and adds audio files to the collection
   Future<void> pickAndAddAudioFile() async {
-    final collectionBloc = context.read<TrackManagementBloc>();
-    if (collectionBloc.state is! TrackManagementLoaded) {
+    // <<< CHANGED: Read from TrackDataBloc >>>
+    final trackDataBloc = context.read<TrackDataBloc>();
+    // Check if collection is active by checking the BLoC's state
+    if (trackDataBloc.state is TrackDataInitial ||
+        trackDataBloc.state is TrackDataError) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please select a collection first.")),
       );
@@ -163,7 +175,8 @@ class FileHandler {
           }
         }
         if (filePathsToAdd.isNotEmpty) {
-          collectionBloc.add(AddTracksFromPaths(filePathsToAdd));
+          // <<< CHANGED: Dispatch AddTracks to TrackDataBloc >>>
+          trackDataBloc.add(AddTracks(filePathsToAdd));
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text("Adding ${filePathsToAdd.length} files...")),
           );
@@ -179,7 +192,11 @@ class FileHandler {
 
   /// Shows dialog to add audio from URL
   void showAddUrlDialog() {
-    if (context.read<TrackManagementBloc>().state is! TrackManagementLoaded) {
+    // <<< CHANGED: Read from TrackDataBloc >>>
+    final trackDataBloc = context.read<TrackDataBloc>();
+    // Check if collection is active by checking the BLoC's state
+    if (trackDataBloc.state is TrackDataInitial ||
+        trackDataBloc.state is TrackDataError) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please select a collection first.")),
       );
@@ -208,9 +225,8 @@ class FileHandler {
                   if (urlController.text.isNotEmpty &&
                       Uri.tryParse(urlController.text)?.hasAbsolutePath ==
                           true) {
-                    context.read<TrackManagementBloc>().add(
-                      AddTrackFromUrl(urlController.text.trim()),
-                    );
+                    // <<< CHANGED: Dispatch AddTrackUrl to TrackDataBloc >>>
+                    trackDataBloc.add(AddTrackUrl(urlController.text.trim()));
                     Navigator.of(context).pop();
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -229,6 +245,8 @@ class FileHandler {
 
   /// Add tracks from a folder recursively
   Future<void> addTracksFromFolder(String dirPath) async {
+    // <<< CHANGED: Read from TrackDataBloc >>>
+    final trackDataBloc = context.read<TrackDataBloc>();
     debugPrint("Scanning folder for tracks: $dirPath");
     try {
       final dir = Directory(dirPath);
@@ -253,10 +271,8 @@ class FileHandler {
         return;
       }
 
-      // Dispatch AddTracksFromPaths to add found files to the active collection
-      context.read<TrackManagementBloc>().add(
-        AddTracksFromPaths(audioFilePaths),
-      );
+      // <<< CHANGED: Dispatch AddTracks to TrackDataBloc >>>
+      trackDataBloc.add(AddTracks(audioFilePaths));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -273,6 +289,7 @@ class FileHandler {
   }
 
   /// Helper method to find audio files recursively in a directory
+  /// (This method remains the same internally)
   Future<void> findAudioFilesRecursively(
     Directory dir,
     List<String> audioFilePaths,
@@ -300,11 +317,13 @@ class FileHandler {
   }
 
   /// Helper to get active collection
+  /// (This method remains the same, reading from CollectionManagementBloc)
   CollectionDefinition? _getActiveCollection() {
     final collectionState = context.read<CollectionManagementBloc>().state;
     if (collectionState is CollectionManagementLoaded) {
       return collectionState.activeCollectionDefinition;
     } else if (collectionState is CollectionManagementLoading) {
+      // Return the definition even if loading, as adding might still be valid
       return collectionState.activeCollectionDefinition;
     }
     return null;
