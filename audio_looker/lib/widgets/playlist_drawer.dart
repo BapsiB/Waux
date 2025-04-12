@@ -80,36 +80,43 @@ class PlaylistDrawer extends StatelessWidget {
       children: [
         // --- Header ---
         SizedBox(
-          height: 120, // Adjust height as needed
+          height: 48, // Adjust height as needed
           child: DrawerHeader(
             // Keep DrawerHeader for styling if desired
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer,
-            ),
-            padding: const EdgeInsets.fromLTRB(16, 16, 8, 8), // Adjust padding
+            // decoration: BoxDecoration(
+            //   color: Theme.of(context).colorScheme.primaryContainer,
+            // ),
+            padding: const EdgeInsets.fromLTRB(
+              16,
+              0,
+              8,
+              0,
+            ), // Adjust vertical padding to 0 or as needed
             margin: EdgeInsets.zero, // Remove default margin
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.center,
+              // Vertically center the children within the Row
+              crossAxisAlignment:
+                  CrossAxisAlignment
+                      .center, // This is likely the default, but ensures alignment
               children: [
                 Text(
                   'Playlists',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(color: Colors.blueGrey),
                 ),
                 // --- Add Playlist Button ---
                 IconButton(
-                  icon: const Icon(Icons.add_circle),
+                  icon: const Icon(Icons.add_circle_outline),
                   tooltip: 'Create New Playlist',
                   onPressed: () => _showCreatePlaylistDialog(context),
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ],
             ),
           ),
         ),
-
         // --- Playlist List ---
         Expanded(
           child: BlocConsumer<PlaylistBloc, PlaylistState>(

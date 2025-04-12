@@ -545,7 +545,6 @@ class AudioService {
 
   // Playback controls
   Future<void> play() async {
-    // <-- ADD THIS LOGGING -->
     final currentSource = _audioPlayer.audioSource;
     if (currentSource == null) {
       print(

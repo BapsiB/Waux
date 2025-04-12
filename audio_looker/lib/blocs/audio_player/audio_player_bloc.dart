@@ -19,15 +19,18 @@ class LoadAudio extends AudioPlayerEvent {
   final String source;
   final bool isUrl;
   final bool playWhenReady;
+  final double? initialSeekRatio; // <<< CHANGED: Duration? to double?
 
   const LoadAudio({
     required this.source,
     required this.isUrl,
     this.playWhenReady = false,
+    this.initialSeekRatio, // <<< CHANGED
   });
 
   @override
-  List<Object?> get props => [source, isUrl, playWhenReady];
+  // <<< CHANGED prop name for clarity
+  List<Object?> get props => [source, isUrl, playWhenReady, initialSeekRatio];
 }
 
 class PlayAudio extends AudioPlayerEvent {}
@@ -227,34 +230,41 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
       print('🔄 Bloc: Setting up stream subscriptions for ${event.source}');
       _setupSubscriptions();
 
-      final initialDuration = _audioService.durationStream;
+      final initialDuration =
+          await _audioService.durationStream.first ?? Duration.zero;
       final initialWaveform = _audioService.waveformData;
       final initialTags = _audioService.getTagsForAudio(event.source);
 
       print('🔄 Bloc: Emitting initial loaded state for ${event.source}');
-      emit(
-        AudioPlayerLoaded(
-          currentSource: event.source,
-          isPlaying: false,
-          position: Duration.zero,
-          duration: await initialDuration.first ?? Duration.zero,
-          waveformData: initialWaveform,
-          tags: List<AudioTag>.from(initialTags),
-        ),
+      final loadedState = AudioPlayerLoaded(
+        currentSource: event.source,
+        isPlaying: false,
+        position: Duration.zero, // Start position at 0 initially
+        duration: initialDuration,
+        waveformData: initialWaveform,
+        tags: List<AudioTag>.from(initialTags),
       );
+
+      print('🔄 Bloc: Emitting initial loaded state for ${event.source}');
+      emit(loadedState);
       print(
         '✅ Bloc: Successfully emitted initial loaded state for ${event.source}',
       );
 
-      // Check the flag *after* emitting the loaded state
-      if (playWhenReady) {
-        print('▶️ Bloc: playWhenReady is true, calling _audioService.play()');
-        // Add a small delay to allow the player to potentially reach 'ready' state,
-        // although ideally AudioService.loadAudio should complete when ready.
-        // You might need to adjust this based on player behavior.
+      if (event.initialSeekRatio != null && initialDuration > Duration.zero) {
+        final seekPosition = initialDuration * event.initialSeekRatio!;
+        print(
+          '🔄 Bloc: Applying initial seek ratio ${event.initialSeekRatio} -> position: $seekPosition',
+        );
+        add(SeekAudio(position: seekPosition)); // Dispatch Seek event
+        // Give the seek a moment to process before potentially playing
         await Future.delayed(const Duration(milliseconds: 50));
-        _audioService.play();
-        // The playerStateStream listener will then update the state to isPlaying: true
+      }
+
+      // Check the flag *after* emitting the loaded state
+      if (event.playWhenReady) {
+        print('▶️ Bloc: playWhenReady is true, calling _audioService.play()');
+        _audioService.play(); // Request playback
       }
 
       _loadingTimeout?.cancel();

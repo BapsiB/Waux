@@ -53,9 +53,6 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
     super.dispose();
   }
 
-  // --- REMOVE _updateStateFromBloc method ---
-  // void _updateStateFromBloc(AudioPlayerState playerState) { ... } // REMOVED
-
   // Helper for drag/tap calculation (remains mostly the same)
   double? _calculateSeekRatio(Offset globalPosition) {
     final RenderBox? box =
@@ -122,40 +119,44 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
                 behavior: HitTestBehavior.opaque,
                 // onTapDown remains the same (calls parent callback)
                 onTapDown: (details) {
-                  print("Waveform Tapped - Calling onPlayAndMinimize");
-                  widget
-                      .onPlayAndMinimize(); // Call the same callback as the button
-
-                  // --- REMOVE the old logic below ---
+                  // --- REVISED MODIFICATION ---
                   final bloc = widget.audioPlayerBloc;
                   final currentState = bloc.state;
+                  double? seekRatio = _calculateSeekRatio(
+                    details.globalPosition,
+                  ); // Calculate ratio (0.0-1.0)
+
+                  print("Waveform Tapped. Seek Ratio: $seekRatio");
+
+                  // Call parent callback (for UI like minimizing/opening player)
+                  widget.onPlayAndMinimize();
+
+                  // Handle loading/playing
                   if (currentState is AudioPlayerLoaded &&
-                      currentState.currentSource == widget.track.path &&
-                      currentState.duration > Duration.zero) {
-                    final seekRatio = _calculateSeekRatio(
-                      details.globalPosition,
-                    );
-                    if (seekRatio != null) {
+                      currentState.currentSource == widget.track.path) {
+                    // Already loaded: Seek (if ratio exists & duration is valid) and Play
+                    if (seekRatio != null &&
+                        currentState.duration > Duration.zero) {
                       final seekPosition = currentState.duration * seekRatio;
                       bloc.add(SeekAudio(position: seekPosition));
-                      bloc.add(PlayAudio()); // Play after seeking on tap
+                    }
+                    // Ensure it plays if paused
+                    if (!currentState.isPlaying) {
+                      bloc.add(PlayAudio());
                     }
                   } else {
+                    // Not loaded or different track: Load, pass seek RATIO, and request play
                     bloc.add(
                       LoadAudio(
                         source: widget.track.path,
                         isUrl: widget.track.isUrl,
+                        playWhenReady: true, // <<< Play when ready after tap
+                        initialSeekRatio:
+                            seekRatio, // <<< Pass the calculated ratio
                       ),
                     );
-                    Future.delayed(const Duration(milliseconds: 150), () {
-                      if (!mounted) return;
-                      final postDelayState = bloc.state;
-                      if (postDelayState is AudioPlayerLoaded &&
-                          postDelayState.currentSource == widget.track.path) {
-                        bloc.add(PlayAudio());
-                      }
-                    });
                   }
+                  // --- END REVISED MODIFICATION ---
                 },
                 // --- Drag Handlers (Update to use playerState from builder scope) ---
                 onHorizontalDragStart: (details) {
