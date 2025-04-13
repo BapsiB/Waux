@@ -310,10 +310,20 @@ class AudioService {
           }
         }
       } else {
-        // For YouTube, clear any existing waveform data
-        print('🔍 AudioService: Skipping waveform extraction for YouTube URL.');
-        _waveformData = null;
-        _waveformController.add([]); // Emit empty list to clear UI
+        // For YouTube, generate and use the random fallback waveform
+        print(
+          '🔍 AudioService: Generating random fallback waveform for YouTube URL.',
+        );
+        _generateRandomWaveform(); // Generate the random data
+        if (_waveformData != null) {
+          _waveformController.add(_waveformData!); // Emit the random data
+          print('✅ AudioService: Emitted random waveform for YouTube URL.');
+        } else {
+          print(
+            '⚠️ AudioService: Fallback waveform generation failed for YouTube URL.',
+          );
+          _waveformController.add([]); // Emit empty list as a last resort
+        }
       }
 
       print('✅ AudioService: Successfully completed loadAudio');

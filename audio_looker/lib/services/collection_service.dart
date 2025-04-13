@@ -121,6 +121,11 @@ class Track {
       generalTags: generalTags ?? this.generalTags,
     );
   }
+
+  bool get isYoutube {
+    return isUrl &&
+        (path.contains('youtube.com/') || path.contains('youtu.be/'));
+  }
 }
 
 // Tag model remains the same (global tags stored in SharedPreferences)

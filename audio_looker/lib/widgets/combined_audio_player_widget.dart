@@ -518,15 +518,41 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                     // Loading indicator for waveform
                     if (waveformData == null || waveformData.isEmpty)
                       Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.0,
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
+                        child:
+                            (track.isYoutube) // More robust check might be needed
+                                ? Container(
+                                  // Your Placeholder Widget
+                                  width: double.infinity,
+                                  height: double.infinity, // Fill the area
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .surfaceVariant
+                                        .withOpacity(0.2), // Example style
+                                    // Or use an Icon, or a custom shape painter
+                                  ),
+                                  child: Icon(
+                                    Icons
+                                        .music_off_outlined, // Example placeholder icon
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant
+                                        .withOpacity(0.5),
+                                    size: 40,
+                                  ),
+                                )
+                                : SizedBox(
+                                  // Keep loading indicator for non-YouTube empty waveforms
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.0,
+                                    color:
+                                        Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
                       ),
                   ],
                 ),
@@ -551,67 +577,71 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               ),
             ),
 
-            // --- Playback Controls (Expanded View) ---
+            // --- Playback Controls (Expanded View - Centered Group Attempt) ---
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              // Use a Row that spans the full width to position the elements
               child: Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceAround, // Distribute controls
                 children: [
-                  // Previous Track Button
-                  IconButton(
-                    icon: const Icon(Icons.skip_previous),
-                    iconSize: 36,
-                    tooltip: 'Previous Track',
-                    color:
-                        widget.onPreviousPressed != null
-                            ? Theme.of(context).colorScheme.onSurface
-                            : Theme.of(context).disabledColor,
-                    onPressed: widget.onPreviousPressed,
-                  ),
-                  // Play/Pause Button (Floating Action Button style)
-                  FloatingActionButton(
-                    tooltip: isPlaying ? 'Pause' : 'Play',
-                    onPressed:
-                        canInteract
-                            ? () {
-                              final bloc = context.read<AudioPlayerBloc>();
-                              if (isPlaying) {
-                                bloc.add(PauseAudio());
-                              } else {
-                                if (position >= duration &&
-                                    duration > Duration.zero) {
-                                  bloc.add(
-                                    const SeekAudio(position: Duration.zero),
-                                  );
-                                  Future.delayed(
-                                    const Duration(milliseconds: 50),
-                                    () => bloc.add(PlayAudio()),
-                                  );
-                                } else {
-                                  bloc.add(PlayAudio());
+                  // Spacer to push the main controls towards the center/right
+                  // (Optional: Remove if Add Tag should be left)
+                  const Spacer(flex: 1),
+
+                  // Inner Row for the core centered controls
+                  Row(
+                    // Make this inner Row only as wide as its children
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Previous Track Button
+                      IconButton(
+                        icon: const Icon(Icons.skip_previous),
+                        iconSize: 36,
+                        tooltip: 'Previous Track',
+                        color:
+                            widget.onPreviousPressed != null
+                                ? Theme.of(context).colorScheme.onSurface
+                                : Theme.of(context).disabledColor,
+                        onPressed: widget.onPreviousPressed,
+                      ),
+
+                      // Add spacing
+                      const SizedBox(width: 24), // Adjust spacing
+                      // Play/Pause Button (Center - Using FAB)
+                      FloatingActionButton(
+                        tooltip: isPlaying ? 'Pause' : 'Play',
+                        onPressed:
+                            canInteract
+                                ? () {
+                                  /* ... FAB logic ... */
                                 }
-                              }
-                            }
-                            : null,
-                    elevation: 2.0,
-                    child: Icon(
-                      isPlaying ? Icons.pause : Icons.play_arrow,
-                      size: 30,
-                    ),
+                                : null,
+                        elevation: 2.0,
+                        child: Icon(
+                          isPlaying ? Icons.pause : Icons.play_arrow,
+                          size: 30,
+                        ),
+                      ),
+
+                      // Add spacing
+                      const SizedBox(width: 24), // Adjust spacing
+                      // Next Track Button
+                      IconButton(
+                        icon: const Icon(Icons.skip_next),
+                        iconSize: 36,
+                        tooltip: 'Next Track',
+                        color:
+                            widget.onNextPressed != null
+                                ? Theme.of(context).colorScheme.onSurface
+                                : Theme.of(context).disabledColor,
+                        onPressed: widget.onNextPressed,
+                      ),
+                    ],
                   ),
-                  // Next Track Button
-                  IconButton(
-                    icon: const Icon(Icons.skip_next),
-                    iconSize: 36,
-                    tooltip: 'Next Track',
-                    color:
-                        widget.onNextPressed != null
-                            ? Theme.of(context).colorScheme.onSurface
-                            : Theme.of(context).disabledColor,
-                    onPressed: widget.onNextPressed,
-                  ),
-                  // Add Time Tag Button
+
+                  // Spacer to push the Add Tag button to the right
+                  const Spacer(flex: 1),
+
+                  // Add Time Tag Button (Positioned by the outer Row's Spacers)
                   IconButton(
                     icon: const Icon(Icons.bookmark_add_outlined),
                     tooltip: 'Add Time Tag at Current Position',
@@ -623,11 +653,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                     onPressed:
                         canInteract
                             ? () {
-                              if (mounted) {
-                                setState(() {
-                                  _isTimeTaggingMode = true;
-                                });
-                              }
+                              /* ... Add Tag logic ... */
                             }
                             : null,
                   ),

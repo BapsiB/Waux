@@ -203,7 +203,6 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     print('🔄 Bloc: Received LoadAudio event for source: ${event.source}');
     emit(AudioPlayerLoading());
     await _cancelSubscriptions();
-    bool playWhenReady = event.playWhenReady;
 
     _loadingTimeout?.cancel();
     _loadingTimeout = Timer(const Duration(seconds: 20), () {
