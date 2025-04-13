@@ -10,7 +10,7 @@ import 'blocs/collection_management/collection_management_bloc.dart';
 import 'blocs/playlist/playlist_bloc.dart';
 import 'blocs/track_management/track_data_bloc.dart'; // <<< ADDED: Import new BLoC
 import 'blocs/track_management/track_metadata_bloc.dart'; // <<< ADDED: Import new BLoC
-// Import necessary events if you add initial events
+import 'blocs/track_management/global_tag_bloc.dart';
 
 import 'services/audio_service.dart';
 import 'services/collection_service.dart';
@@ -103,6 +103,14 @@ class MyApp extends StatelessWidget {
             create:
                 (context) =>
                     TrackMetadataBloc(context.read<CollectionService>()),
+          ),
+          // +++ ADD GlobalTagBloc Provider HERE +++
+          BlocProvider<GlobalTagBloc>(
+            create:
+                (context) => GlobalTagBloc(
+                  context.read<CollectionService>(),
+                  // Optionally load tags immediately after creation
+                )..add(LoadGlobalTags()),
           ),
           // Add other BLoCs if needed (e.g., GlobalTagBloc, WaveformProcessingBloc later)
         ],

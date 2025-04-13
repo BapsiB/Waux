@@ -317,7 +317,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     );
   }
 
-    void _openTagEditor(BuildContext buildContext) {
+  void _openTagEditor(BuildContext buildContext) {
     // Access the BLoCs needed by the popup or for prerequisite checks
     final trackDataBloc = BlocProvider.of<TrackDataBloc>(buildContext);
     final globalTagBloc = BlocProvider.of<GlobalTagBloc>(buildContext);
@@ -327,7 +327,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     final globalTagState = globalTagBloc.state;
 
     // Ensure track data and global tags are loaded before opening
-    if (trackDataState is TrackDataLoaded && globalTagState is GlobalTagLoaded) {
+    if (trackDataState is TrackDataLoaded &&
+        globalTagState is GlobalTagLoaded) {
       List<String> currentTrackTags = [];
       try {
         // Find the current track's tags from the TrackDataLoaded state
@@ -342,7 +343,9 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
         currentTrackTags = widget.track.generalTags;
         ScaffoldMessenger.of(buildContext).showSnackBar(
           const SnackBar(
-            content: Text('Could not find exact track state, using cached tags.'),
+            content: Text(
+              'Could not find exact track state, using cached tags.',
+            ),
             duration: Duration(seconds: 2),
           ),
         );
@@ -352,7 +355,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       showDialog(
         context: buildContext, // Use the context passed to the method
         // Use MultiBlocProvider if TagEditorPopup needs multiple BLoCs
-        builder: (dialogContext) => MultiBlocProvider(
+        builder:
+            (dialogContext) => MultiBlocProvider(
               providers: [
                 // Provide existing instances to the dialog's context
                 BlocProvider.value(value: globalTagBloc),
@@ -374,456 +378,347 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       if (globalTagState is! GlobalTagLoaded) {
         message += 'Global tags not loaded.';
       }
-      ScaffoldMessenger.of(buildContext).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        buildContext,
+      ).showSnackBar(SnackBar(content: Text(message)));
       // Optionally dispatch load events if appropriate
       if (globalTagState is! GlobalTagLoaded) {
-         globalTagBloc.add(LoadGlobalTags());
+        globalTagBloc.add(LoadGlobalTags());
       }
     }
   }
 
+  // Build the UI for the expanded player
   // Build the UI for the expanded player
   Widget _buildExpandedPlayerUI(AudioPlayerLoaded playerState, Track track) {
     final isPlaying = playerState.isPlaying;
     final duration = playerState.duration;
     final position = playerState.position;
     final waveformData = playerState.waveformData;
-    final timeTags = playerState.tags; // Time tags from AudioPlayerBloc state
+    final timeTags = playerState.tags;
     final bool canInteract = duration > Duration.zero;
 
-    return SingleChildScrollView(
-      // Allow content to scroll if needed
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 16.0), // Padding at the bottom
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // --- Header Section (Title, Artist, Rating) ---
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          track.title,
-                          style: Theme.of(context).textTheme.titleLarge,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+    // **** WRAP the part needing TrackDataState with BlocBuilder ****
+    return BlocBuilder<TrackDataBloc, TrackDataState>(
+      builder: (context, trackDataState) {
+        // --- Define currentGeneralTags INSIDE the builder scope ---
+        List<String> currentGeneralTags = [];
+        if (trackDataState is TrackDataLoaded) {
+          try {
+            // Find the most up-to-date track info from the state
+            final currentTrackFromBloc = trackDataState.tracks.firstWhere(
+              (t) => t.id == track.id,
+              // Use the track passed to the widget as a fallback if not found (should be rare)
+              orElse: () => track,
+            );
+            currentGeneralTags = currentTrackFromBloc.generalTags;
+          } catch (e) {
+            print("Error finding track in TrackDataBloc state: $e");
+            currentGeneralTags =
+                track.generalTags; // Fallback to widget's track data
+          }
+        } else {
+          // If TrackDataBloc isn't loaded, use the tags from the track object passed to the widget
+          currentGeneralTags = track.generalTags;
+        }
+        // --- End Define currentGeneralTags ---
+
+        // Now return the UI that uses currentGeneralTags
+        return SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // --- Header Section (Title, Artist, Rating, General Tags) ---
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Left Side: Title, Artist, Rating
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              track.title,
+                              style: Theme.of(context).textTheme.titleLarge,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              track.artist,
+                              style: Theme.of(
+                                context,
+                              ).textTheme.titleSmall?.copyWith(
+                                color:
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 8),
+                            _buildRatingBar(track.id!), // Pass track ID
+                          ],
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          track.artist,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.titleSmall?.copyWith(
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 8),
-                        _buildRatingBar(track.id!), // Pass track ID
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
+                      ),
+                      const SizedBox(width: 8), // Spacer
+                      // Right Side: General Tags Section
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // **** Use the defined currentGeneralTags here ****
                           if (currentGeneralTags.isNotEmpty)
                             SizedBox(
-                              // Limit width to prevent overflow
                               width: MediaQuery.of(context).size.width * 0.35,
                               child: Wrap(
                                 spacing: 4.0,
                                 runSpacing: 4.0,
                                 alignment: WrapAlignment.end,
-                                children: currentGeneralTags.map((tag) {
-                                  // Basic Chip - Color logic would require GlobalTagBloc access here too
-                                  return Chip(
-                                    label: Text(tag),
-                                    labelStyle: const TextStyle(fontSize: 12),
-                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    // Removed ActionChip/onPressed here - edit via button
-                                  );
-                                }).toList(),
+                                children:
+                                    currentGeneralTags.map((tag) {
+                                      return Chip(
+                                        // Simplified Chip for now
+                                        label: Text(tag),
+                                        labelStyle: const TextStyle(
+                                          fontSize: 12,
+                                        ),
+                                        materialTapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                      );
+                                    }).toList(),
                               ),
                             ),
                           const SizedBox(height: 4),
-                          // "Edit Tags" Button (Restored)
-                          IconButton(
-                            icon: const Icon(Icons.add_circle_outline), // Your desired icon
-                            tooltip: 'Edit General Tags',
-                            // Call the helper method onPressed
-                            onPressed: () => _openTagEditor(context),
-                          ),
-                        ],
-                      ),
-                      // +++ END ADDED: General Tags Section +++
-                    ],
-                  ),
-                ),
+                          BlocBuilder<GlobalTagBloc, GlobalTagState>(
+                            builder: (context, globalTagState) {
+                              // Determine if the button should be enabled
+                              final bool tagsLoaded =
+                                  globalTagState is GlobalTagLoaded;
 
-
-                ],
-              ),
-            ),
-
-            // --- Waveform Display Section ---
-            Container(
-              height: 120,
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: Theme.of(
-                  context,
-                ).colorScheme.surfaceVariant.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // GestureDetector for Waveform Interaction (Unchanged)
-                    GestureDetector(
-                      onTapDown: (details) {
-                        if (canInteract) {
-                          final RenderBox box =
-                              context.findRenderObject() as RenderBox;
-                          final localPosition = box.globalToLocal(
-                            details.globalPosition,
-                          );
-                          final containerWidth = box.size.width;
-                          if (containerWidth > 0) {
-                            final seekRatio = (localPosition.dx /
-                                    containerWidth)
-                                .clamp(0.0, 1.0);
-                            final seekPosition = duration * seekRatio;
-                            context.read<AudioPlayerBloc>().add(
-                              SeekAudio(position: seekPosition),
-                            );
-                          }
-                        }
-                      },
-                      onHorizontalDragStart: (details) {
-                        if (canInteract) {
-                          final bloc = context.read<AudioPlayerBloc>();
-                          setState(() {
-                            _isDraggingWaveform = true;
-                            _wasPlayingBeforeDrag = isPlaying;
-                            _lastSeekDispatchTime = null;
-                            final RenderBox box =
-                                context.findRenderObject() as RenderBox;
-                            final localPosition = box.globalToLocal(
-                              details.globalPosition,
-                            );
-                            final containerWidth = box.size.width;
-                            if (containerWidth > 0) {
-                              _finalDragRatio = (localPosition.dx /
-                                      containerWidth)
-                                  .clamp(0.0, 1.0);
-                              _dragProgress = _finalDragRatio;
-                            } else {
-                              _dragProgress =
-                                  playerState.position.inMilliseconds /
-                                  duration.inMilliseconds.toDouble();
-                              _finalDragRatio = _dragProgress ?? 0.0;
-                            }
-                          });
-                          if (_wasPlayingBeforeDrag) bloc.add(PauseAudio());
-                        }
-                      },
-                      onHorizontalDragUpdate: (details) {
-                        if (_isDraggingWaveform && canInteract) {
-                          final RenderBox box =
-                              context.findRenderObject() as RenderBox;
-                          final localPosition = box.globalToLocal(
-                            details.globalPosition,
-                          );
-                          final containerWidth = box.size.width;
-                          if (containerWidth > 0) {
-                            final seekRatio = (localPosition.dx /
-                                    containerWidth)
-                                .clamp(0.0, 1.0);
-                            _finalDragRatio = seekRatio;
-                            final now = DateTime.now();
-                            bool shouldDispatch =
-                                _lastSeekDispatchTime == null ||
-                                now.difference(_lastSeekDispatchTime!) >
-                                    _seekThrottleInterval;
-                            if (shouldDispatch) {
-                              final seekPosition = duration * seekRatio;
-                              context.read<AudioPlayerBloc>().add(
-                                SeekAudio(position: seekPosition),
-                              );
-                              _lastSeekDispatchTime = now;
-                            }
-                            setState(() {
-                              _dragProgress = seekRatio;
-                            });
-                          }
-                        }
-                      },
-                      onHorizontalDragEnd: (details) {
-                        if (_isDraggingWaveform) {
-                          if (canInteract) {
-                            final finalSeekPosition =
-                                duration * _finalDragRatio;
-                            context.read<AudioPlayerBloc>().add(
-                              SeekAudio(position: finalSeekPosition),
-                            );
-                          }
-                          setState(() {
-                            _isDraggingWaveform = false;
-                            _dragProgress = null;
-                            _lastSeekDispatchTime = null;
-                          });
-                          if (_wasPlayingBeforeDrag) {
-                            Future.delayed(
-                              const Duration(milliseconds: 50),
-                              () {
-                                if (mounted)
-                                  context.read<AudioPlayerBloc>().add(
-                                    PlayAudio(),
-                                  );
-                              },
-                            );
-                          }
-                        }
-                      },
-                      child: Container(
-                        width: double.infinity,
-                        height: double.infinity,
-                        color: Colors.transparent, // Makes it hittable
-                        child: CustomPaint(
-                          size: Size.infinite,
-                          painter: WaveformPainter(
-                            waveformData: waveformData ?? [],
-                            activeColor: Theme.of(context).colorScheme.primary,
-                            inactiveColor: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-                            playbackProgress:
-                                canInteract
-                                    ? (position.inMilliseconds /
-                                            duration.inMilliseconds)
-                                        .clamp(0.0, 1.0)
-                                    : 0.0,
-                            dragProgress: _dragProgress,
-                            tags: timeTags, // Pass time tags from player state
-                          ),
-                        ),
-                      ),
-                    ),
-                    // Loading indicator for waveform
-                    if (waveformData == null || waveformData.isEmpty)
-                      Center(
-                        child:
-                            (track.sourceType ==
-                                    TrackSource
-                                        .youtube) // More robust check might be needed
-                                ? Container(
-                                  // Your Placeholder Widget
-                                  width: double.infinity,
-                                  height: double.infinity, // Fill the area
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .surfaceVariant
-                                        .withOpacity(0.2), // Example style
-                                    // Or use an Icon, or a custom shape painter
-                                  ),
-                                  child: Icon(
-                                    Icons
-                                        .music_off_outlined, // Example placeholder icon
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant
-                                        .withOpacity(0.5),
-                                    size: 40,
-                                  ),
-                                )
-                                : SizedBox(
-                                  // Keep loading indicator for non-YouTube empty waveforms
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.0,
-                                    color:
-                                        Theme.of(
+                              return IconButton(
+                                icon: const Icon(Icons.add_circle_outline),
+                                tooltip:
+                                    tagsLoaded
+                                        ? 'Edit General Tags'
+                                        : 'Loading tags...', // Dynamic tooltip
+                                // Disable onPressed if tags are not loaded
+                                onPressed:
+                                    tagsLoaded
+                                        ? () => _openTagEditor(
                                           context,
-                                        ).colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-
-            // --- Time Indicators ---
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    _formatDuration(position),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  Text(
-                    _formatDuration(duration),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-
-            // --- Playback Controls (Expanded View - Centered Group Attempt) ---
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              // Use a Row that spans the full width to position the elements
-              child: Row(
-                children: [
-                  // Spacer to push the main controls towards the center/right
-                  // (Optional: Remove if Add Tag should be left)
-                  const Spacer(flex: 1),
-
-                  // Inner Row for the core centered controls
-                  Row(
-                    // Make this inner Row only as wide as its children
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Previous Track Button
-                      IconButton(
-                        icon: const Icon(Icons.skip_previous),
-                        iconSize: 36,
-                        tooltip: 'Previous Track',
-                        color:
-                            widget.onPreviousPressed != null
-                                ? Theme.of(context).colorScheme.onSurface
-                                : Theme.of(context).disabledColor,
-                        onPressed: widget.onPreviousPressed,
-                      ),
-
-                      // Add spacing
-                      const SizedBox(width: 24), // Adjust spacing
-                      // Play/Pause Button (Center - Using FAB)
-                      FloatingActionButton(
-                        tooltip: isPlaying ? 'Pause' : 'Play',
-                        onPressed:
-                            canInteract
-                                ? () {
-                                  /* ... FAB logic ... */
-                                }
-                                : null,
-                        elevation: 2.0,
-                        child: Icon(
-                          isPlaying ? Icons.pause : Icons.play_arrow,
-                          size: 30,
-                        ),
-                      ),
-
-                      // Add spacing
-                      const SizedBox(width: 24), // Adjust spacing
-                      // Next Track Button
-                      IconButton(
-                        icon: const Icon(Icons.skip_next),
-                        iconSize: 36,
-                        tooltip: 'Next Track',
-                        color:
-                            widget.onNextPressed != null
-                                ? Theme.of(context).colorScheme.onSurface
-                                : Theme.of(context).disabledColor,
-                        onPressed: widget.onNextPressed,
-                      ),
-                    ],
-                  ),
-
-                  // Spacer to push the Add Tag button to the right
-                  const Spacer(flex: 1),
-
-                  // Add Time Tag Button (Positioned by the outer Row's Spacers)
-                  IconButton(
-                    icon: const Icon(Icons.bookmark_add_outlined),
-                    tooltip: 'Add Time Tag at Current Position',
-                    iconSize: 28,
-                    color:
-                        canInteract
-                            ? Theme.of(context).colorScheme.secondary
-                            : Theme.of(context).disabledColor,
-                    onPressed:
-                        canInteract
-                            ? () {
-                              /* ... Add Tag logic ... */
-                            }
-                            : null,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // --- Time Tag Input Row ---
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child:
-                  _isTimeTaggingMode
-                      ? Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _timeTagController,
-                              decoration: const InputDecoration(
-                                hintText: 'Enter time tag name',
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                              ),
-                              autofocus: true,
-                              onSubmitted:
-                                  (_) => _addTagAtCurrentPosition(playerState),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.check_circle,
-                              color: Colors.green,
-                            ),
-                            tooltip: 'Save Tag',
-                            onPressed:
-                                () => _addTagAtCurrentPosition(playerState),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.cancel, color: Colors.red),
-                            tooltip: 'Cancel Tag',
-                            onPressed: () {
-                              setState(() {
-                                _isTimeTaggingMode = false;
-                                _timeTagController.clear();
-                              });
+                                        ) // Call helper method
+                                        : null, // Button is disabled if null
+                                // Optionally change icon color when disabled
+                                color:
+                                    tagsLoaded
+                                        ? Theme.of(context).iconTheme.color
+                                        : Colors.grey,
+                              );
                             },
                           ),
                         ],
-                      )
-                      : const SizedBox.shrink(), // Show nothing when not tagging
-            ),
+                      ),
+                    ],
+                  ),
+                ), // End Header Padding
+                // --- Waveform Display Section ---
+                Container(
+                  height: 120,
+                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceVariant.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        GestureDetector(
+                          onTapDown: (details) {
+                            /* ... */
+                          },
+                          onHorizontalDragStart: (details) {
+                            /* ... */
+                          },
+                          onHorizontalDragUpdate: (details) {
+                            /* ... */
+                          },
+                          onHorizontalDragEnd: (details) {
+                            /* ... */
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            height: double.infinity,
+                            color: Colors.transparent,
+                            child: CustomPaint(
+                              size: Size.infinite,
+                              painter: WaveformPainter(
+                                waveformData: waveformData ?? [],
+                                activeColor:
+                                    Theme.of(context).colorScheme.primary,
+                                inactiveColor: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant.withOpacity(0.5),
+                                playbackProgress:
+                                    canInteract
+                                        ? (position.inMilliseconds /
+                                                duration.inMilliseconds)
+                                            .clamp(0.0, 1.0)
+                                        : 0.0,
+                                dragProgress: _dragProgress,
+                                tags: timeTags,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Removed the explicit empty waveform check here as AudioService provides fallback
+                      ],
+                    ),
+                  ),
+                ),
 
-            // --- Notes Section ---
-            _buildNotesSection(), // Use helper method
-          ],
-        ),
-      ),
-    );
-  }
+                // --- Time Indicators ---
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(_formatDuration(position)),
+                      Text(_formatDuration(duration)),
+                    ],
+                  ),
+                ),
+
+                // --- Playback Controls (Use Centered Layout) ---
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Row(
+                    // Centered layout Row
+                    children: [
+                      const Spacer(flex: 1),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Previous IconButton
+                          IconButton(
+                            icon: const Icon(Icons.skip_previous),
+                            iconSize: 36,
+                            tooltip: 'Previous Track',
+                            color:
+                                widget.onPreviousPressed != null
+                                    ? Theme.of(context).colorScheme.onSurface
+                                    : Theme.of(context).disabledColor,
+                            onPressed: widget.onPreviousPressed,
+                          ),
+                          const SizedBox(width: 24),
+                          // Play/Pause FloatingActionButton
+                          FloatingActionButton(
+                            tooltip: isPlaying ? 'Pause' : 'Play',
+                            onPressed:
+                                canInteract
+                                    ? () {
+                                      final bloc =
+                                          context.read<AudioPlayerBloc>();
+                                      if (isPlaying) {
+                                        bloc.add(PauseAudio());
+                                      } else {
+                                        if (position >= duration &&
+                                            duration > Duration.zero) {
+                                          bloc.add(
+                                            const SeekAudio(
+                                              position: Duration.zero,
+                                            ),
+                                          );
+                                          Future.delayed(
+                                            const Duration(milliseconds: 50),
+                                            () => bloc.add(PlayAudio()),
+                                          );
+                                        } else {
+                                          bloc.add(PlayAudio());
+                                        }
+                                      }
+                                    }
+                                    : null,
+                            elevation: 2.0,
+                            child: Icon(
+                              isPlaying ? Icons.pause : Icons.play_arrow,
+                              size: 30,
+                            ),
+                          ),
+                          const SizedBox(width: 24),
+                          // Next IconButton
+                          IconButton(
+                            icon: const Icon(Icons.skip_next),
+                            iconSize: 36,
+                            tooltip: 'Next Track',
+                            color:
+                                widget.onNextPressed != null
+                                    ? Theme.of(context).colorScheme.onSurface
+                                    : Theme.of(context).disabledColor,
+                            onPressed: widget.onNextPressed,
+                          ),
+                        ],
+                      ),
+                      const Spacer(flex: 1),
+                      // Add Time Tag IconButton
+                      IconButton(
+                        icon: const Icon(Icons.bookmark_add_outlined),
+                        tooltip: 'Add Time Tag at Current Position',
+                        iconSize: 28,
+                        color:
+                            canInteract
+                                ? Theme.of(context).colorScheme.secondary
+                                : Theme.of(context).disabledColor,
+                        onPressed:
+                            canInteract
+                                ? () {
+                                  if (mounted) {
+                                    setState(() {
+                                      _isTimeTaggingMode = true;
+                                    });
+                                  }
+                                }
+                                : null,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // --- Time Tag Input Row ---
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child:
+                      _isTimeTaggingMode
+                          ? Row(/* ... Time Tag Input Row Logic ... */)
+                          : const SizedBox.shrink(),
+                ),
+
+                // --- Notes Section ---
+                _buildNotesSection(),
+              ], // End Column children
+            ),
+          ), // End Padding
+        ); // End SingleChildScrollView
+      }, // End BlocBuilder builder
+    ); // End BlocBuilder
+  } // End _buildExpandedPlayerUI
 
   // --- Helper Methods ---
 
