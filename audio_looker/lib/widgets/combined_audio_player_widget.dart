@@ -7,10 +7,12 @@ import 'dart:math' as math; // For finding next/prev tag
 
 // Import BLoCs and Services/Models
 import '../blocs/audio_player/audio_player_bloc.dart';
-// import '../blocs/track_management/track_management_bloc.dart'; // <<< REMOVED Old BLoC
+import '../blocs/track_management/track_data_bloc.dart';
+import '../blocs/track_management/global_tag_bloc.dart';
 import '../blocs/track_management/track_metadata_bloc.dart'; // <<< ADDED Metadata BLoC
 import '../services/collection_service.dart'; // Keep for Track and Tag models
 import '../services/audio_service.dart'; // Needed for AudioTag definition
+import '../widgets/tag_editor_popup.dart'; // Needed for AudioTag definition
 
 // Import UI components
 import 'waveform_painter.dart';
@@ -315,6 +317,73 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     );
   }
 
+    void _openTagEditor(BuildContext buildContext) {
+    // Access the BLoCs needed by the popup or for prerequisite checks
+    final trackDataBloc = BlocProvider.of<TrackDataBloc>(buildContext);
+    final globalTagBloc = BlocProvider.of<GlobalTagBloc>(buildContext);
+    final trackMetadataBloc = BlocProvider.of<TrackMetadataBloc>(buildContext);
+
+    final trackDataState = trackDataBloc.state;
+    final globalTagState = globalTagBloc.state;
+
+    // Ensure track data and global tags are loaded before opening
+    if (trackDataState is TrackDataLoaded && globalTagState is GlobalTagLoaded) {
+      List<String> currentTrackTags = [];
+      try {
+        // Find the current track's tags from the TrackDataLoaded state
+        final currentTrackFromBloc = trackDataState.tracks.firstWhere(
+          (t) => t.id == widget.track.id,
+          orElse: () => widget.track, // Fallback to widget's track data
+        );
+        currentTrackTags = currentTrackFromBloc.generalTags;
+      } catch (e) {
+        print('Error finding track ${widget.track.id} for tag editor: $e');
+        // Use widget's tags as fallback if not found in current state
+        currentTrackTags = widget.track.generalTags;
+        ScaffoldMessenger.of(buildContext).showSnackBar(
+          const SnackBar(
+            content: Text('Could not find exact track state, using cached tags.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+
+      // Show the dialog, providing necessary BLoCs to the popup
+      showDialog(
+        context: buildContext, // Use the context passed to the method
+        // Use MultiBlocProvider if TagEditorPopup needs multiple BLoCs
+        builder: (dialogContext) => MultiBlocProvider(
+              providers: [
+                // Provide existing instances to the dialog's context
+                BlocProvider.value(value: globalTagBloc),
+                BlocProvider.value(value: trackMetadataBloc),
+                // TrackDataBloc is not typically needed directly by the tag editor itself
+              ],
+              child: TagEditorPopup(
+                trackId: widget.track.id!, // Ensure track ID is not null
+                currentTrackTags: currentTrackTags,
+              ),
+            ),
+      );
+    } else {
+      // Handle cases where data isn't loaded yet
+      String message = 'Cannot edit tags: ';
+      if (trackDataState is! TrackDataLoaded) {
+        message += 'Track data not loaded. ';
+      }
+      if (globalTagState is! GlobalTagLoaded) {
+        message += 'Global tags not loaded.';
+      }
+      ScaffoldMessenger.of(buildContext).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      // Optionally dispatch load events if appropriate
+      if (globalTagState is! GlobalTagLoaded) {
+         globalTagBloc.add(LoadGlobalTags());
+      }
+    }
+  }
+
   // Build the UI for the expanded player
   Widget _buildExpandedPlayerUI(AudioPlayerLoaded playerState, Track track) {
     final isPlaying = playerState.isPlaying;
@@ -364,7 +433,47 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                       ],
                     ),
                   ),
-                  // --- REMOVED General Tags Section ---
+                  const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (currentGeneralTags.isNotEmpty)
+                            SizedBox(
+                              // Limit width to prevent overflow
+                              width: MediaQuery.of(context).size.width * 0.35,
+                              child: Wrap(
+                                spacing: 4.0,
+                                runSpacing: 4.0,
+                                alignment: WrapAlignment.end,
+                                children: currentGeneralTags.map((tag) {
+                                  // Basic Chip - Color logic would require GlobalTagBloc access here too
+                                  return Chip(
+                                    label: Text(tag),
+                                    labelStyle: const TextStyle(fontSize: 12),
+                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    // Removed ActionChip/onPressed here - edit via button
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          const SizedBox(height: 4),
+                          // "Edit Tags" Button (Restored)
+                          IconButton(
+                            icon: const Icon(Icons.add_circle_outline), // Your desired icon
+                            tooltip: 'Edit General Tags',
+                            // Call the helper method onPressed
+                            onPressed: () => _openTagEditor(context),
+                          ),
+                        ],
+                      ),
+                      // +++ END ADDED: General Tags Section +++
+                    ],
+                  ),
+                ),
+
+
                 ],
               ),
             ),
