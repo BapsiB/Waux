@@ -70,5 +70,40 @@ class TrackDataError extends TrackDataState {
   List<Object?> get props => [message];
 }
 
-// Optional: Add a specific state for syncing if you want distinct UI feedback
-// class TrackDataSyncing extends TrackDataState { ... }
+class FolderDeletionConfirmationNeeded extends TrackDataState {
+  final String folderPath;
+  final String folderName; // Display name for the dialog
+  final int trackCount; // Number of tracks within
+
+  const FolderDeletionConfirmationNeeded({
+    required this.folderPath,
+    required this.folderName,
+    required this.trackCount,
+  });
+
+  @override
+  List<Object?> get props => [folderPath, folderName, trackCount];
+}
+
+class TrackDataDeletingFolder extends TrackDataState {
+  // Optionally carry over previous data like TrackDataLoading
+  final List<Track>? previousTracks;
+  final List<String>? previousRootFolders;
+  final String? searchQuery;
+  final int? minimumRating;
+
+  const TrackDataDeletingFolder({
+    this.previousTracks,
+    this.previousRootFolders,
+    this.searchQuery,
+    this.minimumRating,
+  });
+
+  @override
+  List<Object?> get props => [
+    previousTracks,
+    previousRootFolders,
+    searchQuery,
+    minimumRating,
+  ];
+}

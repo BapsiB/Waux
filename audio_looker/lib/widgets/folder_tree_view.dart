@@ -2,24 +2,30 @@
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as pathLib;
+import 'package:collection/collection.dart';
 import 'package:audio_looker/services/collection_service.dart';
+
+typedef FolderDeleteCallback =
+    void Function(String folderPath, String folderName);
 
 class FolderTreeView extends StatefulWidget {
   final List<Track> tracks;
   final Track? selectedTrack;
-  final List<String> rootFolders; // Accept root folders from parent
-  final String? currentlyLoadedPath; // *** ADDED: Path of loaded track ***
+  final List<String> rootFolders;
+  final String? currentlyLoadedPath;
   final Function(Track) onTrackSelected;
   final Function(int) onTrackDeleted;
+  final FolderDeleteCallback onFolderDeleted;
 
   const FolderTreeView({
     Key? key,
     required this.tracks,
     this.selectedTrack,
-    required this.rootFolders, // Required parameter
-    this.currentlyLoadedPath, // *** ADDED ***
+    required this.rootFolders,
+    this.currentlyLoadedPath,
     required this.onTrackSelected,
     required this.onTrackDeleted,
+    required this.onFolderDeleted,
   }) : super(key: key);
 
   @override
@@ -27,16 +33,14 @@ class FolderTreeView extends StatefulWidget {
 }
 
 class _FolderTreeViewState extends State<FolderTreeView> {
-  // Map to hold our folder structure
   late Map<String, dynamic> _folderStructure;
-  // Set to track expanded folders
   final Set<String> _expandedFolders = {};
+  final Set<String> _hoveredItems = {};
 
   @override
   void initState() {
     super.initState();
     _buildFolderStructure();
-    // *** ADDED: Expand folders for initial path if provided ***
     _expandFoldersForPath(widget.currentlyLoadedPath);
   }
 
@@ -44,93 +48,101 @@ class _FolderTreeViewState extends State<FolderTreeView> {
   void didUpdateWidget(FolderTreeView oldWidget) {
     super.didUpdateWidget(oldWidget);
     bool structureChanged = false;
-    // Rebuild structure if tracks or roots change
-    if (oldWidget.tracks != widget.tracks ||
-        oldWidget.rootFolders != widget.rootFolders) {
+    if (!const DeepCollectionEquality().equals(
+          oldWidget.tracks,
+          widget.tracks,
+        ) ||
+        !const DeepCollectionEquality().equals(
+          oldWidget.rootFolders,
+          widget.rootFolders,
+        )) {
       _buildFolderStructure();
       structureChanged = true;
     }
 
-    // *** ADDED: Check if loaded path changed OR if structure changed ***
     if (structureChanged ||
         oldWidget.currentlyLoadedPath != widget.currentlyLoadedPath) {
-      // Always re-apply expansion logic if path exists or structure changed
       _expandFoldersForPath(widget.currentlyLoadedPath);
+    }
+
+    if (widget.selectedTrack != oldWidget.selectedTrack) {
+      if (mounted) {
+        setState(() {
+          _hoveredItems.clear();
+        });
+      }
     }
   }
 
-  // Build the folder structure from the track list and root folders
+  // --- Build Folder Structure Methods (Keep previous versions) ---
   void _buildFolderStructure() {
     _folderStructure = <String, dynamic>{};
-
-    // Add special folders first
     _folderStructure["Web Links"] = <String, dynamic>{"tracks": <dynamic>[]};
     _folderStructure["Imported Files"] = <String, dynamic>{
       "tracks": <dynamic>[],
     };
 
-    // Add root folders (using basename as display name)
     for (final rootPath in widget.rootFolders) {
-      // Normalize path separators for consistency WITHIN the structure keys if needed
-      // but for display, basename is fine.
-      final rootName = pathLib.basename(rootPath);
+      final normalizedRootPath = rootPath.replaceAll(
+        '\\',
+        '/',
+      ); // Normalize root path
+      final rootName = pathLib.basename(normalizedRootPath);
       _folderStructure[rootName] = <String, dynamic>{
-        "rootPath": rootPath, // Store the full path for reference
+        "rootPath": normalizedRootPath, // Store normalized path
+        "isRoot": true,
       };
     }
 
-    // Now add tracks to the appropriate folders
     for (final track in widget.tracks) {
       if (track.isUrl) {
-        // Put URLs in Web Links
         (_folderStructure["Web Links"]["tracks"] as List<dynamic>).add(track);
       } else {
         final filePath = track.path;
-        final directory = pathLib.dirname(filePath);
+        final normalizedFilePath = filePath.replaceAll(
+          '\\',
+          '/',
+        ); // Normalize track path
+        final directory = pathLib.dirname(normalizedFilePath);
 
-        // Check if this track belongs to a root folder
         bool foundRoot = false;
         for (final rootPath in widget.rootFolders) {
-          // Use platform-specific path comparison if needed, but startsWith is often sufficient
-          if (pathLib.isWithin(rootPath, directory) || directory == rootPath) {
-            // This file belongs to this root folder
+          final normalizedRootPath = rootPath.replaceAll('\\', '/');
+          // Use normalized paths for comparison
+          if (directory == normalizedRootPath ||
+              directory.startsWith('$normalizedRootPath/')) {
             foundRoot = true;
+            final rootName = pathLib.basename(normalizedRootPath);
+            String relativePath = pathLib.relative(
+              directory,
+              from: normalizedRootPath,
+            );
+            relativePath = relativePath.replaceAll(
+              '\\',
+              '/',
+            ); // Ensure relative path is normalized
+            if (relativePath == '.') relativePath = '';
 
-            // Get the root folder name (display name)
-            final rootName = pathLib.basename(rootPath);
-
-            // Get the relative path from the root
-            String relativePath = pathLib.relative(directory, from: rootPath);
-
-            // Normalize path separators for internal consistency
-            relativePath = relativePath.replaceAll('\\', '/');
-            if (relativePath == '.') {
-              // Handle case where file is directly in root
-              relativePath = '';
-            }
-
-            // Split into path segments
             List<String> pathSegments =
                 relativePath.isEmpty ? [] : relativePath.split('/');
 
-            // Make sure the root exists in our structure (should exist from loop above)
+            // Ensure the root entry exists (it should from the loop above)
             if (!_folderStructure.containsKey(rootName)) {
               _folderStructure[rootName] = <String, dynamic>{
-                "rootPath": rootPath,
+                "rootPath": normalizedRootPath,
+                "isRoot": true,
               };
             }
-
-            // Add to the structure under the root folder
+            // *** Pass the parent's actual path for context ***
             _addToStructure(
               _folderStructure[rootName] as Map<String, dynamic>,
               pathSegments,
               track,
+              normalizedRootPath,
             );
-            break; // Stop checking roots once found
+            break;
           }
         }
-
-        // If not in any root folder, add to "Imported Files"
         if (!foundRoot) {
           (_folderStructure["Imported Files"]["tracks"] as List<dynamic>).add(
             track,
@@ -140,276 +152,317 @@ class _FolderTreeViewState extends State<FolderTreeView> {
     }
   }
 
-  // Recursively add a track to the folder structure
+  // *** Modify _addToStructure to accept and pass parent path ***
   void _addToStructure(
     Map<String, dynamic> structure,
     List<String> pathSegments,
     Track track,
+    String parentAbsolutePath,
   ) {
     if (pathSegments.isEmpty) {
-      // We're at the leaf node, add the track
-      if (!structure.containsKey("tracks")) {
-        structure["tracks"] = <dynamic>[];
-      }
+      if (!structure.containsKey("tracks")) structure["tracks"] = <dynamic>[];
       (structure["tracks"] as List<dynamic>).add(track);
     } else {
-      // We're still traversing directories
       final segment = pathSegments.first;
+      // Calculate the absolute path for this segment
+      final currentAbsolutePath = pathLib.join(parentAbsolutePath, segment);
+
       if (!structure.containsKey(segment)) {
-        structure[segment] = <String, dynamic>{};
+        structure[segment] = <String, dynamic>{
+          // Store the absolute path for this folder segment
+          "folderAbsolutePath": currentAbsolutePath,
+        };
+      } else if (structure[segment] is Map<String, dynamic>) {
+        // Ensure folderAbsolutePath exists if map already exists
+        (structure[segment] as Map<String, dynamic>).putIfAbsent(
+          "folderAbsolutePath",
+          () => currentAbsolutePath,
+        );
       }
-      // Ensure the entry is a Map before recursing
-      if (structure[segment] is Map<String, dynamic>) {
+
+      final nextLevel = structure[segment];
+      if (nextLevel is Map<String, dynamic>) {
+        // Pass the *current* segment's absolute path down
         _addToStructure(
-          structure[segment] as Map<String, dynamic>,
+          nextLevel,
           pathSegments.sublist(1),
           track,
+          currentAbsolutePath,
         );
       } else {
         print(
-          "Warning: Structure conflict for segment '$segment'. Expected Map, found ${structure[segment].runtimeType}",
+          "Structure conflict: Expected Map for segment '$segment', found ${nextLevel.runtimeType}. Overwriting.",
         );
-        // Handle error or overwrite if necessary
-        structure[segment] = <String, dynamic>{};
+        structure[segment] = <String, dynamic>{
+          "folderAbsolutePath": currentAbsolutePath,
+        };
         _addToStructure(
           structure[segment] as Map<String, dynamic>,
           pathSegments.sublist(1),
           track,
+          currentAbsolutePath,
         );
       }
     }
   }
 
-  // *** ADDED: Method to calculate and set expanded folders for a given path ***
   void _expandFoldersForPath(String? loadedPath) {
-    if (loadedPath == null || loadedPath.isEmpty) {
-      // Optional: Collapse folders if path becomes null? Or do nothing.
-      // _expandedFolders.clear(); // Example: Clear all expansions
-      // if (mounted) setState(() {});
-      return;
-    }
-
-    // Keep track if any changes were made to avoid unnecessary setState calls
+    if (loadedPath == null || loadedPath.isEmpty) return;
     bool changed = false;
-
     try {
-      // Handle URLs
       if (Uri.tryParse(loadedPath)?.isAbsolute ?? false) {
         if (_expandedFolders.add('Web Links')) changed = true;
-      }
-      // Handle File Paths
-      else {
-        final String directory = pathLib.dirname(loadedPath);
+      } else {
+        final normalizedLoadedPath = loadedPath.replaceAll('\\', '/');
+        final String directory = pathLib.dirname(normalizedLoadedPath);
         String? matchingRootPath;
         String? rootName;
 
-        // Find the root folder this path belongs to
         for (final root in widget.rootFolders) {
-          if (pathLib.isWithin(root, directory) || directory == root) {
-            matchingRootPath = root;
-            rootName = pathLib.basename(root);
+          final normalizedRoot = root.replaceAll('\\', '/');
+          if (directory == normalizedRoot ||
+              directory.startsWith('$normalizedRoot/')) {
+            matchingRootPath = normalizedRoot;
+            rootName = pathLib.basename(normalizedRoot);
             break;
           }
         }
 
         if (matchingRootPath != null && rootName != null) {
-          // Calculate relative path and segments
           String relativePath = pathLib.relative(
             directory,
             from: matchingRootPath,
           );
           relativePath = relativePath.replaceAll('\\', '/');
-          if (relativePath == '.')
-            relativePath = ''; // Handle file directly in root
-
+          if (relativePath == '.') relativePath = '';
           List<String> pathSegments =
               relativePath.isEmpty ? [] : relativePath.split('/');
-
-          // Add root folder itself to expansion set
-          if (_expandedFolders.add(rootName)) changed = true;
-
-          // Add intermediate folders
           String currentPathKey = rootName;
+          if (_expandedFolders.add(currentPathKey)) changed = true;
           for (final segment in pathSegments) {
             if (segment.isNotEmpty) {
-              // Avoid empty segments if path ends with /
-              currentPathKey +=
-                  '/$segment'; // Use '/' as consistent key separator
+              currentPathKey += '/$segment';
               if (_expandedFolders.add(currentPathKey)) changed = true;
             }
           }
-          print("Expanding folders: $_expandedFolders for path: $loadedPath");
         } else {
-          // Not under a known root, assume "Imported Files"
           if (_expandedFolders.add('Imported Files')) changed = true;
         }
       }
     } catch (e) {
       print("Error calculating expansion path for $loadedPath: $e");
     }
-
-    // Trigger rebuild only if the expansion set actually changed
-    if (changed && mounted) {
-      setState(() {});
-    }
+    if (changed && mounted) setState(() {});
   }
 
+  // --- Build Methods ---
   @override
   Widget build(BuildContext context) {
-    // Rebuild structure just in case (might be redundant with didUpdateWidget)
-    // Consider if _buildFolderStructure only needs to run when tracks/roots change
-    // _buildFolderStructure();
-
     return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Show counts at the top
-            const Divider(),
-            // Build the tree view
-            _buildTreeView(_folderStructure, []),
-          ],
+          // *** Pass the initial parent path (empty string for top level) ***
+          children: [_buildTreeView(_folderStructure, [], "")],
         ),
       ),
     );
   }
 
-  // Build the tree view recursively
+  // *** Modify _buildTreeView to accept and pass parent path ***
   Widget _buildTreeView(
     Map<String, dynamic> structure,
-    List<String> currentPath,
+    List<String> currentPathSegments,
+    String parentAbsolutePath,
   ) {
     List<Widget> children = [];
 
-    // First add folders (non-track entries)
+    // --- Render Folders ---
     final folderEntries =
         structure.entries
-            .where((entry) => entry.key != "tracks" && entry.key != "rootPath")
+            .where(
+              (entry) =>
+                  entry.key != "tracks" &&
+                  entry.key != "rootPath" &&
+                  entry.key != "isRoot" &&
+                  entry.key != "folderAbsolutePath",
+            ) // Exclude helper keys
             .toList()
           ..sort((a, b) {
-            // Special folders come first
             if (a.key == "Web Links") return -1;
             if (b.key == "Web Links") return 1;
             if (a.key == "Imported Files") return -1;
             if (b.key == "Imported Files") return 1;
-            // Then sort alphabetically
-            return a.key.compareTo(b.key);
+            return a.key.toLowerCase().compareTo(b.key.toLowerCase());
           });
 
     for (final entry in folderEntries) {
-      final newPath = List<String>.from(currentPath)..add(entry.key);
-      // *** Use '/' as the consistent separator for keys ***
-      final folderPathKey = newPath.join('/');
-      // Check expansion state using the consistent key
+      final newPathSegments = List<String>.from(currentPathSegments)
+        ..add(entry.key);
+      final folderPathKey = newPathSegments.join(
+        '/',
+      ); // Key for expansion/hover
       final isExpanded = _expandedFolders.contains(folderPathKey);
       final isSpecialFolder =
           entry.key == "Web Links" || entry.key == "Imported Files";
-      final isRootFolder = currentPath.isEmpty;
+      final folderData = entry.value as Map<String, dynamic>? ?? {};
+      final isRootFolder = folderData["isRoot"] == true;
+      final trackCount = _countTracksInFolder(folderData);
 
-      // Count tracks in this folder
-      final trackCount = _countTracksInFolder(
-        entry.value as Map<String, dynamic>,
+      // *** Determine the correct absolute path for THIS folder ***
+      String currentFolderAbsolutePath;
+      if (isRootFolder) {
+        currentFolderAbsolutePath =
+            folderData["rootPath"] as String? ??
+            entry.key; // Use stored rootPath
+      } else {
+        // Construct path from parent and current segment name
+        // Use folderAbsolutePath stored during _addToStructure if available, otherwise construct it
+        currentFolderAbsolutePath =
+            folderData["folderAbsolutePath"] as String? ??
+            pathLib.join(parentAbsolutePath, entry.key);
+      }
+      // Normalize just in case
+      currentFolderAbsolutePath = pathLib.normalize(
+        currentFolderAbsolutePath.replaceAll('\\', '/'),
       );
 
-      // Skip empty folders (except special folders and root folders)
-      if (trackCount == 0 && !isSpecialFolder && !isRootFolder) {
-        continue;
-      }
+      if (trackCount == 0 && !isSpecialFolder && !isRootFolder) continue;
 
       children.add(
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            InkWell(
-              onTap: () {
-                setState(() {
-                  // Use the consistent key for adding/removing
-                  if (isExpanded) {
-                    _expandedFolders.remove(folderPathKey);
-                  } else {
-                    _expandedFolders.add(folderPathKey);
-                  }
-                });
-              },
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(4),
-                  color:
-                      isRootFolder
-                          ? Theme.of(context).primaryColor.withOpacity(0.1)
-                          : null,
-                ),
-                padding: EdgeInsets.only(
-                  left: 16.0 * currentPath.length,
-                  top: 8.0,
-                  bottom: 8.0,
-                  right: 8.0,
-                ),
-                child: Row(
-                  children: [
-                    // Use different icons for different folder types
-                    Icon(
-                      isExpanded ? Icons.folder_open : Icons.folder,
-                      color:
-                          isSpecialFolder
-                              ? Colors.blueGrey
-                              : isRootFolder
-                              ? Colors.amber.shade700
-                              : Colors.amber,
-                      size: isRootFolder ? 22 : 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        entry.key,
-                        style: TextStyle(
-                          fontWeight:
-                              isRootFolder || isSpecialFolder
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                          fontSize: isRootFolder ? 15 : 14,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    // Show track count badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color:
-                            isRootFolder
+            MouseRegion(
+              // Wrap only the interactive row
+              onEnter: (_) => setState(() => _hoveredItems.add(folderPathKey)),
+              onExit:
+                  (_) => setState(() => _hoveredItems.remove(folderPathKey)),
+              child: InkWell(
+                onTap:
+                    () => setState(() {
+                      if (isExpanded)
+                        _expandedFolders.remove(folderPathKey);
+                      else
+                        _expandedFolders.add(folderPathKey);
+                    }),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(4),
+                    color:
+                        _hoveredItems.contains(folderPathKey)
+                            ? Theme.of(context).hoverColor
+                            : (isRootFolder
                                 ? Theme.of(
                                   context,
-                                ).primaryColor.withOpacity(0.2)
-                                : Colors.grey.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
+                                ).primaryColor.withOpacity(0.05)
+                                : null),
+                  ),
+                  padding: EdgeInsets.only(
+                    left: 16.0 * currentPathSegments.length,
+                    top: 6.0,
+                    bottom: 6.0,
+                    right: 8.0,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isExpanded ? Icons.folder_open : Icons.folder,
+                        color:
+                            isSpecialFolder
+                                ? Colors.blueGrey.shade400
+                                : (isRootFolder
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Colors.amber.shade700),
+                        size: isRootFolder ? 20 : 18,
                       ),
-                      child: Text(
-                        trackCount.toString(),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color:
-                              isRootFolder
-                                  ? Theme.of(context).primaryColor
-                                  : Colors.grey[800],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          entry.key, // Display name
+                          style: TextStyle(
+                            fontWeight:
+                                isRootFolder || isSpecialFolder
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                            fontSize: isRootFolder ? 14 : 13,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                    ),
-                  ],
+                      Visibility(
+                        visible:
+                            _hoveredItems.contains(folderPathKey) &&
+                            !isSpecialFolder,
+                        maintainSize: true,
+                        maintainAnimation: true,
+                        maintainState: true,
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.delete_outline,
+                            size: 18,
+                            color: Colors.redAccent.shade100,
+                          ),
+                          onPressed: () {
+                            // *** Pass the calculated absolute path ***
+                            print(
+                              "Delete requested for Absolute Path: $currentFolderAbsolutePath (display name: ${entry.key})",
+                            );
+                            widget.onFolderDeleted(
+                              currentFolderAbsolutePath,
+                              entry.key,
+                            );
+                          },
+                          tooltip: 'Remove Folder',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ),
+                      Visibility(
+                        visible:
+                            !(_hoveredItems.contains(folderPathKey) &&
+                                !isSpecialFolder),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                isRootFolder
+                                    ? Theme.of(
+                                      context,
+                                    ).primaryColor.withOpacity(0.1)
+                                    : Colors.grey.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            trackCount.toString(),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color:
+                                  isRootFolder
+                                      ? Theme.of(context).primaryColor
+                                      : Colors.grey[700],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
+            // *** Pass the current folder's absolute path down to children ***
             if (isExpanded)
               Padding(
-                padding: const EdgeInsets.only(left: 4.0),
+                padding: const EdgeInsets.only(left: 0.0),
                 child: _buildTreeView(
-                  entry.value as Map<String, dynamic>,
-                  newPath, // Pass the path segments for indentation calculation
+                  folderData,
+                  newPathSegments,
+                  currentFolderAbsolutePath,
                 ),
               ),
           ],
@@ -417,104 +470,138 @@ class _FolderTreeViewState extends State<FolderTreeView> {
       );
     }
 
-    // Then add tracks at this level
-    if (structure.containsKey("tracks")) {
-      final dynamicList = structure["tracks"] as List<dynamic>;
-      final tracks = dynamicList.map((item) => item as Track).toList();
-
-      // Sort tracks alphabetically by title
-      tracks.sort((a, b) => a.title.compareTo(b.title));
+    // --- Render Tracks (Keep previous version, no changes needed here) ---
+    if (structure.containsKey("tracks") &&
+        structure["tracks"] is List &&
+        (structure["tracks"] as List).isNotEmpty) {
+      final tracks =
+          (structure["tracks"] as List).cast<Track>().toList(); // Safe casting
+      tracks.sort(
+        (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+      ); // Sort tracks
 
       for (final track in tracks) {
-        bool isCurrentlyPlaying = widget.currentlyLoadedPath == track.path;
-        bool isSelected = widget.selectedTrack?.id == track.id;
+        final isCurrentlyPlaying = widget.currentlyLoadedPath == track.path;
+        final isSelected = widget.selectedTrack?.id == track.id;
+        final trackHoverKey =
+            'track_${track.id ?? track.path}'; // Use path as fallback key
 
         children.add(
-          InkWell(
-            onTap: () => widget.onTrackSelected(track),
-            child: Container(
-              // Highlight if selected OR currently playing
-              color:
-                  isSelected || isCurrentlyPlaying
-                      ? Theme.of(context).colorScheme.primary.withOpacity(0.15)
-                      : null,
-              padding: EdgeInsets.only(
-                left: 16.0 * (currentPath.length + 1),
-                top: 8.0,
-                bottom: 8.0,
-                right: 8.0,
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    // Show play icon if currently playing
-                    isCurrentlyPlaying
-                        ? Icons.volume_up
-                        : (track.isUrl ? Icons.link : Icons.music_note),
-                    size: 18,
-                    color:
+          Padding(
+            // Use padding for indentation
+            padding: EdgeInsets.only(left: 16.0 * currentPathSegments.length),
+            child: MouseRegion(
+              onEnter: (_) => setState(() => _hoveredItems.add(trackHoverKey)),
+              onExit:
+                  (_) => setState(() => _hoveredItems.remove(trackHoverKey)),
+              child: InkWell(
+                onTap: () => widget.onTrackSelected(track),
+                child: Container(
+                  color:
+                      isSelected || isCurrentlyPlaying
+                          ? Theme.of(
+                            context,
+                          ).colorScheme.primary.withOpacity(0.1)
+                          : (_hoveredItems.contains(trackHoverKey)
+                              ? Theme.of(context).hoverColor
+                              : null),
+                  padding: const EdgeInsets.only(
+                    left: 16 + 4,
+                    top: 6.0,
+                    bottom: 6.0,
+                    right: 8.0,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
                         isCurrentlyPlaying
-                            ? Theme.of(context).colorScheme.primary
-                            : (track.isUrl ? Colors.blue : Colors.grey[700]),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          track.title,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight:
-                                isSelected || isCurrentlyPlaying
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                            color:
-                                isCurrentlyPlaying
-                                    ? Theme.of(context).colorScheme.primary
-                                    : null,
-                          ),
-                        ),
-                        if (track.artist.isNotEmpty &&
-                            track.artist != 'Unknown')
-                          Text(
-                            track.artist,
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 12,
+                            ? Icons.volume_up
+                            : (track.isUrl ? Icons.link : Icons.music_note),
+                        size: 16,
+                        color:
+                            isCurrentlyPlaying
+                                ? Theme.of(context).colorScheme.primary
+                                : (track.isUrl
+                                    ? Colors.blueAccent.shade100
+                                    : Colors.grey.shade600),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              track.title,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight:
+                                    isSelected || isCurrentlyPlaying
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                color:
+                                    isCurrentlyPlaying
+                                        ? Theme.of(context).colorScheme.primary
+                                        : null,
+                              ),
                             ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                      ],
-                    ),
-                  ),
-                  // Track rating (if any)
-                  if (track.rating > 0)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: List.generate(
-                        5,
-                        (index) => Icon(
-                          index < track.rating ? Icons.star : Icons.star_border,
-                          size: 14,
-                          color: Colors.amber,
+                            if (track.artist.isNotEmpty &&
+                                track.artist != 'Unknown')
+                              Text(
+                                track.artist,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 11,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                    ),
-                  const SizedBox(width: 4),
-                  // Delete button
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    onPressed:
-                        track.id != null
-                            ? () => widget.onTrackDeleted(track.id!)
-                            : null,
-                    tooltip: 'Remove from collection',
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
+                      if (track.rating > 0)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: List.generate(
+                            5,
+                            (index) => Icon(
+                              index < track.rating
+                                  ? Icons.star
+                                  : Icons.star_border,
+                              size: 13,
+                              color: Colors.amber.shade600,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(width: 4),
+                      Visibility(
+                        visible: _hoveredItems.contains(trackHoverKey),
+                        maintainSize: true,
+                        maintainAnimation: true,
+                        maintainState: true,
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.delete_outline,
+                            size: 18,
+                            color: Colors.redAccent.shade100,
+                          ),
+                          onPressed:
+                              track.id != null
+                                  ? () => widget.onTrackDeleted(track.id!)
+                                  : null,
+                          tooltip: 'Remove from collection',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ),
+                      if (!_hoveredItems.contains(trackHoverKey))
+                        const SizedBox(width: 40),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -528,25 +615,20 @@ class _FolderTreeViewState extends State<FolderTreeView> {
     );
   }
 
-  // Helper method to count total tracks in a folder (including subfolders)
   int _countTracksInFolder(Map<String, dynamic> folder) {
     int count = 0;
-
-    // Count direct tracks in this folder
     if (folder.containsKey("tracks") && folder["tracks"] is List) {
       count += (folder["tracks"] as List).length;
     }
-
-    // Count tracks in subfolders
     for (final entry in folder.entries) {
       if (entry.key != "tracks" &&
           entry.key != "rootPath" &&
+          entry.key != "isRoot" &&
+          entry.key != "folderAbsolutePath" &&
           entry.value is Map<String, dynamic>) {
-        // Ensure it's a map
         count += _countTracksInFolder(entry.value as Map<String, dynamic>);
       }
     }
-
     return count;
   }
 }

@@ -431,6 +431,25 @@ class _HomeScreenState extends State<HomeScreen> {
             // Logic moved to _setupCollectionListener for clarity
           },
         ),
+        BlocListener<TrackDataBloc, TrackDataState>(
+          listener: (context, state) {
+            if (state is FolderDeletionConfirmationNeeded) {
+              _showFolderDeleteConfirmationDialog(
+                context,
+                state.folderPath,
+                state.folderName,
+                state.trackCount,
+              );
+            }
+            // Optionally listen for TrackDataDeletingFolder to show specific loading UI
+            else if (state is TrackDataError) {
+              // Show generic errors from TrackDataBloc if needed
+              // ScaffoldMessenger.of(context).showSnackBar(
+              //   SnackBar(content: Text('Error: ${state.message}')),
+              // );
+            }
+          },
+        ),
         // Listener for Playlist changes (updates local state if selected playlist changes)
         BlocListener<PlaylistBloc, PlaylistState>(
           listener: (context, playlistState) {
@@ -684,6 +703,71 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
     // --- REMOVED incorrect call: _fileHandler.showAddMenu(); ---
+  }
+
+  void _showFolderDeleteConfirmationDialog(
+    BuildContext context,
+    String folderPath,
+    String folderName,
+    int trackCount,
+  ) {
+    showDialog(
+      context: context,
+      barrierDismissible: false, // User must choose
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text('Delete Folder "$folderName"?'),
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: <Widget>[
+                // Concise message
+                Text('$trackCount track(s) were removed from the collection.'),
+                const SizedBox(height: 15),
+                const Text(
+                  'Also delete the folder from disk?', // Direct question
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  // Show path for context
+                  'Path: $folderPath',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  maxLines: 2, // Limit path lines if too long
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  // Keep the warning
+                  'Deleting from disk cannot be undone.',
+                  style: TextStyle(color: Colors.redAccent, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Keep on Disk'), // Shorter button text
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                context.read<TrackDataBloc>().add(
+                  ConfirmDeleteFolderFiles(folderPath, false),
+                );
+              },
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Delete from Disk'), // Shorter button text
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                context.read<TrackDataBloc>().add(
+                  ConfirmDeleteFolderFiles(folderPath, true),
+                );
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   // Build the collapsible playlist panel (Left Side)
@@ -997,6 +1081,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           onTrackDeleted: (trackId) {
                             // Use context menu handler's delete confirmation
                             _contextMenuHandler.confirmAndDeleteSelected();
+                          },
+                          onFolderDeleted: (folderPath, folderName) {
+                            print(
+                              "Folder delete requested from TreeView: $folderName ($folderPath)",
+                            );
+                            // Dispatch the event to the BLoC
+                            context.read<TrackDataBloc>().add(
+                              DeleteFolder(folderPath),
+                            );
                           },
                         ),
               );

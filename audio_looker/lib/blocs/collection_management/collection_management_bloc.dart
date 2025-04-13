@@ -9,9 +9,6 @@ import 'package:path/path.dart' as pathLib;
 import 'package:path_provider/path_provider.dart';
 import 'package:audio_looker/services/collection_service.dart';
 
-// Import Services and Models
-import '../../services/collection_service.dart'; // Needed for CollectionService, CollectionDefinition, CollectionType
-
 part 'collection_management_event.dart';
 part 'collection_management_state.dart';
 

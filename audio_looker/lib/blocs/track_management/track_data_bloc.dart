@@ -42,6 +42,8 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     on<AddRootFolder>(_onAddRootFolder);
     on<RemoveRootFolder>(_onRemoveRootFolder);
     on<ReloadDataPreservingFilters>(_onReloadDataPreservingFilters);
+    on<DeleteFolder>(_onDeleteFolder);
+    on<ConfirmDeleteFolderFiles>(_onConfirmDeleteFolderFiles);
   }
 
   // --- Event Handlers ---
@@ -511,4 +513,123 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       print("TrackDataBloc: Error scanning directory ${dir.path}: $e");
     }
   }
+
+  Future<void> _onDeleteFolder(
+    DeleteFolder event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    final activeDef = _collectionService.getActiveCollection();
+    if (activeDef == null) return; // No active collection
+
+    print("TrackDataBloc: Received DeleteFolder event for ${event.folderPath}");
+
+    // Optionally emit a loading/deleting state
+    // emit(TrackDataDeletingFolder(...));
+
+    try {
+      // 1. Find all tracks within the folder (recursively) using the service
+      final tracksToDelete = await _collectionService.getTracksInFolder(
+        event.folderPath,
+      );
+      final trackIdsToDelete =
+          tracksToDelete.map((t) => t.id).whereNotNull().toList();
+      print(
+        "Found ${trackIdsToDelete.length} tracks to delete within ${event.folderPath}",
+      );
+
+      // 2. Remove tracks from the database first
+      for (final trackId in trackIdsToDelete) {
+        try {
+          await _collectionService.deleteTrack(trackId);
+        } catch (e) {
+          print("Error deleting track $trackId during folder delete: $e");
+          // Optionally collect errors to report
+        }
+      }
+      print("Finished removing ${trackIdsToDelete.length} tracks from DB.");
+
+      // 3. Check if the deleted folder is a root folder (for local collections)
+      if (activeDef.type == CollectionType.local) {
+        final rootFolders = _collectionService.getRootFolders();
+        final normalizedPath = event.folderPath.replaceAll('\\', '/');
+        if (rootFolders.contains(normalizedPath)) {
+          try {
+            await _collectionService.removeRootFolder(event.folderPath);
+            print("Removed root folder entry: ${event.folderPath}");
+          } catch (e) {
+            print("Error removing root folder ${event.folderPath} from DB: $e");
+          }
+        }
+      }
+
+      // 4. Emit confirmation state to ask the user about deleting files from disk
+      // Only ask if the folder is not special (e.g., web links) and tracks were found
+      if (event.folderPath != "Web Links" &&
+          event.folderPath != "Imported Files" &&
+          tracksToDelete.isNotEmpty) {
+        emit(
+          FolderDeletionConfirmationNeeded(
+            folderPath: event.folderPath,
+            folderName: pathLib.basename(
+              event.folderPath,
+            ), // Use basename for display
+            trackCount: tracksToDelete.length,
+          ),
+        );
+        print(
+          "Emitting FolderDeletionConfirmationNeeded for ${event.folderPath}",
+        );
+      } else {
+        // If no confirmation needed (e.g., special folder or empty), just reload
+        print("No confirmation needed or folder empty. Reloading data.");
+        add(ReloadDataPreservingFilters());
+      }
+    } catch (e, stackTrace) {
+      print("TrackDataBloc ERROR during folder deletion: $e\n$stackTrace");
+      emit(TrackDataError("Failed to delete folder: ${e.toString()}"));
+      // Reload data even on error to reflect DB changes
+      add(ReloadDataPreservingFilters());
+    }
+  }
+
+  Future<void> _onConfirmDeleteFolderFiles(
+    ConfirmDeleteFolderFiles event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    print(
+      "TrackDataBloc: Received ConfirmDeleteFolderFiles for ${event.folderPath}. Delete from disk: ${event.deleteFilesFromDisk}",
+    );
+
+    if (event.deleteFilesFromDisk) {
+      // Optionally emit deleting state
+      emit(
+        TrackDataDeletingFolder(
+          previousTracks: _getTracksFromState(),
+          previousRootFolders: _getRootFoldersFromState(),
+          searchQuery: _lastSearchQuery,
+          minimumRating: _lastMinimumRating,
+        ),
+      );
+      try {
+        await _collectionService.deleteFolderFromDisk(event.folderPath);
+        print("Deletion from disk requested for ${event.folderPath}");
+      } catch (e) {
+        print("Error during disk deletion call for ${event.folderPath}: $e");
+        // Emit an error state or show a snackbar via UI listener
+        emit(
+          TrackDataError("Failed to delete folder from disk: ${e.toString()}"),
+        );
+      }
+    } else {
+      print("Skipping deletion from disk for ${event.folderPath}");
+    }
+
+    // Always reload data after handling confirmation (or skipping)
+    print("Reloading data after folder deletion process.");
+    add(ReloadDataPreservingFilters());
+  }
+}
+
+extension WhereNotNull<T> on Iterable<T?> {
+  List<T> whereNotNull() => where((e) => e != null).cast<T>().toList();
 }

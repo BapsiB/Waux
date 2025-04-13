@@ -72,3 +72,19 @@ class RemoveRootFolder extends TrackDataEvent {
   @override
   List<Object> get props => [folderPath];
 }
+
+class DeleteFolder extends TrackDataEvent {
+  final String folderPath; // The actual path of the folder
+  const DeleteFolder(this.folderPath);
+  @override
+  List<Object?> get props => [folderPath];
+}
+
+/// Event dispatched after user confirms whether to delete folder files from disk.
+class ConfirmDeleteFolderFiles extends TrackDataEvent {
+  final String folderPath;
+  final bool deleteFilesFromDisk;
+  const ConfirmDeleteFolderFiles(this.folderPath, this.deleteFilesFromDisk);
+  @override
+  List<Object?> get props => [folderPath, deleteFilesFromDisk];
+}

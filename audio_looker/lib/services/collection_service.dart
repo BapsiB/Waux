@@ -292,6 +292,69 @@ class CollectionService {
     }
   }
 
+  Future<bool> deleteFolderFromDisk(String folderPath) async {
+    print("[deleteFolderFromDisk] Attempting to delete: '$folderPath'");
+    try {
+      final dir = Directory(folderPath);
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+        print("[deleteFolderFromDisk] Successfully deleted: '$folderPath'");
+        return true;
+      } else {
+        print("[deleteFolderFromDisk] Folder not found on disk: '$folderPath'");
+        return false;
+      }
+    } catch (e) {
+      print("[deleteFolderFromDisk] ERROR deleting '$folderPath': $e");
+      return false;
+    }
+  }
+
+  Future<List<Track>> getTracksInFolder(String folderPath) async {
+    if (_database == null || !_database!.isOpen) return [];
+    final activeDef = _activeCollectionDefinition;
+    if (activeDef == null) return [];
+
+    List<Track> tracksInFolder = [];
+    // Get tracks with resolved absolute paths
+    final allTracks = await getAllTracks();
+
+    // --- Normalize the target folder path ---
+    // Assuming folderPath is intended to be an absolute path from the UI
+    final normalizedTargetFolderPath = pathLib.normalize(folderPath);
+    print(
+      "[getTracksInFolder] Normalized Target Path: '$normalizedTargetFolderPath'",
+    );
+
+    for (final track in allTracks) {
+      // Skip URLs
+      if (!track.isUrl) {
+        // Track path should be absolute here due to _resolveTrackPath in getAllTracks
+        final normalizedTrackPath = pathLib.normalize(track.path);
+        // Get the directory containing the track file
+        final trackDirectory = pathLib.dirname(normalizedTrackPath);
+
+        // --- Log paths being compared ---
+        print("  [Checking Track] ID: ${track.id}, Title: ${track.title}");
+        print("    Track Path (Normalized): '$normalizedTrackPath'");
+        print("    Track Dir  (Normalized): '$trackDirectory'");
+
+        // --- Robust Comparison ---
+        // Use pathLib.equals for exact directory match
+        // Use pathLib.isWithin for checking subdirectories
+        if (pathLib.equals(trackDirectory, normalizedTargetFolderPath) ||
+            pathLib.isWithin(normalizedTargetFolderPath, trackDirectory)) {
+          print("    --> MATCH FOUND!");
+          tracksInFolder.add(track);
+        }
+      }
+    }
+    print(
+      "[getTracksInFolder] Found ${tracksInFolder.length} tracks for folder '$folderPath'",
+    );
+    return tracksInFolder;
+  }
+
   Future<String?> loadLastActiveCollectionId() async {
     try {
       final prefs = await SharedPreferences.getInstance();
