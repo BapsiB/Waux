@@ -12,15 +12,21 @@ class PlaylistDrawer extends StatelessWidget {
   // Properties to receive state and callback from HomeScreen
   final String? selectedPlaylistId;
   final ValueChanged<String> onPlaylistSelected;
+  final bool isOpen; // <<< ADDED: Parameter to control fade
 
   const PlaylistDrawer({
     super.key,
     required this.selectedPlaylistId,
     required this.onPlaylistSelected,
+    required this.isOpen, // <<< ADDED: Make it required
   });
 
   // --- Dialog to Create New Playlist ---
+  // This logic is now handled in HomeScreen, but keep it here if
+  // the button inside the drawer needs to remain functional.
+  // If the button inside the drawer is removed, this can be removed too.
   void _showCreatePlaylistDialog(BuildContext context) {
+    // ... (keep existing dialog logic if needed) ...
     final TextEditingController nameController = TextEditingController();
     showDialog(
       context: context,
@@ -50,8 +56,8 @@ class PlaylistDrawer extends StatelessWidget {
         );
       },
     ).then(
-      (_) => nameController.dispose(),
-    ); // Dispose controller when dialog closes
+      (_) => nameController.dispose(), // Dispose controller when dialog closes
+    );
   }
 
   void _submitCreatePlaylist(BuildContext dialogContext, String name) {
@@ -82,37 +88,41 @@ class PlaylistDrawer extends StatelessWidget {
         SizedBox(
           height: 48, // Adjust height as needed
           child: DrawerHeader(
-            // Keep DrawerHeader for styling if desired
-            // decoration: BoxDecoration(
-            //   color: Theme.of(context).colorScheme.primaryContainer,
-            // ),
-            padding: const EdgeInsets.fromLTRB(
-              16,
-              0,
-              8,
-              0,
-            ), // Adjust vertical padding to 0 or as needed
-            margin: EdgeInsets.zero, // Remove default margin
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+            margin: EdgeInsets.zero,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              // Vertically center the children within the Row
-              crossAxisAlignment:
-                  CrossAxisAlignment
-                      .center, // This is likely the default, but ensures alignment
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Text(
-                  'Playlists',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(color: Colors.blueGrey),
+                // --- MODIFIED: Wrap Title with AnimatedOpacity ---
+                Expanded(
+                  // Allow title to take space but fade
+                  child: AnimatedOpacity(
+                    opacity: isOpen ? 1.0 : 0.0, // Fade based on isOpen
+                    duration: const Duration(milliseconds: 150), // Faster fade
+                    curve: Curves.easeOut, // Adjust curve if needed
+                    child: Text(
+                      'Playlists',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.titleLarge?.copyWith(color: Colors.blueGrey),
+                      overflow:
+                          TextOverflow
+                              .ellipsis, // Prevent overflow when visible
+                      maxLines: 1,
+                    ),
+                  ),
                 ),
-                // --- Add Playlist Button ---
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline),
-                  tooltip: 'Create New Playlist',
-                  onPressed: () => _showCreatePlaylistDialog(context),
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+                // --- END MODIFIED ---
+
+                // --- REMOVED: Add Playlist Button (moved to HomeScreen panel) ---
+                // IconButton(
+                //   icon: const Icon(Icons.add_circle_outline),
+                //   tooltip: 'Create New Playlist',
+                //   onPressed: () => _showCreatePlaylistDialog(context),
+                //   color: Theme.of(context).colorScheme.primary,
+                // ),
+                // --- END REMOVED ---
               ],
             ),
           ),
@@ -121,7 +131,6 @@ class PlaylistDrawer extends StatelessWidget {
         Expanded(
           child: BlocConsumer<PlaylistBloc, PlaylistState>(
             listener: (context, state) {
-              // Show feedback for errors (optional, can be handled globally too)
               if (state is PlaylistError) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -132,15 +141,9 @@ class PlaylistDrawer extends StatelessWidget {
               }
             },
             builder: (context, state) {
-              // Handle Loading State
               if (state is PlaylistLoading && state is! PlaylistLoaded) {
-                // Show loading indicator only if not already loaded
-                // Ensure LoadingIndicator constructor is correct (e.g., takes child)
                 return Center(child: LoadingIndicator(child: Container()));
-              }
-              // Handle Loaded State
-              else if (state is PlaylistLoaded) {
-                // Handle Empty Playlist Case
+              } else if (state is PlaylistLoaded) {
                 if (state.playlists.isEmpty) {
                   return const Center(
                     child: Padding(
@@ -152,28 +155,20 @@ class PlaylistDrawer extends StatelessWidget {
                     ),
                   );
                 }
-                // Display the list of playlists
                 return ListView.builder(
-                  padding: EdgeInsets.zero, // Remove default padding
+                  padding: EdgeInsets.zero,
                   itemCount: state.playlists.length,
                   itemBuilder: (context, index) {
                     final playlist = state.playlists[index];
-                    // Pass selection state and callback to PlaylistListItem
                     return PlaylistListItem(
-                      key: ValueKey(playlist.id), // Use unique key
+                      key: ValueKey(playlist.id),
                       playlist: playlist,
-                      isSelected:
-                          playlist.id ==
-                          selectedPlaylistId, // Check if selected
-                      onTap: (String id) {
-                        onPlaylistSelected(id);
-                      }, // Pass the callback from HomeScreen
+                      isSelected: playlist.id == selectedPlaylistId,
+                      onTap: onPlaylistSelected,
                     );
                   },
                 );
-              }
-              // Handle Error State
-              else if (state is PlaylistError) {
+              } else if (state is PlaylistError) {
                 return Center(
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
@@ -204,10 +199,7 @@ class PlaylistDrawer extends StatelessWidget {
                   ),
                 );
               }
-              // Handle Initial State or other unexpected states
-              return Center(
-                child: LoadingIndicator(child: Container()),
-              ); // Default/Initial loading
+              return Center(child: LoadingIndicator(child: Container()));
             },
           ),
         ),

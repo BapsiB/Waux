@@ -68,7 +68,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Playlist? _currentlySelectedPlaylist;
   bool _isMinimized = true;
   String? _currentlyLoadedPathInPlayer;
-  // int? _selectedMinimumRating; // This is now managed within TrackDataBloc state
+  final double _playlistPanelOpenWidth = 250.0;
+  final double _playlistPanelClosedWidth = 50.0;
 
   // Handlers (will be initialized in didChangeDependencies)
   late TrackSelectionHandler _trackSelectionHandler;
@@ -529,6 +530,23 @@ class _HomeScreenState extends State<HomeScreen> {
           onKeyEvent: _handleKeyEvent,
           child: Row(
             children: [
+              // Container(
+              //   width: 48, // Width for the button column
+              //   color: Theme.of(context).canvasColor, // Match panel background
+              //   child: Column(
+              //     children: [
+              //       IconButton(
+              //         icon: Icon(
+              //           _isPlaylistPanelVisible ? Icons.menu_open : Icons.menu,
+              //           color: Theme.of(context).colorScheme.onSurfaceVariant,
+              //         ),
+              //         tooltip: 'Toggle Playlists Panel',
+              //         onPressed: _togglePlaylistPanel,
+              //       ),
+              //       const Divider(height: 1), // Optional separator
+              //     ],
+              //   ),
+              // ),
               _buildPlaylistPanel(), // Playlist Panel (Left)
               Expanded(
                 // Main Content Area (Right)
@@ -556,6 +574,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
+        ),
+        floatingActionButton: FloatingActionButton.small(
+          // Use small for discretion
+          onPressed: _showAddMenu, // Call the existing menu function
+          tooltip: 'Add...',
+          child: const Icon(Icons.add),
         ),
       ),
     );
@@ -614,29 +638,6 @@ class _HomeScreenState extends State<HomeScreen> {
           return Text(title);
         },
       ),
-      actions: [
-        IconButton(
-          icon: Icon(_isPlaylistPanelVisible ? Icons.menu_open : Icons.menu),
-          tooltip: 'Toggle Playlists Panel',
-          onPressed: _togglePlaylistPanel,
-        ),
-        IconButton(
-          icon: Icon(
-            _viewMode == ViewMode.list ? Icons.account_tree : Icons.table_rows,
-          ),
-          onPressed: _toggleViewMode,
-          tooltip:
-              _viewMode == ViewMode.list
-                  ? 'Switch to folder view'
-                  : 'Switch to table view',
-        ),
-        IconButton(
-          icon: const Icon(Icons.add),
-          tooltip: 'Add...',
-          onPressed: _showAddMenu, // Uses FileHandler
-        ),
-        const SizedBox(width: 8),
-      ],
     );
   }
 
@@ -770,43 +771,171 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Build the collapsible playlist panel (Left Side)
   Widget _buildPlaylistPanel() {
-    // Uses PlaylistDrawer widget
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-      width: _isPlaylistPanelVisible ? 250.0 : 0.0,
-      decoration: BoxDecoration(
-        border: Border(
-          right: BorderSide(
-            color:
-                _isPlaylistPanelVisible
-                    ? Theme.of(context).dividerColor
-                    : Colors.transparent,
-            width: 1.0,
+    return Stack(
+      alignment:
+          Alignment.topRight, // Keep alignment for the arrow button container
+      clipBehavior: Clip.hardEdge,
+      children: [
+        // Animated Container for the panel content and background
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+          width:
+              _isPlaylistPanelVisible
+                  ? _playlistPanelOpenWidth
+                  : _playlistPanelClosedWidth,
+          decoration: BoxDecoration(
+            border: Border(
+              right: BorderSide(
+                color: Theme.of(context).dividerColor,
+                width: 1.0,
+              ),
+            ),
+            color: Theme.of(context).canvasColor,
+          ),
+          clipBehavior: Clip.hardEdge, // Clip internal content
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Playlist Drawer takes up most space
+              Expanded(
+                child: OverflowBox(
+                  minWidth: _playlistPanelOpenWidth,
+                  maxWidth: _playlistPanelOpenWidth,
+                  alignment: Alignment.topLeft,
+                  child: PlaylistDrawer(
+                    selectedPlaylistId: _currentlySelectedPlaylistId,
+                    onPlaylistSelected: _handlePlaylistSelected,
+                    // --- ADDED: Pass visibility state ---
+                    isOpen: _isPlaylistPanelVisible,
+                    // --- END ADDED ---
+                  ),
+                ),
+              ),
+              // Create Playlist Button Area
+              Visibility(
+                visible: _isPlaylistPanelVisible,
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Align(
+                    alignment: Alignment.bottomRight,
+                    child: IconButton(
+                      icon: const Icon(Icons.add),
+                      tooltip: 'New Playlist',
+                      onPressed: _showCreatePlaylistDialog,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        color: Theme.of(context).canvasColor, // Use theme canvas color
-      ),
-      clipBehavior: Clip.hardEdge, // Prevent content overflow during animation
-      child: Visibility(
-        visible: _isPlaylistPanelVisible,
-        maintainState: false, // Don't keep PlaylistDrawer in memory when hidden
-        child: PlaylistDrawer(
-          selectedPlaylistId: _currentlySelectedPlaylistId,
-          onPlaylistSelected: _handlePlaylistSelected,
+
+        // Positioned Toggle Button (Arrow) - Remains the same
+        Positioned(
+          top: 0,
+          right: _isPlaylistPanelVisible ? 0 : null,
+          left: _isPlaylistPanelVisible ? null : 0,
+          width: _isPlaylistPanelVisible ? null : _playlistPanelClosedWidth,
+          child: Container(
+            height: kToolbarHeight - 8,
+            alignment: Alignment.center,
+            child: IconButton(
+              icon: Icon(
+                _isPlaylistPanelVisible
+                    ? Icons.arrow_back_ios_new
+                    : Icons.arrow_forward_ios,
+                size: 18,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              tooltip:
+                  _isPlaylistPanelVisible
+                      ? 'Collapse Playlists'
+                      : 'Expand Playlists',
+              onPressed: _togglePlaylistPanel,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 
-  // Build the filter bar (Search + Rating)
+  void _showCreatePlaylistDialog() {
+    final collectionState = context.read<CollectionManagementBloc>().state;
+    if (collectionState is! CollectionManagementLoaded ||
+        collectionState.activeCollectionDefinition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select a collection first.")),
+      );
+      return;
+    }
+
+    final TextEditingController nameController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('New Playlist'),
+          content: TextField(
+            controller: nameController,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: 'Playlist Name'),
+            onSubmitted:
+                (_) =>
+                    _submitCreatePlaylist(dialogContext, nameController.text),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+            ),
+            TextButton(
+              child: const Text('Create'),
+              onPressed:
+                  () =>
+                      _submitCreatePlaylist(dialogContext, nameController.text),
+            ),
+          ],
+        );
+      },
+    ).then((_) => nameController.dispose());
+  }
+
+  void _submitCreatePlaylist(BuildContext dialogContext, String name) {
+    final trimmedName = name.trim();
+    if (trimmedName.isNotEmpty) {
+      context.read<PlaylistBloc>().add(CreatePlaylist(trimmedName));
+      Navigator.of(dialogContext).pop();
+    } else {
+      ScaffoldMessenger.of(dialogContext).showSnackBar(
+        const SnackBar(content: Text('Playlist name cannot be empty.')),
+      );
+    }
+  }
+
   Widget _buildFilterBar() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
       child: Row(
         children: [
+          IconButton(
+            icon: Icon(
+              _viewMode == ViewMode.list
+                  ? Icons.account_tree
+                  : Icons.table_rows,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            onPressed: _toggleViewMode,
+            tooltip:
+                _viewMode == ViewMode.list
+                    ? 'Switch to folder view'
+                    : 'Switch to table view',
+          ),
+          const SizedBox(width: 8),
           // Search Text Field
           Expanded(
             child: TextField(
@@ -833,6 +962,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(width: 16), // Spacing
+          // --- ADDED: View Mode Toggle Button ---
+          // Spacing before rating
           // Rating Filter Widget
           BlocBuilder<TrackDataBloc, TrackDataState>(
             // Listen to TrackDataBloc for current filter
