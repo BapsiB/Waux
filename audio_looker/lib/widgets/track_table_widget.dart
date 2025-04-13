@@ -214,6 +214,26 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
           child: Text('Tags', style: textTheme.titleSmall),
         ),
       ),
+      GridColumn(
+        columnName: 'source',
+        width: 60, // Adjust width as needed
+        columnWidthMode: ColumnWidthMode.none,
+        allowSorting: false, // Sorting by icon might not be useful
+        label: Container(
+          alignment: Alignment.center, // Center the label/icon
+          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+          child: Tooltip(
+            // Add tooltip for clarity
+            message: 'Source Type',
+            child: Icon(
+              Icons.link,
+              size: 16,
+              color: textTheme.titleSmall?.color,
+            ), // Generic icon for header
+          ),
+          // child: Text('Src', style: textTheme.titleSmall), // Alternative: Text label
+        ),
+      ),
     ];
   }
 

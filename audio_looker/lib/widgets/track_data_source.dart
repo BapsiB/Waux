@@ -4,7 +4,8 @@ import 'package:audio_looker/services/collection_service.dart'; // Your Track mo
 import 'package:audio_looker/widgets/rating_cell_widget.dart'; // Reuse the cell widget
 import 'package:audio_looker/widgets/preview_cell_widget.dart'; // Reuse the cell widget
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart'; // Import AudioPlayerBloc
+import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 // Add these typedefs for clarity
 typedef PlayPreviewCallback = void Function(Track track);
@@ -37,7 +38,6 @@ class TrackDataSource extends DataGridSource {
   int? _currentlyHoveredTrackId; // Track the currently hovered row ID
   // --- End State Management ---
 
-  // --- Method to update hover state externally ---
   void setHoverState(int? trackId, bool isHovering) {
     bool changed = false;
     int? previousHoveredTrackId = _currentlyHoveredTrackId;
@@ -118,8 +118,8 @@ class TrackDataSource extends DataGridSource {
               DataGridCell<String>(columnName: 'artist', value: track.artist),
               DataGridCell<String>(columnName: 'album', value: track.album),
               DataGridCell<Track>(columnName: 'rating', value: track),
-              // The 'tags' cell now just holds the track, the widget building happens in buildRow
               DataGridCell<Track>(columnName: 'tags', value: track),
+              DataGridCell<Track>(columnName: 'source', value: track),
             ],
           );
         }).toList();
@@ -236,7 +236,49 @@ class TrackDataSource extends DataGridSource {
               );
               break; // IMPORTANT: Added break statement
             // --- END DRAGGABLE WRAPPER ---
+            case 'source':
+              final Track sourceTrack = dataGridCell.value as Track;
+              IconData iconData;
+              Color? defaultIconColor; // Use nullable color
+              String tooltip;
 
+              switch (sourceTrack.sourceType) {
+                case TrackSource.local:
+                  iconData = Icons.music_note_outlined;
+                  tooltip = 'Local File';
+                  break;
+                case TrackSource.url:
+                  iconData = Icons.link;
+                  tooltip = 'Web URL';
+                  break;
+                case TrackSource.youtube:
+                  iconData = FontAwesomeIcons.youtube;
+                  defaultIconColor = Colors.red; // YouTube red
+                  tooltip = 'YouTube';
+                  break;
+              }
+              // *** Wrap in Builder to get context ***
+              cellContent = Builder(
+                builder: (context) {
+                  // *** Get color from theme using the Builder's context ***
+                  final Color iconColor =
+                      defaultIconColor ??
+                      Theme.of(context).colorScheme.onSurfaceVariant;
+                  return Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                    child: Tooltip(
+                      message: tooltip,
+                      child: FaIcon(
+                        iconData,
+                        size: 16,
+                        color: iconColor, // Use color from context
+                      ),
+                    ),
+                  );
+                },
+              );
+              break;
             case 'rating':
               // Use the existing RatingCellWidget
               cellContent = RatingCellWidget(

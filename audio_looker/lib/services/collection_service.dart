@@ -13,7 +13,7 @@ import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 // Keep AudioService import if needed for waveform, etc.
 // import 'package:audio_looker/services/audio_service.dart';
 
-// --- Data Models (Track and Tag remain mostly the same) ---
+enum TrackSource { local, url, youtube }
 
 class Track {
   final int? id;
@@ -122,9 +122,17 @@ class Track {
     );
   }
 
-  bool get isYoutube {
-    return isUrl &&
-        (path.contains('youtube.com/') || path.contains('youtu.be/'));
+  TrackSource get sourceType {
+    if (!isUrl) {
+      return TrackSource.local;
+    } else {
+      // Basic check for YouTube URLs (adjust patterns if needed)
+      if (path.contains('youtube.com') || path.contains('youtu.be')) {
+        return TrackSource.youtube;
+      } else {
+        return TrackSource.url;
+      }
+    }
   }
 }
 

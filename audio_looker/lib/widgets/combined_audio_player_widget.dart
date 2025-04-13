@@ -519,7 +519,9 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                     if (waveformData == null || waveformData.isEmpty)
                       Center(
                         child:
-                            (track.isYoutube) // More robust check might be needed
+                            (track.sourceType ==
+                                    TrackSource
+                                        .youtube) // More robust check might be needed
                                 ? Container(
                                   // Your Placeholder Widget
                                   width: double.infinity,
