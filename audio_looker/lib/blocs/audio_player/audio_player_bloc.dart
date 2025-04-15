@@ -6,6 +6,8 @@ import 'package:just_audio/just_audio.dart'
     as just_audio
     show PlayerState, ProcessingState;
 import 'package:audio_looker/services/audio_service.dart';
+import 'package:audio_looker/services/collection_service.dart';
+import 'package:audio_looker/blocs/track_management/track_metadata_bloc.dart';
 
 part 'audio_player_event.dart';
 part 'audio_player_state.dart';
@@ -17,10 +19,12 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   StreamSubscription? _stateSubscription;
   StreamSubscription? _durationSubscription;
   StreamSubscription? _waveformSubscription;
+  final TrackMetadataBloc _trackMetadataBloc;
   // String? _currentSource; // Can be removed now, managed in state
   Timer? _loadingTimeout;
 
-  AudioPlayerBloc(this._audioService) : super(AudioPlayerInitial()) {
+  AudioPlayerBloc(this._audioService, this._trackMetadataBloc)
+    : super(AudioPlayerInitial()) {
     on<LoadAudio>(_onLoadAudio);
     on<PlayAudio>(_onPlayAudio);
     on<PauseAudio>(_onPauseAudio);
@@ -36,18 +40,23 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     LoadAudio event,
     Emitter<AudioPlayerState> emit,
   ) async {
-    print('🔄 Bloc: Received LoadAudio event for source: ${event.source}');
+    print('🔄 Bloc: Received LoadAudio event for source: ${event.track.path}');
     emit(AudioPlayerLoading());
     await _cancelSubscriptions();
 
     _loadingTimeout?.cancel();
     _loadingTimeout = Timer(const Duration(seconds: 20), () {
-      print('⏱️ Bloc: Loading timed out after 20 seconds for ${event.source}');
+      print(
+        '⏱️ Bloc: Loading timed out after 20 seconds for ${event.track.path}',
+      );
       if (state is AudioPlayerLoading) {
         print('⚠️ Bloc: Forcing transition from loading state due to timeout');
         // <<< MODIFIED: Include source in timeout error >>>
         emit(
-          AudioPlayerError('Audio loading timed out.', source: event.source),
+          AudioPlayerError(
+            'Audio loading timed out.',
+            source: event.track.path,
+          ),
         );
       }
       _loadingTimeout = null;
@@ -55,24 +64,23 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
 
     try {
       print(
-        '🔄 Bloc: Loading audio from: ${event.source}, isUrl: ${event.isUrl}',
+        '🔄 Bloc: Loading audio from: ${event.track.path}, isUrl: ${event.track.isUrl}',
       );
       // Wait for the audio service to potentially resolve the source (like YouTube URLs)
       // and set it in the player. loadAudio itself might handle setting the player source now.
-      await _audioService.loadAudio(event.source, isUrl: event.isUrl);
-      print('✅ Bloc: Successfully initiated audio loading for ${event.source}');
+      await _audioService.loadAudio(event.track);
 
-      print('🔄 Bloc: Setting up stream subscriptions for ${event.source}');
       _setupSubscriptions();
 
       final initialDuration =
           await _audioService.durationStream.first ?? Duration.zero;
       final initialWaveform = _audioService.waveformData;
-      final initialTags = _audioService.getTagsForAudio(event.source);
+      final initialTags = _audioService.getTimeMarkersForAudio(
+        event.track.path,
+      );
 
-      print('🔄 Bloc: Emitting initial loaded state for ${event.source}');
       final loadedState = AudioPlayerLoaded(
-        currentSource: event.source,
+        currentSource: event.track.path,
         isPlaying: false,
         position: Duration.zero, // Start position at 0 initially
         duration: initialDuration,
@@ -80,11 +88,7 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
         markers: List<TimeMarker>.from(initialTags),
       );
 
-      print('🔄 Bloc: Emitting initial loaded state for ${event.source}');
       emit(loadedState);
-      print(
-        '✅ Bloc: Successfully emitted initial loaded state for ${event.source}',
-      );
 
       if (event.initialSeekRatio != null && initialDuration > Duration.zero) {
         final seekPosition = initialDuration * event.initialSeekRatio!;
@@ -104,15 +108,13 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
 
       _loadingTimeout?.cancel();
       _loadingTimeout = null;
-      print('✅ Bloc: Loading process completed for ${event.source}');
     } catch (e, stackTrace) {
-      print('❌ Bloc: Error loading audio for ${event.source}: $e');
       print(stackTrace);
       // <<< MODIFIED: Include source in caught error >>>
       emit(
         AudioPlayerError(
           'Failed to load audio: ${e.toString()}',
-          source: event.source,
+          source: event.track.path,
         ),
       );
       _loadingTimeout?.cancel();
@@ -225,15 +227,40 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   void _onAddTimeMarker(AddTimeMarker event, Emitter<AudioPlayerState> emit) {
     if (state is AudioPlayerLoaded) {
       final currentState = state as AudioPlayerLoaded;
-      // Add tag only if the source matches the currently loaded source
       if (currentState.currentSource == event.source) {
-        // Ensure position is valid (0.0 to 1.0)
         final validPosition = event.position.clamp(0.0, 1.0);
+
+        // 1. Update in-memory store via AudioService
         _audioService.addMarker(event.source, validPosition, event.label);
 
-        // Update tags in state
-        final tagsList = _audioService.getTagsForAudio(event.source);
-        emit(currentState.copyWith(markers: List<TimeMarker>.from(tagsList)));
+        // 2. Get the updated list from AudioService
+        final updatedMarkers = _audioService.getTimeMarkersForAudio(
+          event.source,
+        );
+
+        // 3. Emit the updated state for immediate UI feedback
+        emit(
+          currentState.copyWith(markers: List<TimeMarker>.from(updatedMarkers)),
+        );
+        print("AudioPlayerBloc: Updated in-memory markers and emitted state.");
+
+        // 4. Dispatch event to TrackMetadataBloc to persist the change
+        try {
+          // --- Use the injected _trackMetadataBloc instance ---
+          _trackMetadataBloc.add(
+            UpdateTrackMarkers(event.trackId, updatedMarkers),
+          );
+          // --- End Use injected instance ---
+          print(
+            "AudioPlayerBloc: Dispatched UpdateTrackMarkers to TrackMetadataBloc for track ${event.trackId}.",
+          );
+        } catch (e) {
+          // This catch block might be less necessary if DI guarantees _trackMetadataBloc exists,
+          // but good for catching potential issues during the dispatch itself.
+          print(
+            "AudioPlayerBloc Error: Could not dispatch UpdateTrackMarkers. Error: $e",
+          );
+        }
       } else {
         print(
           "Bloc Warning: Cannot add tag. Source mismatch. Current: ${currentState.currentSource}, Requested: ${event.source}",

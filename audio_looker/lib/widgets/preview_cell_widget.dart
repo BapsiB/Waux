@@ -148,8 +148,7 @@ class _PreviewCellWidgetState extends State<PreviewCellWidget> {
                     // Not loaded or different track: Load, pass seek RATIO, and request play
                     bloc.add(
                       LoadAudio(
-                        source: widget.track.path,
-                        isUrl: widget.track.isUrl,
+                        track: widget.track,
                         playWhenReady: true, // <<< Play when ready after tap
                         initialSeekRatio:
                             seekRatio, // <<< Pass the calculated ratio

@@ -1286,6 +1286,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       // Dispatch the renamed event
       bloc.add(
         AddTimeMarker(
+          trackId: widget.track.id!,
           source: widget.track.path, // Use the current track's path/source ID
           // Calculate position fraction based on current position and duration
           position: (position.inMilliseconds /
@@ -1472,10 +1473,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                   icon: const Icon(Icons.refresh),
                   onPressed:
                       () => context.read<AudioPlayerBloc>().add(
-                        LoadAudio(
-                          source: widget.track.path,
-                          isUrl: widget.track.isUrl,
-                        ),
+                        LoadAudio(track: widget.track),
                       ),
                 ),
               ],

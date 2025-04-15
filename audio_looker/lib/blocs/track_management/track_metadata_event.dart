@@ -17,6 +17,15 @@ class UpdateTrackRating extends TrackMetadataEvent {
   List<Object?> get props => [trackId, rating];
 }
 
+class UpdateTrackMarkers extends TrackMetadataEvent {
+  final int trackId;
+  // --- TimeMarker type is recognized via the main bloc file's import ---
+  final List<TimeMarker> markers;
+  const UpdateTrackMarkers(this.trackId, this.markers);
+  @override
+  List<Object?> get props => [trackId, markers];
+}
+
 /// Event to update the comment/notes of a specific track.
 class UpdateTrackComment extends TrackMetadataEvent {
   final int trackId;

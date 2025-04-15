@@ -280,7 +280,7 @@ class TrackSelectionHandler {
     }
 
     if (needsLoad) {
-      bloc.add(LoadAudio(source: track.path, isUrl: track.isUrl));
+      bloc.add(LoadAudio(track: track));
     } else {
       print("Track already loaded in player.");
       // Optionally seek to beginning if desired when re-selecting an already loaded track
@@ -304,8 +304,7 @@ class TrackSelectionHandler {
       // Dispatch LoadAudio with playWhenReady set to true
       bloc.add(
         LoadAudio(
-          source: track.path,
-          isUrl: track.isUrl,
+          track: track,
           playWhenReady: true, // Tell the BLoC to play after loading
         ),
       );
@@ -362,9 +361,7 @@ class TrackSelectionHandler {
 
     if (needsLoad) {
       // Load without requesting play
-      bloc.add(
-        LoadAudio(source: track.path, isUrl: track.isUrl, playWhenReady: false),
-      );
+      bloc.add(LoadAudio(track: track, playWhenReady: false));
     } else {
       print("Track already loaded, not reloading for opening player.");
       // Ensure player is paused if it was playing something else? Optional.

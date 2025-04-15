@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert'; // For JSON encoding/decoding
 import 'package:audio_looker/services/performance_profiler.dart';
+import 'package:audio_looker/services/collection_service.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 class TimeMarker {
@@ -194,24 +195,28 @@ class AudioService {
 
   // Update your AudioService.loadAudio method with timing measurements
 
-  Future<void> loadAudio(String source, {bool isUrl = false}) async {
+  Future<void> loadAudio(Track track) async {
     // Start overall timing
     PerformanceProfiler.start('loadAudio:total');
-    String? effectiveSource = source;
+    String? effectiveSource = track.path;
+    bool isUrl = track.isUrl;
     bool isYouTube = false;
 
     try {
       print(
-        '🔍 AudioService: Starting to load audio from: $source, isUrl: $isUrl',
+        '🔍 AudioService: Starting to load audio from: $effectiveSource, isUrl: $isUrl',
       );
 
       if (isUrl &&
-          (source.contains('youtube.com') || source.contains('youtu.be'))) {
+          (effectiveSource.contains('youtube.com') ||
+              effectiveSource.contains('youtu.be'))) {
         isYouTube = true;
         print('🔍 AudioService: Detected YouTube URL. Extracting stream...');
         PerformanceProfiler.start('loadAudio:youtubeExtract');
         try {
-          var videoId = VideoId.parseVideoId(source); // Extract video ID
+          var videoId = VideoId.parseVideoId(
+            effectiveSource,
+          ); // Extract video ID
           if (videoId == null) {
             throw Exception('Could not parse YouTube Video ID');
           }
@@ -244,7 +249,6 @@ class AudioService {
             );
             streamInfo = manifest.audioOnly.withHighestBitrate();
           }
-          // --- END MODIFIED STREAM SELECTION ---
 
           effectiveSource = streamInfo.url.toString();
         } catch (ytError) {
@@ -257,6 +261,13 @@ class AudioService {
         }
       }
 
+      _markersBySource[effectiveSource] = List<TimeMarker>.from(
+        track.timeMarkers,
+      );
+      print(
+        "AudioService: Loaded ${track.timeMarkers.length} markers into memory for $effectiveSource",
+      );
+
       // Step 1: Try to set up the audio player
       PerformanceProfiler.start('loadAudio:setPlayer');
       if (isUrl) {
@@ -268,8 +279,10 @@ class AudioService {
         }
       } else {
         try {
-          print('🔍 AudioService: Setting file path in player: $source');
-          await _audioPlayer.setFilePath(source);
+          print(
+            '🔍 AudioService: Setting file path in player: $effectiveSource',
+          );
+          await _audioPlayer.setFilePath(effectiveSource);
           print('✅ AudioService: Successfully set file path in player');
         } catch (e) {
           print('❌ AudioService: Error setting file path: $e');
@@ -279,7 +292,7 @@ class AudioService {
       if (!isYouTube) {
         print('🔍 AudioService: Checking for cached waveform data');
         PerformanceProfiler.start('loadAudio:checkCache');
-        final cachedWaveform = await loadWaveformFromCache(source);
+        final cachedWaveform = await loadWaveformFromCache(effectiveSource);
         PerformanceProfiler.end('loadAudio:checkCache');
 
         if (cachedWaveform != null) {
@@ -297,16 +310,16 @@ class AudioService {
           PerformanceProfiler.start('loadAudio:extractWaveform');
           // Use original source type (isUrl) to decide extraction method
           if (isUrl) {
-            await _extractWaveformFromUrl(source);
+            await _extractWaveformFromUrl(effectiveSource);
           } else {
-            await _extractWaveformFromFile(source);
+            await _extractWaveformFromFile(effectiveSource);
           }
           PerformanceProfiler.end('loadAudio:extractWaveform');
 
           // Save the newly extracted waveform to cache
           if (_waveformData != null && _waveformData!.isNotEmpty) {
             PerformanceProfiler.start('loadAudio:saveToCache');
-            await _saveWaveformToCache(source, _waveformData!);
+            await _saveWaveformToCache(effectiveSource, _waveformData!);
             PerformanceProfiler.end('loadAudio:saveToCache');
           }
         }
@@ -620,7 +633,7 @@ class AudioService {
     );
   }
 
-  List<TimeMarker> getTagsForAudio(String audioSource) {
+  List<TimeMarker> getTimeMarkersForAudio(String audioSource) {
     return _markersBySource[audioSource] ?? [];
   }
 

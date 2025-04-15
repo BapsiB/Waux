@@ -10,20 +10,18 @@ abstract class AudioPlayerEvent extends Equatable {
 }
 
 class LoadAudio extends AudioPlayerEvent {
-  final String source;
-  final bool isUrl;
   final bool playWhenReady;
   final double? initialSeekRatio;
+  final Track track;
 
   const LoadAudio({
-    required this.source,
-    required this.isUrl,
+    required this.track,
     this.playWhenReady = false,
     this.initialSeekRatio,
   });
 
   @override
-  List<Object?> get props => [source, isUrl, playWhenReady, initialSeekRatio];
+  List<Object?> get props => [track, playWhenReady, initialSeekRatio];
 }
 
 class PlayAudio extends AudioPlayerEvent {}
@@ -43,18 +41,24 @@ class SeekAudio extends AudioPlayerEvent {
 
 // *** Renamed AddAudioTag to AddTimeMarker ***
 class AddTimeMarker extends AudioPlayerEvent {
+  // --- >>> ADDED trackId <<< ---
+  final int trackId;
+  // --- >>> END ADDED <<< ---
   final String source;
   final double position; // Position fraction (0.0-1.0)
   final String label;
 
   const AddTimeMarker({
+    // --- >>> ADDED trackId <<< ---
+    required this.trackId,
+    // --- >>> END ADDED <<< ---
     required this.source,
     required this.position,
     required this.label,
   });
 
   @override
-  List<Object?> get props => [source, position, label];
+  List<Object?> get props => [trackId, source, position, label]; // Add trackId to props
 }
 
 // Internal events for stream updates

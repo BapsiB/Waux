@@ -65,63 +65,58 @@ class MyApp extends StatelessWidget {
       // Use MultiBlocProvider to provide BLoCs
       child: MultiBlocProvider(
         providers: [
-          // Keep existing BLoCs
-          BlocProvider<AudioPlayerBloc>(
-            create: (context) => AudioPlayerBloc(context.read<AudioService>()),
-          ),
-          BlocProvider<PlaylistBloc>(
-            create:
-                (context) => PlaylistBloc(
-                  playlistService: context.read<PlaylistService>(),
-                  // PlaylistBloc depends on CollectionService to know the active collection
-                  collectionService: context.read<CollectionService>(),
-                )..add(LoadPlaylists()), // Load playlists initially
-          ),
+          // --- Ensure dependent BLoCs are created first ---
           BlocProvider<CollectionManagementBloc>(
             create:
                 (context) => CollectionManagementBloc(
                   context.read<CollectionService>(),
                 )..add(LoadCollectionList()), // Load collection list initially
           ),
-
-          // --- REMOVED Old TrackManagementBloc Provider ---
-          // BlocProvider<TrackManagementBloc>( ... ),
-
-          // +++ ADDED New BLoC Providers +++
-
-          // 1. TrackDataBloc
-          BlocProvider<TrackDataBloc>(
-            create:
-                (context) => TrackDataBloc(context.read<CollectionService>()),
-            // Note: Initial data loading for TrackDataBloc is typically triggered
-            // by the UI (e.g., HomeScreen) listening to CollectionManagementBloc
-            // and dispatching LoadTracks when a collection becomes active.
-          ),
-
-          // 2. TrackMetadataBloc
           BlocProvider<TrackMetadataBloc>(
+            // <<< Create TrackMetadataBloc
             create:
                 (context) =>
                     TrackMetadataBloc(context.read<CollectionService>()),
           ),
-          // +++ ADD GlobalTagBloc Provider HERE +++
           BlocProvider<GlobalTagBloc>(
+            // <<< Create GlobalTagBloc
             create:
-                (context) => GlobalTagBloc(
-                  context.read<CollectionService>(),
-                  // Optionally load tags immediately after creation
-                )..add(LoadGlobalTags()),
+                (context) =>
+                    GlobalTagBloc(context.read<CollectionService>())
+                      ..add(LoadGlobalTags()),
           ),
-          // Add other BLoCs if needed (e.g., GlobalTagBloc, WaveformProcessingBloc later)
+          // --- BLoCs that might depend on others ---
+          BlocProvider<AudioPlayerBloc>(
+            // <<< Create AudioPlayerBloc
+            create:
+                (context) => AudioPlayerBloc(
+                  context.read<AudioService>(),
+                  context
+                      .read<
+                        TrackMetadataBloc
+                      >(), // <<< Inject TrackMetadataBloc
+                ),
+          ),
+          BlocProvider<PlaylistBloc>(
+            // <<< Create PlaylistBloc
+            create:
+                (context) => PlaylistBloc(
+                  playlistService: context.read<PlaylistService>(),
+                  collectionService: context.read<CollectionService>(),
+                )..add(LoadPlaylists()), // Load playlists initially
+          ),
+          BlocProvider<TrackDataBloc>(
+            // <<< Create TrackDataBloc
+            create:
+                (context) => TrackDataBloc(context.read<CollectionService>()),
+          ),
         ],
         child: MaterialApp(
           title: 'Audio Looker', // Updated App Name
           theme: ThemeData(
-            // Consider using a seed color for Material 3 theming
             colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
             useMaterial3: true,
             visualDensity: VisualDensity.adaptivePlatformDensity,
-            // Optional: Define specific theme components
             cardTheme: CardTheme(
               elevation: 1,
               shape: RoundedRectangleBorder(

@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
+import '../../services/audio_service.dart';
 
 // Import Services and Models
 import '../../services/collection_service.dart'; // For CollectionService
@@ -22,6 +23,29 @@ class TrackMetadataBloc extends Bloc<TrackMetadataEvent, TrackMetadataState> {
     on<UpdateTrackComment>(_onUpdateTrackComment);
     on<AddTrackGeneralTag>(_onAddTrackGeneralTag);
     on<RemoveTrackGeneralTag>(_onRemoveTrackGeneralTag);
+    on<UpdateTrackMarkers>(_onUpdateTrackMarkers);
+  }
+
+  Future<void> _onUpdateTrackMarkers(
+    UpdateTrackMarkers event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      await _collectionService.updateTrackMarkers(event.trackId, event.markers);
+      print(
+        "TrackMetadataBloc: Updated ${event.markers.length} markers for track ${event.trackId}",
+      );
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating markers: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update markers: ${e.toString()}",
+        ),
+      );
+    }
   }
 
   Future<void> _onUpdateTrackRating(

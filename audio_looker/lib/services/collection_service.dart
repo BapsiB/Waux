@@ -4,14 +4,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart'; // For Color
 import 'package:path/path.dart' as pathLib; // Use alias
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:uuid/uuid.dart'; // For unique collection IDs
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
-
-// Keep AudioService import if needed for waveform, etc.
-// import 'package:audio_looker/services/audio_service.dart';
+import '../../services/audio_service.dart';
 
 enum TrackSource { local, url, youtube }
 
@@ -24,7 +20,7 @@ class Track {
   final String path;
   final bool isUrl; // URLs are always treated as absolute
   final int duration; // in milliseconds
-  final Map<String, dynamic> tags; // Time-based tags
+  final List<TimeMarker> timeMarkers; // Time-based markers
   final List<double>? waveformData; // Store waveform data
   final int rating; // 0-5 stars
   final String comment; // User comments
@@ -38,15 +34,22 @@ class Track {
     required this.path,
     required this.isUrl,
     required this.duration,
-    this.tags = const {},
+    // --- MODIFIED: Default value is now an empty list ---
+    this.timeMarkers = const [],
+    // --- END MODIFIED ---
     this.waveformData,
     this.rating = 0,
     this.comment = '',
     this.generalTags = const [],
   });
 
-  // fromJson remains the same
   factory Track.fromJson(Map<String, dynamic> json) {
+    var jsonM = json['timeMarkers'];
+    var decoded;
+    if (jsonM != null) {
+      decoded = jsonDecode(json['timeMarkers']);
+    }
+
     return Track(
       id: json['id'],
       title: json['title'],
@@ -59,7 +62,12 @@ class Track {
               ? json['isUrl']
               : (json['isUrl'] == 1), // Handle integer bool
       duration: json['duration'],
-      tags: json['tags'] != null ? jsonDecode(json['tags']) : {},
+      timeMarkers:
+          (json['timeMarkers'] != null)
+              ? _parseTimeMarkersJson(
+                json['timeMarkers'],
+              ) // Use a helper function
+              : [],
       waveformData:
           json['waveformData'] != null
               ? List<double>.from(jsonDecode(json['waveformData']))
@@ -73,6 +81,46 @@ class Track {
     );
   }
 
+  static List<TimeMarker> _parseTimeMarkersJson(dynamic markersJsonInput) {
+    try {
+      // First, decode if it's a string
+      final dynamic decodedJson =
+          (markersJsonInput is String)
+              ? jsonDecode(markersJsonInput)
+              : markersJsonInput; // Assume already decoded if not string
+
+      // Check if the decoded result is a List
+      if (decodedJson is List) {
+        return decodedJson
+            .map((markerJson) {
+              // Ensure each item in the list is a map before parsing
+              if (markerJson is Map<String, dynamic>) {
+                return TimeMarker.fromJson(markerJson);
+              } else {
+                print(
+                  "Warning: Found non-map item in timeMarkers list: $markerJson",
+                );
+                return null; // Or throw an error, or return a default marker
+              }
+            })
+            .whereType<TimeMarker>() // Filter out any nulls from bad data
+            .toList();
+      } else {
+        // If it's not a list (e.g., it's a Map like {}), return an empty list
+        print(
+          "Warning: Expected List for timeMarkers, but got ${decodedJson.runtimeType}. Defaulting to empty list.",
+        );
+        return [];
+      }
+    } catch (e) {
+      // Handle potential jsonDecode errors or other issues
+      print(
+        "Error parsing timeMarkers JSON: $e. Input: $markersJsonInput. Defaulting to empty list.",
+      );
+      return [];
+    }
+  }
+
   // toJson remains the same
   Map<String, dynamic> toJson() {
     return {
@@ -83,7 +131,11 @@ class Track {
       'path': path, // Store the path as is (absolute or relative)
       'isUrl': isUrl ? 1 : 0,
       'duration': duration,
-      'tags': jsonEncode(tags),
+      // --- MODIFIED: Encode List<TimeMarker> to JSON string ---
+      'timeMarkers': jsonEncode(
+        timeMarkers.map((marker) => marker.toJson()).toList(),
+      ),
+      // --- END MODIFIED ---
       'waveformData': waveformData != null ? jsonEncode(waveformData) : null,
       'rating': rating,
       'comment': comment,
@@ -100,7 +152,9 @@ class Track {
     String? path,
     bool? isUrl,
     int? duration,
-    Map<String, dynamic>? tags,
+    // --- MODIFIED: Type is List<TimeMarker> ---
+    List<TimeMarker>? timeMarkers,
+    // --- END MODIFIED ---
     List<double>? waveformData,
     int? rating,
     String? comment,
@@ -114,7 +168,9 @@ class Track {
       path: path ?? this.path,
       isUrl: isUrl ?? this.isUrl,
       duration: duration ?? this.duration,
-      tags: tags ?? this.tags,
+      // --- MODIFIED: Assign tags ---
+      timeMarkers: timeMarkers ?? this.timeMarkers,
+      // --- END MODIFIED ---
       waveformData: waveformData ?? this.waveformData,
       rating: rating ?? this.rating,
       comment: comment ?? this.comment,
@@ -204,7 +260,7 @@ class CollectionDefinition {
 class CollectionService {
   // --- Constants ---
   static const int _databaseVersion =
-      2; // Keep DB version (or increment if needed for playlist tables)
+      3; // Keep DB version (or increment if needed for playlist tables)
   static const String tableMusic = 'music';
   static const String tablePlaylists = 'playlists'; // <<< NEW
   static const String tablePlaylistTracks = 'playlist_tracks'; // <<< NEW
@@ -219,7 +275,7 @@ class CollectionService {
   static const String columnPath = 'path'; // Holds absolute OR relative path
   static const String columnIsUrl = 'isUrl';
   static const String columnDuration = 'duration';
-  static const String columnTags = 'tags'; // Time-based tags
+  static const String columnTimeMarkers = 'timeMarkers'; // Time-based tags
   static const String columnWaveformData = 'waveformData';
   static const String columnRating = 'rating';
   static const String columnComment = 'comment';
@@ -508,7 +564,7 @@ class CollectionService {
         $columnPath TEXT NOT NULL,
         $columnIsUrl INTEGER NOT NULL,
         $columnDuration INTEGER NOT NULL,
-        $columnTags TEXT,
+        $columnTimeMarkers TEXT,
         $columnWaveformData TEXT,
         $columnRating INTEGER DEFAULT 0,
         $columnComment TEXT DEFAULT '',
@@ -546,6 +602,14 @@ class CollectionService {
   // --- MODIFIED: _onUpgrade potentially adds playlist tables if upgrading ---
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
+      try {
+        await db.execute(
+          'ALTER TABLE $tableMusic ADD COLUMN $columnWaveformData TEXT',
+        );
+      } catch (e) {
+        print("Could not add $columnWaveformData: $e");
+      }
+
       // Add new columns for version 2 to music table
       try {
         await db.execute(
@@ -607,11 +671,25 @@ class CollectionService {
         print("Could not add $tablePlaylistTracks table/index: $e");
       }
     }
-    // Add future upgrade logic here for version 3, 4, etc.
-    // if (oldVersion < 3) {
-    //    // Example: Add a description column to playlists
-    //    try { await db.execute('ALTER TABLE $tablePlaylists ADD COLUMN description TEXT'); } catch (e) { print("Could not add description column: $e"); }
-    // }
+    // --- NEW: v2 -> v3 upgrade (Rename tags column) ---
+    if (oldVersion < 3) {
+      print("Applying v2 -> v3 upgrades...");
+      try {
+        // Define the OLD column name explicitly here for the migration
+        const String oldColumnTags =
+            'tags'; // Or whatever the old constant was named
+        await db.execute(
+          'ALTER TABLE $tableMusic RENAME COLUMN $oldColumnTags TO $columnTimeMarkers',
+        );
+        print("Renamed column '$oldColumnTags' to '$columnTimeMarkers'.");
+      } catch (e) {
+        print("Error renaming 'tags' column to '$columnTimeMarkers': $e");
+        // Handle potential errors, e.g., if the old column doesn't exist
+        // You might need more robust error checking or alternative strategies if rename fails.
+        // For example, add the new column and try to copy data if possible (though format differs here).
+      }
+      print("Finished v2 -> v3 upgrades.");
+    }
   }
 
   // --- Root Folder Management (Revised) ---
@@ -694,6 +772,31 @@ class CollectionService {
       return List<String>.unmodifiable(_localCollectionRootFolders);
     } else {
       return [];
+    }
+  }
+
+  Future<void> updateTrackMarkers(int trackId, List<TimeMarker> markers) async {
+    if (_database == null || !_database!.isOpen) {
+      throw Exception("Database not open");
+    }
+    try {
+      final String markersJson = jsonEncode(
+        markers.map((marker) => marker.toJson()).toList(),
+      );
+      final count = await _database!.update(
+        tableMusic,
+        {columnTimeMarkers: markersJson}, // Update only the 'tags' column
+        where: '$columnId = ?',
+        whereArgs: [trackId],
+      );
+      if (count == 0) {
+        print("Warning: updateTrackMarkers - Track ID $trackId not found.");
+      } else {
+        print("Successfully updated markers for track ID $trackId.");
+      }
+    } catch (e) {
+      print("Error updating track markers for ID $trackId: $e");
+      rethrow; // Re-throw the error to be caught by the BLoC
     }
   }
 
