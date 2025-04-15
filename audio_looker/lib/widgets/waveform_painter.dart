@@ -8,12 +8,11 @@ class WaveformPainter extends CustomPainter {
   final double? dragProgress;
   final Color activeColor;
   final Color inactiveColor;
-  final double? tagPosition;
-  final List<AudioTag> tags;
+  final List<TimeMarker> markers;
+  // *** ADDED: Hovered marker for highlighting ***
+  final TimeMarker? hoveredMarker;
 
-  // Cache for performance
-  Path? _waveformPathInactive;
-  Path? _waveformPathActive;
+  // Cache & Paints (minor adjustments for hover)
   List<double>? _downsampledData;
   Size? _lastSize;
   final Paint _baselinePaint =
@@ -29,18 +28,21 @@ class WaveformPainter extends CustomPainter {
         ..color = Colors.orangeAccent
         ..strokeWidth = 2
         ..strokeCap = StrokeCap.round;
-  final Paint _tagPaint =
+  final Paint _markerPaint =
       Paint()
-        ..color = Colors.red
+        ..color = Colors.blue
         ..strokeWidth = 2
         ..strokeCap = StrokeCap.round;
-  final Paint _currentTagPaint =
+  // *** ADDED: Paint for hovered marker ***
+  final Paint _hoveredMarkerPaint =
       Paint()
-        ..color = Colors.green
-        ..strokeWidth = 2
-        ..strokeCap = StrokeCap.round;
-  final Paint _tagRectPaint = Paint()..color = Colors.red.withOpacity(0.7);
-  final Paint _newTagRectPaint = Paint()..color = Colors.green.withOpacity(0.7);
+        ..color = Colors.purple
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round; // Thicker, different color
+  final Paint _markerRectPaint = Paint()..color = Colors.blue.withOpacity(0.7);
+  // *** ADDED: Paint for hovered marker rect ***
+  final Paint _hoveredMarkerRectPaint =
+      Paint()..color = Colors.purple.withOpacity(0.8);
 
   // Constructor
   WaveformPainter({
@@ -49,8 +51,8 @@ class WaveformPainter extends CustomPainter {
     this.dragProgress,
     this.activeColor = Colors.blue,
     this.inactiveColor = Colors.grey,
-    this.tagPosition,
-    this.tags = const [],
+    this.markers = const [],
+    this.hoveredMarker,
   });
 
   @override
@@ -114,11 +116,71 @@ class WaveformPainter extends CustomPainter {
     // Draw progress line (keep this helper)
     _drawProgressLine(canvas, size, progressPosition);
 
-    // Draw tags (keep this helper)
-    _drawTags(canvas, size);
+    _drawMarkers(canvas, size);
 
     // Draw current tag position (keep this helper)
-    _drawCurrentTagPosition(canvas, size);
+    // _drawCurrentTagPosition(canvas, size);
+  }
+
+  void _drawMarkers(Canvas canvas, Size size) {
+    for (final marker in markers) {
+      final x = marker.position.clamp(0.0, 1.0) * size.width;
+      // *** Check if this marker is hovered ***
+      final bool isHovered = hoveredMarker == marker;
+
+      // *** Select paint based on hover state ***
+      final Paint currentMarkerPaint =
+          isHovered ? _hoveredMarkerPaint : _markerPaint;
+      final Paint currentRectPaint =
+          isHovered ? _hoveredMarkerRectPaint : _markerRectPaint;
+      final double rectWidth =
+          isHovered ? 28 : 24; // Slightly wider when hovered
+      final double rectHeight =
+          isHovered ? 22 : 20; // Slightly taller when hovered
+
+      // Draw marker line
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), currentMarkerPaint);
+
+      // Draw marker rectangle
+      final markerRect = RRect.fromRectAndRadius(
+        // Adjust position based on new width/height to keep it centered
+        Rect.fromLTWH(x - rectWidth / 2, 0, rectWidth, rectHeight),
+        const Radius.circular(4),
+      );
+      canvas.drawRRect(markerRect, currentRectPaint);
+
+      // Draw marker text (first character)
+      _drawMarkerText(canvas, x, marker.label, isHovered);
+    }
+  }
+
+  // Updated text drawing to optionally make hovered text bolder
+  void _drawMarkerText(Canvas canvas, double x, String text, bool isHovered) {
+    final textSpan = TextSpan(
+      text:
+          text.isNotEmpty
+              ? text.characters.first
+              : '?', // Show first char or '?'
+      style: TextStyle(
+        color: Colors.white,
+        fontSize: isHovered ? 13 : 12, // Slightly larger when hovered
+        fontWeight:
+            isHovered
+                ? FontWeight.bold
+                : FontWeight.normal, // Bolder when hovered
+      ),
+    );
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    );
+    textPainter.layout();
+    // Adjust vertical position slightly to center in rect
+    textPainter.paint(
+      canvas,
+      Offset(x - textPainter.width / 2, isHovered ? 3 : 4),
+    );
   }
 
   void _updateDownsampledData(Size size) {
@@ -181,43 +243,24 @@ class WaveformPainter extends CustomPainter {
     }
   }
 
-  void _drawTags(Canvas canvas, Size size) {
-    for (final tag in tags) {
-      final x = tag.position.clamp(0.0, 1.0) * size.width;
+  // void _drawCurrentTagPosition(Canvas canvas, Size size) {
+  //   if (tagPosition != null) {
+  //     final x = tagPosition!.clamp(0.0, 1.0) * size.width;
 
-      // Draw tag line
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), _tagPaint);
+  //     // Draw tag line
+  //     canvas.drawLine(Offset(x, 0), Offset(x, size.height), _currentTagPaint);
 
-      // Draw tag rectangle
-      final tagRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(x - 12, 0, 24, 20),
-        const Radius.circular(4),
-      );
-      canvas.drawRRect(tagRect, _tagRectPaint);
+  //     // Draw tag rectangle
+  //     final tagRect = RRect.fromRectAndRadius(
+  //       Rect.fromLTWH(x - 12, 0, 24, 20),
+  //       const Radius.circular(4),
+  //     );
+  //     canvas.drawRRect(tagRect, _newTagRectPaint);
 
-      // Draw tag text
-      _drawTagText(canvas, x, (tags.indexOf(tag) + 1).toString());
-    }
-  }
-
-  void _drawCurrentTagPosition(Canvas canvas, Size size) {
-    if (tagPosition != null) {
-      final x = tagPosition!.clamp(0.0, 1.0) * size.width;
-
-      // Draw tag line
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), _currentTagPaint);
-
-      // Draw tag rectangle
-      final tagRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(x - 12, 0, 24, 20),
-        const Radius.circular(4),
-      );
-      canvas.drawRRect(tagRect, _newTagRectPaint);
-
-      // Draw tag text
-      _drawTagText(canvas, x, "+");
-    }
-  }
+  //     // Draw tag text
+  //     _drawTagText(canvas, x, "+");
+  //   }
+  // }
 
   void _drawTagText(Canvas canvas, double x, String text) {
     final textSpan = TextSpan(
@@ -237,30 +280,38 @@ class WaveformPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(WaveformPainter oldDelegate) {
-    // Check only critical properties that would affect appearance
-    // Note: we don't need to check waveformData length anymore as we're using downsampled data
+    // *** Include hoveredMarker in comparison ***
     return oldDelegate.playbackProgress != playbackProgress ||
         oldDelegate.dragProgress != dragProgress ||
-        oldDelegate.tagPosition != tagPosition ||
         oldDelegate.activeColor != activeColor ||
         oldDelegate.inactiveColor != inactiveColor ||
-        oldDelegate.tags.length != tags.length ||
-        _didTagsChange(oldDelegate.tags) ||
+        oldDelegate.hoveredMarker !=
+            hoveredMarker || // Check if hovered marker changed
+        !listEquals(oldDelegate.markers, markers) ||
         _didWaveformDataChange(oldDelegate.waveformData);
   }
 
-  // More efficient tag change detection
-  bool _didTagsChange(List<AudioTag> oldTags) {
-    if (tags.length != oldTags.length) return true;
-
-    for (int i = 0; i < tags.length; i++) {
-      if (tags[i].position != oldTags[i].position) {
-        return true;
-      }
+  bool listEquals<T>(List<T>? a, List<T>? b) {
+    if (a == null) return b == null;
+    if (b == null || a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
     }
-
-    return false;
+    return true;
   }
+
+  // // More efficient tag change detection
+  // bool _didTagsChange(List<TimeMarker> oldTags) {
+  //   if (tags.length != oldTags.length) return true;
+
+  //   for (int i = 0; i < tags.length; i++) {
+  //     if (tags[i].position != oldTags[i].position) {
+  //       return true;
+  //     }
+  //   }
+
+  //   return false;
+  // }
 
   // Check if waveform data has changed significantly
   // Only checks a sample of points for performance

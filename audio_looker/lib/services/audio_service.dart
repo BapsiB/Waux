@@ -10,18 +10,18 @@ import 'dart:convert'; // For JSON encoding/decoding
 import 'package:audio_looker/services/performance_profiler.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
-class AudioTag {
+class TimeMarker {
   final double position;
   final String label;
 
-  AudioTag({required this.position, required this.label});
+  TimeMarker({required this.position, required this.label});
 
   Map<String, dynamic> toJson() {
     return {'position': position, 'label': label};
   }
 
-  factory AudioTag.fromJson(Map<String, dynamic> json) {
-    return AudioTag(position: json['position'], label: json['label']);
+  factory TimeMarker.fromJson(Map<String, dynamic> json) {
+    return TimeMarker(position: json['position'], label: json['label']);
   }
 }
 
@@ -60,7 +60,8 @@ class AudioService {
   final Map<String, List<double>> _waveformCache = {};
 
   // Tags
-  final Map<String, List<AudioTag>> _audioTags = {};
+  // *** Renamed _tagsBySource to _markersBySource and use TimeMarker ***
+  final Map<String, List<TimeMarker>> _markersBySource = {};
 
   // Event controller for waveform data
   final _waveformController = StreamController<List<double>>.broadcast();
@@ -605,20 +606,22 @@ class AudioService {
   }
 
   // Tag management
-  void addTag(String audioSource, double position, String label) {
-    if (!_audioTags.containsKey(audioSource)) {
-      _audioTags[audioSource] = [];
+  void addMarker(String audioSource, double position, String label) {
+    if (!_markersBySource.containsKey(audioSource)) {
+      _markersBySource[audioSource] = [];
     }
 
-    final tag = AudioTag(position: position, label: label);
-    _audioTags[audioSource]!.add(tag);
+    final tag = TimeMarker(position: position, label: label);
+    _markersBySource[audioSource]!.add(tag);
 
     // Sort tags by position
-    _audioTags[audioSource]!.sort((a, b) => a.position.compareTo(b.position));
+    _markersBySource[audioSource]!.sort(
+      (a, b) => a.position.compareTo(b.position),
+    );
   }
 
-  List<AudioTag> getTagsForAudio(String audioSource) {
-    return _audioTags[audioSource] ?? [];
+  List<TimeMarker> getTagsForAudio(String audioSource) {
+    return _markersBySource[audioSource] ?? [];
   }
 
   // Clear specific cache entry

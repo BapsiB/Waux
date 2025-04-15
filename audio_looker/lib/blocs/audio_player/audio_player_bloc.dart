@@ -7,172 +7,8 @@ import 'package:just_audio/just_audio.dart'
     show PlayerState, ProcessingState;
 import 'package:audio_looker/services/audio_service.dart';
 
-// Events
-abstract class AudioPlayerEvent extends Equatable {
-  const AudioPlayerEvent();
-
-  @override
-  List<Object?> get props => [];
-}
-
-class LoadAudio extends AudioPlayerEvent {
-  final String source;
-  final bool isUrl;
-  final bool playWhenReady;
-  final double? initialSeekRatio; // <<< CHANGED: Duration? to double?
-
-  const LoadAudio({
-    required this.source,
-    required this.isUrl,
-    this.playWhenReady = false,
-    this.initialSeekRatio, // <<< CHANGED
-  });
-
-  @override
-  // <<< CHANGED prop name for clarity
-  List<Object?> get props => [source, isUrl, playWhenReady, initialSeekRatio];
-}
-
-class PlayAudio extends AudioPlayerEvent {}
-
-class PauseAudio extends AudioPlayerEvent {}
-
-class StopAudio extends AudioPlayerEvent {}
-
-class SeekAudio extends AudioPlayerEvent {
-  final Duration position;
-
-  const SeekAudio({required this.position});
-
-  @override
-  List<Object?> get props => [position];
-}
-
-class AddAudioTag extends AudioPlayerEvent {
-  final String source;
-  final double position; // Store as fraction 0.0-1.0
-  final String label;
-
-  const AddAudioTag({
-    required this.source,
-    required this.position,
-    required this.label,
-  });
-
-  @override
-  List<Object?> get props => [source, position, label];
-}
-
-// Rating event (If managed here, otherwise remove)
-// class UpdateTrackRating extends AudioPlayerEvent { ... }
-
-// Notes event (If managed here, otherwise remove)
-// class UpdateTrackNotes extends AudioPlayerEvent { ... }
-
-// General tags events (If managed here, otherwise remove)
-// class AddTrackGeneralTag extends AudioPlayerEvent { ... }
-// class RemoveTrackGeneralTag extends AudioPlayerEvent { ... }
-
-class UpdatePlaybackState extends AudioPlayerEvent {
-  final just_audio.PlayerState playerState;
-
-  const UpdatePlaybackState(this.playerState);
-
-  @override
-  List<Object?> get props => [playerState];
-}
-
-class UpdatePlaybackPosition extends AudioPlayerEvent {
-  final Duration position;
-
-  const UpdatePlaybackPosition(this.position);
-
-  @override
-  List<Object?> get props => [position];
-}
-
-class UpdateWaveformData extends AudioPlayerEvent {
-  final List<double> waveformData;
-
-  const UpdateWaveformData(this.waveformData);
-
-  @override
-  List<Object?> get props => [waveformData];
-}
-
-// States
-abstract class AudioPlayerState extends Equatable {
-  const AudioPlayerState();
-
-  @override
-  List<Object?> get props => [];
-}
-
-class AudioPlayerInitial extends AudioPlayerState {}
-
-class AudioPlayerLoading extends AudioPlayerState {}
-
-class AudioPlayerLoaded extends AudioPlayerState {
-  final String? currentSource; // *** ADDED: Track the loaded source ***
-  final bool isPlaying;
-  final Duration position;
-  final Duration duration;
-  final List<double>? waveformData;
-  final List<AudioTag> tags; // Time-based tags
-
-  const AudioPlayerLoaded({
-    this.currentSource, // *** ADDED ***
-    required this.isPlaying,
-    required this.position,
-    required this.duration,
-    this.waveformData,
-    this.tags = const [],
-  });
-
-  @override
-  List<Object?> get props => [
-    currentSource, // *** ADDED ***
-    isPlaying,
-    position,
-    duration,
-    waveformData,
-    tags,
-  ];
-
-  AudioPlayerLoaded copyWith({
-    String? currentSource, // *** ADDED ***
-    bool? isPlaying,
-    Duration? position,
-    Duration? duration,
-    // Use List<double>? to allow clearing waveform
-    List<double>? waveformData,
-    bool clearWaveform = false, // Add flag to explicitly clear
-    List<AudioTag>? tags,
-  }) {
-    return AudioPlayerLoaded(
-      currentSource: currentSource ?? this.currentSource, // *** ADDED ***
-      isPlaying: isPlaying ?? this.isPlaying,
-      position: position ?? this.position,
-      duration: duration ?? this.duration,
-      // Handle waveform update/clearance
-      waveformData: clearWaveform ? null : (waveformData ?? this.waveformData),
-      tags: tags ?? this.tags,
-    );
-  }
-}
-
-class AudioPlayerError extends AudioPlayerState {
-  final String message;
-  final String? source; // <<< ADDED: Optional source of the error
-
-  const AudioPlayerError(
-    this.message, {
-    this.source,
-  }); // <<< MODIFIED: Add optional source parameter
-
-  @override
-  List<Object?> get props => [message, source]; // <<< MODIFIED: Include source in props
-}
+part 'audio_player_event.dart';
+part 'audio_player_state.dart';
 
 // BLoC
 class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
@@ -190,7 +26,7 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     on<PauseAudio>(_onPauseAudio);
     on<StopAudio>(_onStopAudio);
     on<SeekAudio>(_onSeekAudio); // Make sure this is registered
-    on<AddAudioTag>(_onAddAudioTag);
+    on<AddTimeMarker>(_onAddTimeMarker);
     on<UpdatePlaybackState>(_onUpdatePlaybackState);
     on<UpdatePlaybackPosition>(_onUpdatePlaybackPosition);
     on<UpdateWaveformData>(_onUpdateWaveformData);
@@ -241,7 +77,7 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
         position: Duration.zero, // Start position at 0 initially
         duration: initialDuration,
         waveformData: initialWaveform,
-        tags: List<AudioTag>.from(initialTags),
+        markers: List<TimeMarker>.from(initialTags),
       );
 
       print('🔄 Bloc: Emitting initial loaded state for ${event.source}');
@@ -386,18 +222,18 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   }
   // --- End Modified Seek Handler ---
 
-  void _onAddAudioTag(AddAudioTag event, Emitter<AudioPlayerState> emit) {
+  void _onAddTimeMarker(AddTimeMarker event, Emitter<AudioPlayerState> emit) {
     if (state is AudioPlayerLoaded) {
       final currentState = state as AudioPlayerLoaded;
       // Add tag only if the source matches the currently loaded source
       if (currentState.currentSource == event.source) {
         // Ensure position is valid (0.0 to 1.0)
         final validPosition = event.position.clamp(0.0, 1.0);
-        _audioService.addTag(event.source, validPosition, event.label);
+        _audioService.addMarker(event.source, validPosition, event.label);
 
         // Update tags in state
         final tagsList = _audioService.getTagsForAudio(event.source);
-        emit(currentState.copyWith(tags: List<AudioTag>.from(tagsList)));
+        emit(currentState.copyWith(markers: List<TimeMarker>.from(tagsList)));
       } else {
         print(
           "Bloc Warning: Cannot add tag. Source mismatch. Current: ${currentState.currentSource}, Requested: ${event.source}",

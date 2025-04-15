@@ -54,6 +54,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   final TextEditingController _notesController = TextEditingController();
   bool _isNoteExpanded = false;
   int _currentRating = 0; // Local state for optimistic UI update
+  bool _isTimeMarkingMode = false;
+  Timer? _hideOverlayTimer;
 
   // State for Waveform Dragging & Throttling (Unchanged)
   bool _isDraggingWaveform = false;
@@ -63,9 +65,12 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   DateTime? _lastSeekDispatchTime;
   final Duration _seekThrottleInterval = const Duration(milliseconds: 100);
 
+  TimeMarker? _hoveredMarker;
+  Offset? _hoverPosition; // Store local
+  final GlobalKey _waveformContainerKey = GlobalKey();
+
   // State for Time Tagging (Unchanged)
-  final TextEditingController _timeTagController = TextEditingController();
-  bool _isTimeTaggingMode = false;
+  final TextEditingController _timeMarkerController = TextEditingController();
 
   @override
   void initState() {
@@ -137,19 +142,36 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       _notesController.text = track.comment;
     }
     // Reset time tagging mode when track changes
-    _isTimeTaggingMode = false;
-    _timeTagController.clear();
+    _isTimeMarkingMode = false;
+    _timeMarkerController.clear();
   }
 
   @override
   void dispose() {
+    _hideOverlayTimer?.cancel(); // Cancel timer on dispose
     _animationController.dispose();
     _notesController.dispose();
-    _timeTagController.dispose();
+    _timeMarkerController.dispose();
     super.dispose();
   }
 
-  // --- UI Building Methods ---
+  void _startHideOverlayTimer() {
+    _hideOverlayTimer?.cancel(); // Cancel any existing timer
+    _hideOverlayTimer = Timer(const Duration(milliseconds: 100), () {
+      // Adjust delay as needed
+      if (mounted) {
+        setState(() {
+          _hoveredMarker = null;
+          _hoverPosition = null;
+        });
+      }
+    });
+  }
+
+  // Function to cancel the hide timer
+  void _cancelHideOverlayTimer() {
+    _hideOverlayTimer?.cancel();
+  }
 
   // Build the common toggle bar (Top bar for minimizing/expanding)
   Widget _buildToggleBar() {
@@ -389,13 +411,12 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   }
 
   // Build the UI for the expanded player
-  // Build the UI for the expanded player
   Widget _buildExpandedPlayerUI(AudioPlayerLoaded playerState, Track track) {
     final isPlaying = playerState.isPlaying;
     final duration = playerState.duration;
     final position = playerState.position;
     final waveformData = playerState.waveformData;
-    final timeTags = playerState.tags;
+    final timeMarkers = playerState.markers;
     final bool canInteract = duration > Duration.zero;
 
     // **** WRAP the part needing TrackDataState with BlocBuilder ****
@@ -532,59 +553,222 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                   ),
                 ), // End Header Padding
                 // --- Waveform Display Section ---
-                Container(
-                  height: 120,
-                  margin: const EdgeInsets.symmetric(horizontal: 16),
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.surfaceVariant.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
+                MouseRegion(
+                  onHover:
+                      (event) => _handleHover(
+                        event.localPosition,
+                        timeMarkers,
+                        playerState,
+                      ),
+                  onExit: (_) => _handleHoverExit(),
+                  child: Container(
+                    key: _waveformContainerKey, // Assign key
+                    height: 120,
+                    margin: const EdgeInsets.symmetric(horizontal: 16),
+                    // *** Wrap content in Stack for overlay ***
                     child: Stack(
-                      alignment: Alignment.center,
+                      clipBehavior:
+                          Clip.none, // Allow overlay widgets to go outside bounds if needed
                       children: [
-                        GestureDetector(
-                          onTapDown: (details) {
-                            /* ... */
-                          },
-                          onHorizontalDragStart: (details) {
-                            /* ... */
-                          },
-                          onHorizontalDragUpdate: (details) {
-                            /* ... */
-                          },
-                          onHorizontalDragEnd: (details) {
-                            /* ... */
-                          },
+                        // Base Waveform Container (with GestureDetector)
+                        Positioned.fill(
                           child: Container(
-                            width: double.infinity,
-                            height: double.infinity,
-                            color: Colors.transparent,
-                            child: CustomPaint(
-                              size: Size.infinite,
-                              painter: WaveformPainter(
-                                waveformData: waveformData ?? [],
-                                activeColor:
-                                    Theme.of(context).colorScheme.primary,
-                                inactiveColor: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-                                playbackProgress:
-                                    canInteract
-                                        ? (position.inMilliseconds /
-                                                duration.inMilliseconds)
-                                            .clamp(0.0, 1.0)
-                                        : 0.0,
-                                dragProgress: _dragProgress,
-                                tags: timeTags,
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.surfaceVariant.withOpacity(0.3),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: GestureDetector(
+                                // *** onTapDown now only handles seek OR drag start ***
+                                onTapDown: (details) {
+                                  // Check if tap is on the hover overlay first (handled by overlay's GestureDetector)
+                                  // If not on overlay, proceed with seek/drag
+                                  if (canInteract && _hoveredMarker == null) {
+                                    // Only seek if not hovering a marker (overlay handles marker clicks)
+                                    final RenderBox box =
+                                        _waveformContainerKey.currentContext
+                                                ?.findRenderObject()
+                                            as RenderBox;
+                                    final localPosition = box.globalToLocal(
+                                      details.globalPosition,
+                                    );
+                                    final containerWidth = box.size.width;
+                                    if (containerWidth > 0) {
+                                      final tapRatio = (localPosition.dx /
+                                              containerWidth)
+                                          .clamp(0.0, 1.0);
+                                      final seekPosition = duration * tapRatio;
+                                      context.read<AudioPlayerBloc>().add(
+                                        SeekAudio(position: seekPosition),
+                                      );
+                                    }
+                                  }
+                                },
+                                onHorizontalDragStart: (details) {
+                                  if (canInteract) {
+                                    // Reset hover state when drag starts
+                                    setState(() {
+                                      _hoveredMarker = null;
+                                      _hoverPosition = null;
+                                    });
+                                    // Original drag start logic...
+                                    final bloc =
+                                        context.read<AudioPlayerBloc>();
+                                    setState(() {
+                                      _isDraggingWaveform = true;
+                                      _wasPlayingBeforeDrag = isPlaying;
+                                      _lastSeekDispatchTime = null;
+                                      final RenderBox box =
+                                          _waveformContainerKey.currentContext
+                                                  ?.findRenderObject()
+                                              as RenderBox;
+                                      final localPosition = box.globalToLocal(
+                                        details.globalPosition,
+                                      );
+                                      final containerWidth = box.size.width;
+                                      if (containerWidth > 0) {
+                                        _finalDragRatio = (localPosition.dx /
+                                                containerWidth)
+                                            .clamp(0.0, 1.0);
+                                        _dragProgress = _finalDragRatio;
+                                      } else {
+                                        _dragProgress =
+                                            canInteract &&
+                                                    duration.inMilliseconds > 0
+                                                ? (position.inMilliseconds /
+                                                        duration.inMilliseconds)
+                                                    .clamp(0.0, 1.0)
+                                                : 0.0;
+                                        _finalDragRatio = _dragProgress ?? 0.0;
+                                      }
+                                    });
+                                    if (_wasPlayingBeforeDrag)
+                                      bloc.add(PauseAudio());
+                                  }
+                                },
+                                onHorizontalDragUpdate: (details) {
+                                  if (_isDraggingWaveform && canInteract) {
+                                    final RenderBox box =
+                                        _waveformContainerKey.currentContext
+                                                ?.findRenderObject()
+                                            as RenderBox;
+                                    final localPosition = box.globalToLocal(
+                                      details.globalPosition,
+                                    );
+                                    final containerWidth = box.size.width;
+                                    if (containerWidth > 0) {
+                                      final seekRatio = (localPosition.dx /
+                                              containerWidth)
+                                          .clamp(0.0, 1.0);
+                                      _finalDragRatio = seekRatio;
+                                      setState(() {
+                                        _dragProgress = seekRatio;
+                                      });
+                                    }
+                                  }
+                                },
+                                onHorizontalDragEnd: (details) {
+                                  if (_isDraggingWaveform) {
+                                    if (canInteract) {
+                                      final finalSeekPosition =
+                                          duration * _finalDragRatio;
+                                      context.read<AudioPlayerBloc>().add(
+                                        SeekAudio(position: finalSeekPosition),
+                                      );
+                                    }
+                                    setState(() {
+                                      _isDraggingWaveform = false;
+                                      _dragProgress = null;
+                                      _lastSeekDispatchTime = null;
+                                    });
+                                    if (_wasPlayingBeforeDrag) {
+                                      Future.delayed(
+                                        const Duration(milliseconds: 50),
+                                        () {
+                                          if (mounted)
+                                            context.read<AudioPlayerBloc>().add(
+                                              PlayAudio(),
+                                            );
+                                        },
+                                      );
+                                    }
+                                  }
+                                },
+                                // *** Pass hoveredMarker to painter ***
+                                child: CustomPaint(
+                                  size: Size.infinite,
+                                  painter: WaveformPainter(
+                                    waveformData: waveformData ?? [],
+                                    activeColor:
+                                        Theme.of(context).colorScheme.primary,
+                                    inactiveColor: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant
+                                        .withOpacity(0.5),
+                                    playbackProgress:
+                                        canInteract &&
+                                                duration.inMilliseconds > 0
+                                            ? (position.inMilliseconds /
+                                                    duration.inMilliseconds)
+                                                .clamp(0.0, 1.0)
+                                            : 0.0,
+                                    dragProgress: _dragProgress,
+                                    markers: timeMarkers,
+                                    hoveredMarker:
+                                        _hoveredMarker, // Pass hover state
+                                  ),
+                                ),
                               ),
                             ),
                           ),
                         ),
                         // Removed the explicit empty waveform check here as AudioService provides fallback
+                        // (You might want to add back the loading indicator or placeholder if needed)
+                        if (waveformData == null || waveformData.isEmpty)
+                          Center(
+                            child:
+                                (track.sourceType ==
+                                        TrackSource
+                                            .youtube) // More robust check might be needed
+                                    ? Container(
+                                      // Your Placeholder Widget
+                                      width: double.infinity,
+                                      height: double.infinity, // Fill the area
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .surfaceVariant
+                                            .withOpacity(0.2), // Example style
+                                        // Or use an Icon, or a custom shape painter
+                                      ),
+                                      child: Icon(
+                                        Icons
+                                            .music_off_outlined, // Example placeholder icon
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant
+                                            .withOpacity(0.5),
+                                        size: 40,
+                                      ),
+                                    )
+                                    : SizedBox(
+                                      // Keep loading indicator for non-YouTube empty waveforms
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.0,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                          ),
+                        // Hover Overlay
+                        _buildHoverOverlay(playerState),
                       ],
                     ),
                   ),
@@ -690,7 +874,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                 ? () {
                                   if (mounted) {
                                     setState(() {
-                                      _isTimeTaggingMode = true;
+                                      // *** Set marking mode ***
+                                      _isTimeMarkingMode = true;
                                     });
                                   }
                                 }
@@ -704,10 +889,55 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 // --- Time Tag Input Row ---
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  // *** Use _isTimeMarkingMode ***
                   child:
-                      _isTimeTaggingMode
-                          ? Row(/* ... Time Tag Input Row Logic ... */)
-                          : const SizedBox.shrink(),
+                      _isTimeMarkingMode
+                          ? Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  // *** Use _timeMarkerController ***
+                                  controller: _timeMarkerController,
+                                  decoration: const InputDecoration(
+                                    // *** Updated hint text ***
+                                    hintText: 'Enter marker name',
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                  autofocus: true,
+                                  // *** Call _addMarkerAtCurrentTime ***
+                                  onSubmitted:
+                                      (_) =>
+                                          _addMarkerAtCurrentTime(playerState),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.check_circle,
+                                  color: Colors.green,
+                                ),
+                                tooltip: 'Save Marker',
+                                // *** Call _addMarkerAtCurrentTime ***
+                                onPressed:
+                                    () => _addMarkerAtCurrentTime(playerState),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.cancel,
+                                  color: Colors.red,
+                                ),
+                                tooltip: 'Cancel Marker',
+                                onPressed: () {
+                                  setState(() {
+                                    // *** Set marking mode ***
+                                    _isTimeMarkingMode = false;
+                                    _timeMarkerController.clear();
+                                  });
+                                },
+                              ),
+                            ],
+                          )
+                          : const SizedBox.shrink(), // Show nothing when not marking
                 ),
 
                 // --- Notes Section ---
@@ -729,27 +959,224 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     return "$twoDigitMinutes:$twoDigitSeconds";
   }
 
-  // Add time tag at the current playback position
-  void _addTagAtCurrentPosition(AudioPlayerLoaded playerState) {
-    if (_timeTagController.text.isNotEmpty &&
-        playerState.duration > Duration.zero) {
-      final bloc = context.read<AudioPlayerBloc>();
-      final positionFraction = (playerState.position.inMilliseconds /
-              playerState.duration.inMilliseconds)
-          .clamp(0.0, 1.0);
-      bloc.add(
-        AddAudioTag(
-          source: widget.track.path, // Use the current track's path
-          position: positionFraction,
-          label: _timeTagController.text,
-        ),
-      );
-      _timeTagController.clear();
-      if (mounted) {
+  void _handleHover(
+    Offset localPosition,
+    List<TimeMarker> markers,
+    AudioPlayerLoaded playerState,
+  ) {
+    if (!mounted) return;
+
+    // --- Find the hovered marker (existing logic) ---
+    final RenderBox? box =
+        _waveformContainerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+
+    final containerWidth = box.size.width;
+    if (containerWidth <= 0) return;
+
+    final double hoverX = localPosition.dx;
+    const double hitTolerancePixels = 8.0; // Increased tolerance slightly
+
+    TimeMarker? newlyHoveredMarker;
+    for (final marker in markers) {
+      final markerX = marker.position * containerWidth;
+      if ((hoverX - markerX).abs() < hitTolerancePixels) {
+        newlyHoveredMarker = marker;
+        break;
+      }
+    }
+
+    // --- MODIFIED LOGIC ---
+    // Only update state IF a marker is actually hovered
+    if (newlyHoveredMarker != null) {
+      _cancelHideOverlayTimer(); // Cancel timer if we hover over a marker
+      // Update state only if the marker changed or position changed significantly
+      if (_hoveredMarker != newlyHoveredMarker ||
+          (_hoverPosition != null &&
+              (localPosition - _hoverPosition!).distance > 2.0)) {
         setState(() {
-          _isTimeTaggingMode = false;
+          _hoveredMarker = newlyHoveredMarker;
+          _hoverPosition = localPosition;
         });
       }
+    }
+    // *** DO NOT clear _hoveredMarker here if newlyHoveredMarker is null ***
+    // The timer mechanism will handle clearing when the mouse leaves relevant areas.
+    // --- END MODIFIED LOGIC ---
+  }
+
+  void _handleHoverExit() {
+    if (!mounted) return;
+    _startHideOverlayTimer(); // Start timer when leaving waveform container
+  }
+
+  // Build the overlay shown on marker hover
+  Widget _buildHoverOverlay(AudioPlayerLoaded playerState) {
+    // print("Build Hover Overlay Called. Hovered Marker: ${_hoveredMarker?.label}"); // Optional Debug
+
+    if (_hoveredMarker == null || _hoverPosition == null) {
+      return Positioned(
+        left: 0,
+        top: 0,
+        child: Container(
+          width: 0,
+          height: 0,
+          color: Colors.orange.withOpacity(0.5),
+        ),
+      );
+      // return const SizedBox.shrink();
+    }
+
+    final RenderBox? box =
+        _waveformContainerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return const SizedBox.shrink();
+    final containerWidth = box.size.width;
+    final markerX = _hoveredMarker!.position * containerWidth;
+
+    // Positioning logic
+    final double overlayWidth = 120;
+    // *** Position overlay near the top *inside* the container bounds ***
+    final double top = 5.0;
+    double left = markerX - (overlayWidth / 2);
+
+    // Clamp position to stay within visible bounds
+    left = left.clamp(0, containerWidth - overlayWidth);
+
+    return Positioned(
+      left: left,
+      top: top,
+      width: overlayWidth,
+      child: MouseRegion(
+        // Keep this MouseRegion
+        onEnter: (_) => _cancelHideOverlayTimer(),
+        onExit: (_) => _startHideOverlayTimer(),
+        child: GestureDetector(
+          // Add an empty onTap to ensure this area is hit-testable within the Stack
+          // This prevents taps falling through to the main waveform GestureDetector below
+          onTap: () {
+            print("Tapped on Overlay Area");
+          },
+          // Make the hit area slightly larger than the visible content if needed
+          // behavior: HitTestBehavior.opaque, // Or translucent if needed
+          child: Material(
+            elevation: 4.0,
+            borderRadius: BorderRadius.circular(8),
+            color: Theme.of(
+              context,
+            ).colorScheme.secondaryContainer.withOpacity(0.95),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8.0,
+                vertical: 4.0,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        print("Tapped marker label: ${_hoveredMarker!.label}");
+                        final seekPosition =
+                            playerState.duration * _hoveredMarker!.position;
+                        context.read<AudioPlayerBloc>().add(
+                          SeekAudio(position: seekPosition),
+                        );
+                        setState(() {
+                          _hoveredMarker = null;
+                          _hoverPosition = null;
+                        });
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4.0),
+                        child: Text(
+                          _hoveredMarker!.label,
+                          style: TextStyle(
+                            color:
+                                Theme.of(
+                                  context,
+                                ).colorScheme.onSecondaryContainer,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                          textAlign: TextAlign.center,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: Icon(
+                      Icons.play_circle_outline,
+                      color: Theme.of(context).colorScheme.onSecondaryContainer,
+                    ),
+                    iconSize: 24,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    tooltip: 'Play from marker',
+                    onPressed: () {
+                      print("Tapped play for marker: ${_hoveredMarker!.label}");
+                      final seekPosition =
+                          playerState.duration * _hoveredMarker!.position;
+                      context.read<AudioPlayerBloc>().add(
+                        SeekAudio(position: seekPosition),
+                      );
+                      setState(() {
+                        _hoveredMarker = null;
+                        _hoverPosition = null;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Add time tag at the current playback position
+  void _addMarkerAtCurrentTime(AudioPlayerLoaded playerState) {
+    // *** Use _timeMarkerController ***
+    if (_timeMarkerController.text.isNotEmpty &&
+        playerState.duration > Duration.zero) {
+      final bloc = context.read<AudioPlayerBloc>();
+      // Use the current position directly from the state
+      final position = playerState.position;
+      // Dispatch the renamed event
+      bloc.add(
+        AddTimeMarker(
+          source: widget.track.path, // Use the current track's path/source ID
+          // Calculate position fraction based on current position and duration
+          position: (position.inMilliseconds /
+                  playerState.duration.inMilliseconds)
+              .clamp(0.0, 1.0),
+          label: _timeMarkerController.text,
+        ),
+      );
+      _timeMarkerController.clear();
+      if (mounted) {
+        setState(() {
+          // *** Set marking mode ***
+          _isTimeMarkingMode = false;
+        });
+      }
+    } else if (_timeMarkerController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Marker name cannot be empty.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot add marker: Audio duration not available.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
     }
   }
 
