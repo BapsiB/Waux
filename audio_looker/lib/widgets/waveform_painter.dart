@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:audio_looker/services/audio_service.dart';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 class WaveformPainter extends CustomPainter {
   final List<double> waveformData;
@@ -9,10 +10,9 @@ class WaveformPainter extends CustomPainter {
   final Color activeColor;
   final Color inactiveColor;
   final List<TimeMarker> markers;
-  // *** ADDED: Hovered marker for highlighting ***
-  final TimeMarker? hoveredMarker;
+  // REMOVED: hoveredMarker parameter
+  final Offset? hoverPosition; // ADDED: Current hover position from parent
 
-  // Cache & Paints (minor adjustments for hover)
   List<double>? _downsampledData;
   Size? _lastSize;
   final Paint _baselinePaint =
@@ -33,18 +33,15 @@ class WaveformPainter extends CustomPainter {
         ..color = Colors.blue
         ..strokeWidth = 2
         ..strokeCap = StrokeCap.round;
-  // *** ADDED: Paint for hovered marker ***
   final Paint _hoveredMarkerPaint =
       Paint()
         ..color = Colors.purple
         ..strokeWidth = 3
-        ..strokeCap = StrokeCap.round; // Thicker, different color
-  final Paint _markerRectPaint = Paint()..color = Colors.blue.withOpacity(0.7);
-  // *** ADDED: Paint for hovered marker rect ***
-  final Paint _hoveredMarkerRectPaint =
-      Paint()..color = Colors.purple.withOpacity(0.8);
+        ..strokeCap = StrokeCap.round;
+  // ADDED: Paint for label background
+  final Paint _labelBackgroundPaint = Paint()..style = PaintingStyle.fill;
 
-  // Constructor
+  // Constructor updated
   WaveformPainter({
     required this.waveformData,
     required this.playbackProgress,
@@ -52,47 +49,48 @@ class WaveformPainter extends CustomPainter {
     this.activeColor = Colors.blue,
     this.inactiveColor = Colors.grey,
     this.markers = const [],
-    this.hoveredMarker,
+    // REMOVED: this.hoveredMarker,
+    this.hoverPosition, // ADDED
   });
+
+  // --- Define Layout Constants (adjust as needed) ---
+  static const double playIconSize = 18.0;
+  static const double markerBarWidth = 2.0; // Width of the main vertical bar
+  static const double hoverBarWidth = 3.0; // Width when hovered
+  static const double labelPaddingHorizontal = 6.0;
+  static const double labelPaddingVertical = 3.0;
+  static const double labelFontSize = 11.0;
+  static const double labelMaxWidth = 100.0;
+  static const double elementSpacing = 4.0; // Space between icon, bar, label bg
+  static const double hoverHitTolerance =
+      10.0; // Pixel tolerance for hover detection
 
   @override
   void paint(Canvas canvas, Size size) {
     if (waveformData.isEmpty) return;
 
-    // Keep the optimized paint objects
+    // ... (Optimized paints, downsampling, baseline drawing - remain the same) ...
     final wavePaint =
         Paint()
           ..color = inactiveColor
-          ..strokeWidth =
-              2.5 // Adjusted stroke width slightly
-          ..strokeCap =
-              StrokeCap.square; // Use round caps for potentially better look
-
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.square;
     final playedPaint =
         Paint()
           ..color = activeColor
           ..strokeWidth = 2.5
           ..strokeCap = StrokeCap.square;
-
     final centerY = size.height / 2;
-    final maxAmplitude =
-        size.height * 0.4; // Slightly increase amplitude visibility
+    final maxAmplitude = size.height * 0.4;
 
-    // Keep the downsampling logic
     _updateDownsampledData(size);
     final dataToRender = _downsampledData!;
-    if (dataToRender.isEmpty) return; // Check after downsampling
+    if (dataToRender.isEmpty) return;
 
-    final spacing =
-        size.width /
-        math.max(1, dataToRender.length - 1); // Ensure divisor is at least 1
-
+    final spacing = size.width / math.max(1, dataToRender.length - 1);
     final progressPosition = (dragProgress ?? playbackProgress).clamp(0.0, 1.0);
-    // Calculate split point based on the number of *segments* if using length-1 for spacing,
-    // or based on *points* if using length. Let's stick to points for simplicity.
     final splitIndex = (progressPosition * dataToRender.length).floor();
 
-    // Draw baseline first
     canvas.drawLine(
       Offset(0, centerY),
       Offset(size.width, centerY),
@@ -101,86 +99,182 @@ class WaveformPainter extends CustomPainter {
 
     for (int i = 0; i < dataToRender.length; i++) {
       final x = i * spacing;
-      // Use the downsampled value, ensure it's clamped
       final amplitude = dataToRender[i].clamp(0.0, 1.0) * maxAmplitude;
       final topY = centerY - amplitude;
       final bottomY = centerY + amplitude;
-
-      // Determine paint based on split index
       final currentPaint = i < splitIndex ? playedPaint : wavePaint;
-
-      // Draw the vertical line representing the amplitude for this point
       canvas.drawLine(Offset(x, topY), Offset(x, bottomY), currentPaint);
     }
+    // --- End Waveform Drawing ---
 
-    // Draw progress line (keep this helper)
+    // --- Determine Hovered Marker ---
+    TimeMarker? currentlyHoveredMarker;
+    if (hoverPosition != null) {
+      for (final marker in markers) {
+        final markerX = marker.position.clamp(0.0, 1.0) * size.width;
+        // Check if hover position is horizontally close to the marker line
+        if ((hoverPosition!.dx - markerX).abs() < hoverHitTolerance) {
+          currentlyHoveredMarker = marker;
+          break; // Found the first hovered marker
+        }
+      }
+    }
+    // --- End Determine Hovered Marker ---
+
+    // --- Draw Markers (with hover effects) ---
+    _drawMarkers(canvas, size, 10, currentlyHoveredMarker);
+
+    // --- Draw Progress Line ---
     _drawProgressLine(canvas, size, progressPosition);
-
-    _drawMarkers(canvas, size);
-
-    // Draw current tag position (keep this helper)
-    // _drawCurrentTagPosition(canvas, size);
   }
 
-  void _drawMarkers(Canvas canvas, Size size) {
+  void _drawMarkers(
+    Canvas canvas,
+    Size size,
+    double centerY,
+    TimeMarker? currentlyHoveredMarker,
+  ) {
     for (final marker in markers) {
       final x = marker.position.clamp(0.0, 1.0) * size.width;
-      // *** Check if this marker is hovered ***
-      final bool isHovered = hoveredMarker == marker;
+      final bool isHovered = marker == currentlyHoveredMarker;
 
-      // *** Select paint based on hover state ***
-      final Paint currentMarkerPaint =
+      final Paint currentBarPaint =
           isHovered ? _hoveredMarkerPaint : _markerPaint;
-      final Paint currentRectPaint =
-          isHovered ? _hoveredMarkerRectPaint : _markerRectPaint;
-      final double rectWidth =
-          isHovered ? 28 : 24; // Slightly wider when hovered
-      final double rectHeight =
-          isHovered ? 22 : 20; // Slightly taller when hovered
+      final double currentBarW = isHovered ? hoverBarWidth : markerBarWidth;
 
-      // Draw marker line
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), currentMarkerPaint);
+      // --- Prepare Label ---
+      final labelStyle = TextStyle(
+        color: isHovered ? Colors.white : Colors.black87, // Adjust colors
+        fontSize: labelFontSize,
+        fontWeight: isHovered ? FontWeight.bold : FontWeight.normal,
+      );
+      final textSpan = TextSpan(text: marker.label, style: labelStyle);
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.left,
+        maxLines: 1,
+        ellipsis: '...',
+      );
+      textPainter.layout(maxWidth: labelMaxWidth);
+      final labelHeight = textPainter.height;
+      final labelWidth = textPainter.width;
+      final backgroundHeight = labelHeight + (labelPaddingVertical * 2);
 
-      // Draw marker rectangle
-      final markerRect = RRect.fromRectAndRadius(
-        // Adjust position based on new width/height to keep it centered
-        Rect.fromLTWH(x - rectWidth / 2, 0, rectWidth, rectHeight),
+      // --- Calculate Layout ---
+      // Start drawing from the left edge of the play icon (if hovered)
+      double currentX = x;
+      if (isHovered) {
+        currentX -=
+            (playIconSize +
+                elementSpacing); // Start left of bar for hover layout
+      } else {
+        currentX +=
+            currentBarW / 2 +
+            elementSpacing; // Start right of bar for non-hover layout
+      }
+      double playIconLeft = 0; // Keep track for hit testing if needed
+
+      // --- Draw Elements ---
+
+      // 1. Draw Play Icon (if hovered)
+      if (isHovered) {
+        playIconLeft = currentX;
+        _drawIcon(
+          canvas,
+          Icons.play_arrow,
+          Offset(playIconLeft, centerY - playIconSize / 2),
+          playIconSize,
+          currentBarPaint.color.withOpacity(0.85),
+        );
+        currentX += playIconSize + elementSpacing;
+      }
+
+      // 2. Draw Marker Bar
+      // Center the bar at the original 'x' position
+      final barLeft = x - currentBarW / 2;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), currentBarPaint);
+      // We'll draw background relative to label position later, but bar is at 'x'
+
+      // 3. Calculate Label & Background Position
+      // For non-hover, label starts right of bar 'x'. For hover, it starts right of icon
+      double labelBgLeft;
+      if (isHovered) {
+        labelBgLeft = x + currentBarW / 2 + elementSpacing;
+      } else {
+        // Non-hovered: label starts right of the bar at 'x'
+        labelBgLeft = x + currentBarW / 2 + elementSpacing;
+      }
+      final labelBgTop = centerY - backgroundHeight / 2;
+      final labelBgRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(
+          labelBgLeft,
+          labelBgTop,
+          labelWidth + (labelPaddingHorizontal * 2),
+          backgroundHeight,
+        ),
         const Radius.circular(4),
       );
-      canvas.drawRRect(markerRect, currentRectPaint);
 
-      // Draw marker text (first character)
-      _drawMarkerText(canvas, x, marker.label, isHovered);
+      // 4. Draw Label Background
+      // Use a color matching the bar, potentially with some opacity
+      _labelBackgroundPaint.color = currentBarPaint.color.withOpacity(
+        0.85,
+      ); // Match bar color
+      canvas.drawRRect(labelBgRect, _labelBackgroundPaint);
+
+      // 5. Draw Label Text (on top of background)
+      final textOffsetX = labelBgLeft + labelPaddingHorizontal;
+      final textOffsetY =
+          centerY - labelHeight / 2; // Use calculated labelHeight
+      textPainter.paint(canvas, Offset(textOffsetX, textOffsetY));
     }
   }
 
-  // Updated text drawing to optionally make hovered text bolder
-  void _drawMarkerText(Canvas canvas, double x, String text, bool isHovered) {
-    final textSpan = TextSpan(
-      text:
-          text.isNotEmpty
-              ? text.characters.first
-              : '?', // Show first char or '?'
-      style: TextStyle(
-        color: Colors.white,
-        fontSize: isHovered ? 13 : 12, // Slightly larger when hovered
-        fontWeight:
-            isHovered
-                ? FontWeight.bold
-                : FontWeight.normal, // Bolder when hovered
-      ),
+  void _paintMarkerLabel(
+    Canvas canvas,
+    Size size,
+    double x,
+    double centerY,
+    String text,
+    bool isHovered,
+  ) {
+    final labelStyle = TextStyle(
+      // Use a less prominent color for the non-hovered label
+      color: Colors.grey[700], // Or adjust color as needed
+      fontSize: 11, // Smaller font size for the persistent label
+      fontWeight: FontWeight.normal,
+      // Consider adding a subtle background or outline for readability if needed
+      // background: Paint()..color = Colors.white.withOpacity(0.7),
     );
+
+    final textSpan = TextSpan(text: text, style: labelStyle);
     final textPainter = TextPainter(
       text: textSpan,
       textDirection: TextDirection.ltr,
-      textAlign: TextAlign.center,
+      textAlign: TextAlign.left,
+      maxLines: 1, // Ensure label stays on one line
+      ellipsis: '...', // Add ellipsis if text overflows
     );
-    textPainter.layout();
-    // Adjust vertical position slightly to center in rect
-    textPainter.paint(
-      canvas,
-      Offset(x - textPainter.width / 2, isHovered ? 3 : 4),
-    );
+
+    textPainter.layout(
+      maxWidth: 100,
+    ); // Limit label width to prevent excessive overlap
+
+    // Position the text to the right of the marker line
+    final double textOffsetX = x + 6; // Offset from the line 'x'
+    // Center the text vertically
+    final double textOffsetY = centerY - (textPainter.height / 2);
+
+    // Ensure text doesn't draw off the right edge of the canvas
+    if (textOffsetX + textPainter.width <= size.width) {
+      textPainter.paint(canvas, Offset(textOffsetX, textOffsetY));
+    } else {
+      // Optional: Handle cases where text might go off-screen
+      // Could draw aligned to the right edge, or just not draw if no space
+      // Example: Draw aligned right if it would overflow
+      // textPainter.paint(canvas, Offset(size.width - textPainter.width - 2, textOffsetY));
+    }
   }
 
   void _updateDownsampledData(Size size) {
@@ -262,31 +356,34 @@ class WaveformPainter extends CustomPainter {
   //   }
   // }
 
-  void _drawTagText(Canvas canvas, double x, String text) {
-    final textSpan = TextSpan(
-      text: text,
-      style: const TextStyle(color: Colors.white, fontSize: 12),
-    );
-
-    final textPainter = TextPainter(
-      text: textSpan,
-      textDirection: TextDirection.ltr,
-      textAlign: TextAlign.center,
-    );
-
-    textPainter.layout();
-    textPainter.paint(canvas, Offset(x - textPainter.width / 2, 4));
+  // --- Helper to Draw Icon ---
+  void _drawIcon(
+    Canvas canvas,
+    IconData icon,
+    Offset offset,
+    double size,
+    Color color,
+  ) {
+    final builder =
+        ui.ParagraphBuilder(
+            ui.ParagraphStyle(fontFamily: icon.fontFamily, fontSize: size),
+          )
+          ..pushStyle(ui.TextStyle(color: color))
+          ..addText(String.fromCharCode(icon.codePoint));
+    final paragraph = builder.build();
+    paragraph.layout(ui.ParagraphConstraints(width: size));
+    canvas.drawParagraph(paragraph, offset);
   }
 
   @override
   bool shouldRepaint(WaveformPainter oldDelegate) {
-    // *** Include hoveredMarker in comparison ***
+    // Include hoverPosition in comparison
     return oldDelegate.playbackProgress != playbackProgress ||
         oldDelegate.dragProgress != dragProgress ||
         oldDelegate.activeColor != activeColor ||
         oldDelegate.inactiveColor != inactiveColor ||
-        oldDelegate.hoveredMarker !=
-            hoveredMarker || // Check if hovered marker changed
+        // REMOVED: oldDelegate.hoveredMarker != hoveredMarker ||
+        oldDelegate.hoverPosition != hoverPosition || // ADDED
         !listEquals(oldDelegate.markers, markers) ||
         _didWaveformDataChange(oldDelegate.waveformData);
   }

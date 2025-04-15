@@ -56,6 +56,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   int _currentRating = 0; // Local state for optimistic UI update
   bool _isTimeMarkingMode = false;
   Timer? _hideOverlayTimer;
+  Offset? _hoverPositionForPainter;
 
   // State for Waveform Dragging & Throttling (Unchanged)
   bool _isDraggingWaveform = false;
@@ -155,23 +156,23 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     super.dispose();
   }
 
-  void _startHideOverlayTimer() {
-    _hideOverlayTimer?.cancel(); // Cancel any existing timer
-    _hideOverlayTimer = Timer(const Duration(milliseconds: 100), () {
-      // Adjust delay as needed
-      if (mounted) {
-        setState(() {
-          _hoveredMarker = null;
-          _hoverPosition = null;
-        });
-      }
-    });
-  }
+  // void _startHideOverlayTimer() {
+  //   _hideOverlayTimer?.cancel(); // Cancel any existing timer
+  //   _hideOverlayTimer = Timer(const Duration(milliseconds: 100), () {
+  //     // Adjust delay as needed
+  //     if (mounted) {
+  //       setState(() {
+  //         _hoveredMarker = null;
+  //         _hoverPosition = null;
+  //       });
+  //     }
+  //   });
+  // }
 
   // Function to cancel the hide timer
-  void _cancelHideOverlayTimer() {
-    _hideOverlayTimer?.cancel();
-  }
+  // void _cancelHideOverlayTimer() {
+  //   _hideOverlayTimer?.cancel();
+  // }
 
   // Build the common toggle bar (Top bar for minimizing/expanding)
   Widget _buildToggleBar() {
@@ -553,34 +554,44 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                   ),
                 ), // End Header Padding
                 // --- Waveform Display Section ---
-                MouseRegion(
-                  onHover:
-                      (event) => _handleHover(
-                        event.localPosition,
-                        timeMarkers,
-                        playerState,
-                      ),
-                  onExit: (_) => _handleHoverExit(),
-                  child: Container(
-                    key: _waveformContainerKey, // Assign key
-                    height: 120,
-                    margin: const EdgeInsets.symmetric(horizontal: 16),
-                    // *** Wrap content in Stack for overlay ***
-                    child: Stack(
-                      clipBehavior:
-                          Clip.none, // Allow overlay widgets to go outside bounds if needed
-                      children: [
-                        // Base Waveform Container (with GestureDetector)
-                        Positioned.fill(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.surfaceVariant.withOpacity(0.3),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
+                Container(
+                  key: _waveformContainerKey, // Assign key
+                  height: 120,
+                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  // *** Wrap content in Stack for overlay ***
+                  child: Stack(
+                    clipBehavior:
+                        Clip.none, // Allow overlay widgets to go outside bounds if needed
+                    children: [
+                      // Base Waveform Container (with GestureDetector)
+                      Positioned.fill(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.surfaceVariant.withOpacity(0.3),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: MouseRegion(
+                              // Detect hover over the waveform area
+                              onHover: (event) {
+                                // Update the hover position state relative to the CustomPaint container
+                                if (mounted) {
+                                  setState(() {
+                                    _hoverPositionForPainter =
+                                        event.localPosition;
+                                  });
+                                }
+                              },
+                              onExit: (event) {
+                                if (mounted) {
+                                  setState(() {
+                                    _hoverPositionForPainter = null;
+                                  });
+                                }
+                              },
                               child: GestureDetector(
                                 // *** onTapDown now only handles seek OR drag start ***
                                 onTapDown: (details) {
@@ -717,62 +728,64 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                             : 0.0,
                                     dragProgress: _dragProgress,
                                     markers: timeMarkers,
-                                    hoveredMarker:
-                                        _hoveredMarker, // Pass hover state
+                                    // REMOVED: hoveredMarker parameter
+                                    // ADDED: hoverPosition parameter
+                                    hoverPosition: _hoverPositionForPainter,
                                   ),
                                 ),
                               ),
                             ),
                           ),
                         ),
-                        // Removed the explicit empty waveform check here as AudioService provides fallback
-                        // (You might want to add back the loading indicator or placeholder if needed)
-                        if (waveformData == null || waveformData.isEmpty)
-                          Center(
-                            child:
-                                (track.sourceType ==
-                                        TrackSource
-                                            .youtube) // More robust check might be needed
-                                    ? Container(
-                                      // Your Placeholder Widget
-                                      width: double.infinity,
-                                      height: double.infinity, // Fill the area
-                                      decoration: BoxDecoration(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .surfaceVariant
-                                            .withOpacity(0.2), // Example style
-                                        // Or use an Icon, or a custom shape painter
-                                      ),
-                                      child: Icon(
-                                        Icons
-                                            .music_off_outlined, // Example placeholder icon
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant
-                                            .withOpacity(0.5),
-                                        size: 40,
-                                      ),
-                                    )
-                                    : SizedBox(
-                                      // Keep loading indicator for non-YouTube empty waveforms
-                                      width: 24,
-                                      height: 24,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.0,
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurfaceVariant,
-                                      ),
+                      ),
+                      // Removed the explicit empty waveform check here as AudioService provides fallback
+                      // (You might want to add back the loading indicator or placeholder if needed)
+                      if (waveformData == null || waveformData.isEmpty)
+                        Center(
+                          child:
+                              (track.sourceType ==
+                                      TrackSource
+                                          .youtube) // More robust check might be needed
+                                  ? Container(
+                                    // Your Placeholder Widget
+                                    width: double.infinity,
+                                    height: double.infinity, // Fill the area
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .surfaceVariant
+                                          .withOpacity(0.2), // Example style
+                                      // Or use an Icon, or a custom shape painter
                                     ),
-                          ),
-                        // Hover Overlay
-                        _buildHoverOverlay(playerState),
-                      ],
-                    ),
+                                    child: Icon(
+                                      Icons
+                                          .music_off_outlined, // Example placeholder icon
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant
+                                          .withOpacity(0.5),
+                                      size: 40,
+                                    ),
+                                  )
+                                  : SizedBox(
+                                    // Keep loading indicator for non-YouTube empty waveforms
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.0,
+                                      color:
+                                          Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                        ),
+                      // // Hover Overlay
+                      // _buildHoverOverlay(playerState),
+                    ],
                   ),
                 ),
+                // ),
 
                 // --- Time Indicators ---
                 Padding(
@@ -989,7 +1002,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     // --- MODIFIED LOGIC ---
     // Only update state IF a marker is actually hovered
     if (newlyHoveredMarker != null) {
-      _cancelHideOverlayTimer(); // Cancel timer if we hover over a marker
+      // _cancelHideOverlayTimer(); // Cancel timer if we hover over a marker
       // Update state only if the marker changed or position changed significantly
       if (_hoveredMarker != newlyHoveredMarker ||
           (_hoverPosition != null &&
@@ -1005,137 +1018,172 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     // --- END MODIFIED LOGIC ---
   }
 
-  void _handleHoverExit() {
-    if (!mounted) return;
-    _startHideOverlayTimer(); // Start timer when leaving waveform container
-  }
+  // void _handleHoverExit() {
+  //   if (!mounted) return;
+  //   _startHideOverlayTimer(); // Start timer when leaving waveform container
+  // }
 
-  // Build the overlay shown on marker hover
-  Widget _buildHoverOverlay(AudioPlayerLoaded playerState) {
-    // print("Build Hover Overlay Called. Hovered Marker: ${_hoveredMarker?.label}"); // Optional Debug
+  // Widget _buildHoverOverlay(AudioPlayerLoaded playerState) {
+  //   // if (_hoveredMarker == null || _hoverPosition == null) {
+  //   return Positioned(
+  //     left: 0,
+  //     top: 0,
+  //     child: Container(
+  //       width: 0,
+  //       height: 0,
+  //       color: Colors.orange.withOpacity(0.5),
+  //     ),
+  //   );
+  // }
 
-    if (_hoveredMarker == null || _hoverPosition == null) {
-      return Positioned(
-        left: 0,
-        top: 0,
-        child: Container(
-          width: 0,
-          height: 0,
-          color: Colors.orange.withOpacity(0.5),
-        ),
-      );
-      // return const SizedBox.shrink();
-    }
+  // final RenderBox? box =
+  //     _waveformContainerKey.currentContext?.findRenderObject() as RenderBox?;
+  // if (box == null || !box.hasSize) return const SizedBox.shrink();
+  // final containerWidth = box.size.width;
+  // final markerX = _hoveredMarker!.position * containerWidth;
 
-    final RenderBox? box =
-        _waveformContainerKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return const SizedBox.shrink();
-    final containerWidth = box.size.width;
-    final markerX = _hoveredMarker!.position * containerWidth;
+  // // --- Configuration for the new overlay ---
+  // final double overlayHeight = 30.0; // Adjust height as needed
+  // final double playButtonWidth = 30.0;
+  // final double barWidth = 3.0; // Width of the visual bar in the overlay
+  // final double labelMinWidth = 60.0; // Minimum width for the label area
+  // final double horizontalPadding = 6.0;
+  // final double totalMinWidth =
+  //     playButtonWidth +
+  //     barWidth +
+  //     labelMinWidth +
+  //     (horizontalPadding * 2); // Rough estimate
 
-    // Positioning logic
-    final double overlayWidth = 120;
-    // *** Position overlay near the top *inside* the container bounds ***
-    final double top = 5.0;
-    double left = markerX - (overlayWidth / 2);
+  // // Positioning logic (center the overlay horizontally over the marker position)
+  // double left = markerX - (totalMinWidth / 2);
+  // // Clamp position to stay within visible waveform bounds
+  // left = left.clamp(0, containerWidth - totalMinWidth);
+  // // Position slightly above the waveform center or at the top
+  // final double top = 5.0; // Position near the top, adjust as needed
 
-    // Clamp position to stay within visible bounds
-    left = left.clamp(0, containerWidth - overlayWidth);
-
-    return Positioned(
-      left: left,
-      top: top,
-      width: overlayWidth,
-      child: MouseRegion(
-        // Keep this MouseRegion
-        onEnter: (_) => _cancelHideOverlayTimer(),
-        onExit: (_) => _startHideOverlayTimer(),
-        child: GestureDetector(
-          // Add an empty onTap to ensure this area is hit-testable within the Stack
-          // This prevents taps falling through to the main waveform GestureDetector below
-          onTap: () {
-            print("Tapped on Overlay Area");
-          },
-          // Make the hit area slightly larger than the visible content if needed
-          // behavior: HitTestBehavior.opaque, // Or translucent if needed
-          child: Material(
-            elevation: 4.0,
-            borderRadius: BorderRadius.circular(8),
-            color: Theme.of(
-              context,
-            ).colorScheme.secondaryContainer.withOpacity(0.95),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 8.0,
-                vertical: 4.0,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: () {
-                        print("Tapped marker label: ${_hoveredMarker!.label}");
-                        final seekPosition =
-                            playerState.duration * _hoveredMarker!.position;
-                        context.read<AudioPlayerBloc>().add(
-                          SeekAudio(position: seekPosition),
-                        );
-                        setState(() {
-                          _hoveredMarker = null;
-                          _hoverPosition = null;
-                        });
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4.0),
-                        child: Text(
-                          _hoveredMarker!.label,
-                          style: TextStyle(
-                            color:
-                                Theme.of(
-                                  context,
-                                ).colorScheme.onSecondaryContainer,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                          textAlign: TextAlign.center,
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    icon: Icon(
-                      Icons.play_circle_outline,
-                      color: Theme.of(context).colorScheme.onSecondaryContainer,
-                    ),
-                    iconSize: 24,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    tooltip: 'Play from marker',
-                    onPressed: () {
-                      print("Tapped play for marker: ${_hoveredMarker!.label}");
-                      final seekPosition =
-                          playerState.duration * _hoveredMarker!.position;
-                      context.read<AudioPlayerBloc>().add(
-                        SeekAudio(position: seekPosition),
-                      );
-                      setState(() {
-                        _hoveredMarker = null;
-                        _hoverPosition = null;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  // return Positioned(
+  //   left: left,
+  //   top: top,
+  //   // Width will adapt to content, but set minimum if needed
+  //   // width: totalMinWidth, // Or let it size automatically
+  //   height: overlayHeight,
+  //   child: MouseRegion(
+  //     // Keep mouse region to manage hover state via timer
+  //     onEnter: (_) => _cancelHideOverlayTimer(),
+  //     onExit: (_) => _startHideOverlayTimer(),
+  //     cursor: SystemMouseCursors.click,
+  //     child: Material(
+  //       elevation: 4.0,
+  //       borderRadius: BorderRadius.circular(6),
+  //       color: Theme.of(
+  //         context,
+  //       ).colorScheme.secondaryContainer.withOpacity(0.95),
+  //       child: GestureDetector(
+  //         // Make the whole area clickable for seeking
+  //         onTap: () {
+  //           print("Tapped overlay for marker: ${_hoveredMarker!.label}");
+  //           final seekPosition =
+  //               playerState.duration * _hoveredMarker!.position;
+  //           context.read<AudioPlayerBloc>().add(
+  //             SeekAudio(position: seekPosition),
+  //           );
+  //           // Optionally play if paused or just seek
+  //           if (!playerState.isPlaying) {
+  //             context.read<AudioPlayerBloc>().add(PlayAudio());
+  //           }
+  //           // Hide overlay after interaction
+  //           setState(() {
+  //             _hoveredMarker = null;
+  //             _hoverPosition = null;
+  //           });
+  //         },
+  //         child: Container(
+  //           // Container for padding
+  //           padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+  //           height: overlayHeight,
+  //           child: Row(
+  //             mainAxisSize: MainAxisSize.min, // Keep row tight
+  //             crossAxisAlignment: CrossAxisAlignment.center,
+  //             children: [
+  //               // 1. Play Button (Left)
+  //               IconButton(
+  //                 icon: Icon(
+  //                   Icons.play_arrow, // Use play_arrow or play_circle_outline
+  //                   color: Theme.of(context).colorScheme.onSecondaryContainer,
+  //                 ),
+  //                 iconSize: 18,
+  //                 padding: EdgeInsets.zero,
+  //                 constraints: const BoxConstraints(),
+  //                 tooltip: 'Play from "${_hoveredMarker!.label}"',
+  //                 onPressed: () {
+  //                   // Play button specifically plays
+  //                   print(
+  //                     "Tapped play button for marker: ${_hoveredMarker!.label}",
+  //                   );
+  //                   final seekPosition =
+  //                       playerState.duration * _hoveredMarker!.position;
+  //                   context.read<AudioPlayerBloc>().add(
+  //                     SeekAudio(position: seekPosition),
+  //                   );
+  //                   context.read<AudioPlayerBloc>().add(
+  //                     PlayAudio(),
+  //                   ); // Ensure it plays
+  //                   // Hide overlay after interaction
+  //                   setState(() {
+  //                     _hoveredMarker = null;
+  //                     _hoverPosition = null;
+  //                   });
+  //                 },
+  //               ),
+  //               const SizedBox(width: 4), // Spacer
+  //               // 2. Visual Marker Bar (Middle)
+  //               Container(
+  //                 width: barWidth,
+  //                 height:
+  //                     overlayHeight *
+  //                     0.6, // Make bar slightly shorter than overlay bg
+  //                 decoration: BoxDecoration(
+  //                   color:
+  //                       Theme.of(
+  //                         context,
+  //                       ).colorScheme.primary, // Use a distinct color
+  //                   borderRadius: BorderRadius.circular(barWidth / 2),
+  //                 ),
+  //               ),
+  //               const SizedBox(width: 4), // Spacer
+  //               // 3. Label (Right) - Expanded text
+  //               Flexible(
+  //                 // Use Flexible to allow text to take space
+  //                 child: Container(
+  //                   // Optional Container for label alignment/padding
+  //                   constraints: BoxConstraints(
+  //                     minWidth: labelMinWidth,
+  //                   ), // Ensure minimum space for label
+  //                   alignment: Alignment.centerLeft,
+  //                   child: Text(
+  //                     _hoveredMarker!.label, // Show full label on hover
+  //                     style: TextStyle(
+  //                       color:
+  //                           Theme.of(
+  //                             context,
+  //                           ).colorScheme.onSecondaryContainer,
+  //                       fontWeight: FontWeight.bold,
+  //                       fontSize: 13,
+  //                     ),
+  //                     textAlign: TextAlign.left, // Align text to the left
+  //                     overflow: TextOverflow.ellipsis,
+  //                     maxLines: 1,
+  //                   ),
+  //                 ),
+  //               ),
+  //             ],
+  //           ),
+  //         ),
+  //       ),
+  //     ),
+  //   ),
+  // );
+  // }
 
   // Add time tag at the current playback position
   void _addMarkerAtCurrentTime(AudioPlayerLoaded playerState) {
