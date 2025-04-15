@@ -575,63 +575,137 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(12),
                             child: MouseRegion(
-                              // Detect hover over the waveform area
-                              onHover: (event) {
-                                // Update the hover position state relative to the CustomPaint container
-                                if (mounted) {
-                                  setState(() {
-                                    _hoverPositionForPainter =
-                                        event.localPosition;
-                                  });
-                                }
-                              },
-                              onExit: (event) {
-                                if (mounted) {
-                                  setState(() {
-                                    _hoverPositionForPainter = null;
-                                  });
-                                }
-                              },
+                              onHover:
+                                  (event) => setState(
+                                    () =>
+                                        _hoverPositionForPainter =
+                                            event.localPosition,
+                                  ),
+                              onExit:
+                                  (event) => setState(
+                                    () => _hoverPositionForPainter = null,
+                                  ),
                               child: GestureDetector(
-                                // *** onTapDown now only handles seek OR drag start ***
-                                onTapDown: (details) {
-                                  // Check if tap is on the hover overlay first (handled by overlay's GestureDetector)
-                                  // If not on overlay, proceed with seek/drag
-                                  if (canInteract && _hoveredMarker == null) {
-                                    // Only seek if not hovering a marker (overlay handles marker clicks)
-                                    final RenderBox box =
-                                        _waveformContainerKey.currentContext
-                                                ?.findRenderObject()
-                                            as RenderBox;
-                                    final localPosition = box.globalToLocal(
-                                      details.globalPosition,
-                                    );
-                                    final containerWidth = box.size.width;
-                                    if (containerWidth > 0) {
-                                      final tapRatio = (localPosition.dx /
-                                              containerWidth)
-                                          .clamp(0.0, 1.0);
-                                      final seekPosition = duration * tapRatio;
-                                      context.read<AudioPlayerBloc>().add(
-                                        SeekAudio(position: seekPosition),
-                                      );
+                                // This is the GestureDetector to modify
+                                // --- onTapUp Handler ---
+                                onTapUp: (details) {
+                                  // Using onTapUp
+                                  if (!canInteract)
+                                    return; // Ensure player is ready
+
+                                  final RenderBox? box =
+                                      _waveformContainerKey.currentContext
+                                              ?.findRenderObject()
+                                          as RenderBox?;
+                                  if (box == null || !box.hasSize) return;
+
+                                  final localPosition = box.globalToLocal(
+                                    details.globalPosition,
+                                  );
+                                  final size = box.size;
+                                  final bloc =
+                                      context
+                                          .read<
+                                            AudioPlayerBloc
+                                          >(); // Get BLoC instance
+
+                                  // --- Determine tapped marker and hit area ---
+                                  TimeMarker? tappedMarker;
+                                  bool hitPlayIcon = false;
+
+                                  // Check markers in reverse draw order (top first)
+                                  for (final marker in timeMarkers.reversed) {
+                                    // Calculate the layout assuming the marker IS hovered to get hit areas
+                                    // We need to call the static method from WaveformPainter
+                                    final hoverLayout =
+                                        WaveformPainter.calculateMarkerLayout(
+                                          marker,
+                                          size,
+                                          true,
+                                        );
+
+                                    // Check if the tap position is within the combined hover area
+                                    if (hoverLayout.fullHoverArea.contains(
+                                      localPosition,
+                                    )) {
+                                      tappedMarker = marker;
+                                      // If it's within the hover area, check if it specifically hit the play icon
+                                      if (hoverLayout.playIconBounds.contains(
+                                        localPosition,
+                                      )) {
+                                        hitPlayIcon = true;
+                                      }
+                                      // Found the marker being interacted with, no need to check others
+                                      break;
                                     }
                                   }
-                                },
+                                  // --- End Determine tapped marker ---
+
+                                  // --- Dispatch Action based on tap ---
+                                  if (tappedMarker != null) {
+                                    // A marker's interactive area was tapped
+                                    final seekPosition =
+                                        playerState.duration *
+                                        tappedMarker.position;
+
+                                    if (hitPlayIcon) {
+                                      // Play Icon was clicked: Seek and Play
+                                      print(
+                                        "Tapped Play Icon for marker ${tappedMarker.label}",
+                                      );
+                                      bloc.add(
+                                        SeekAudio(position: seekPosition),
+                                      );
+                                      // Ensure playback starts or resumes
+                                      bloc.add(PlayAudio());
+                                    } else {
+                                      // Label/Bar area was clicked: Just Seek
+                                      print(
+                                        "Tapped Label/Bar for marker ${tappedMarker.label}",
+                                      );
+                                      bloc.add(
+                                        SeekAudio(position: seekPosition),
+                                      );
+                                      // Optional: You could add PlayAudio() here too if you want clicking
+                                      // the label to also resume playback if paused.
+                                      // if (!playerState.isPlaying) {
+                                      //   bloc.add(PlayAudio());
+                                      // }
+                                    }
+                                  } else {
+                                    // No marker area tapped - perform standard waveform seek
+                                    final tapRatio = (localPosition.dx /
+                                            size.width)
+                                        .clamp(0.0, 1.0);
+                                    final seekPosition =
+                                        playerState.duration * tapRatio;
+                                    print(
+                                      "Tapped waveform background, seeking to ratio $tapRatio",
+                                    );
+                                    bloc.add(SeekAudio(position: seekPosition));
+                                  }
+
+                                  // Optionally reset hover state visually after a click
+                                  // if (mounted && _hoverPositionForPainter != null) {
+                                  //   setState(() { _hoverPositionForPainter = null; });
+                                  // }
+                                }, // End onTapUp
+                                // --- Drag Handling (remains the same) ---
                                 onHorizontalDragStart: (details) {
                                   if (canInteract) {
-                                    // Reset hover state when drag starts
-                                    setState(() {
-                                      _hoveredMarker = null;
-                                      _hoverPosition = null;
-                                    });
-                                    // Original drag start logic...
+                                    setState(
+                                      () => _hoverPositionForPainter = null,
+                                    ); // Hide hover on drag start
+                                    // ... existing drag start logic ...
                                     final bloc =
                                         context.read<AudioPlayerBloc>();
                                     setState(() {
                                       _isDraggingWaveform = true;
-                                      _wasPlayingBeforeDrag = isPlaying;
+                                      _wasPlayingBeforeDrag =
+                                          playerState
+                                              .isPlaying; // Use isPlaying from playerState
                                       _lastSeekDispatchTime = null;
+                                      // ... calculation of _dragProgress, _finalDragRatio ...
                                       final RenderBox box =
                                           _waveformContainerKey.currentContext
                                                   ?.findRenderObject()
@@ -647,10 +721,16 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                         _dragProgress = _finalDragRatio;
                                       } else {
                                         _dragProgress =
-                                            canInteract &&
-                                                    duration.inMilliseconds > 0
-                                                ? (position.inMilliseconds /
-                                                        duration.inMilliseconds)
+                                            playerState
+                                                        .duration
+                                                        .inMilliseconds >
+                                                    0
+                                                ? (playerState
+                                                            .position
+                                                            .inMilliseconds /
+                                                        playerState
+                                                            .duration
+                                                            .inMilliseconds)
                                                     .clamp(0.0, 1.0)
                                                 : 0.0;
                                         _finalDragRatio = _dragProgress ?? 0.0;
@@ -662,6 +742,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                 },
                                 onHorizontalDragUpdate: (details) {
                                   if (_isDraggingWaveform && canInteract) {
+                                    // ... existing drag update logic ...
                                     final RenderBox box =
                                         _waveformContainerKey.currentContext
                                                 ?.findRenderObject()
@@ -675,6 +756,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                               containerWidth)
                                           .clamp(0.0, 1.0);
                                       _finalDragRatio = seekRatio;
+                                      // Optional: Throttle seek updates here if needed
                                       setState(() {
                                         _dragProgress = seekRatio;
                                       });
@@ -683,9 +765,11 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                 },
                                 onHorizontalDragEnd: (details) {
                                   if (_isDraggingWaveform) {
+                                    // ... existing drag end logic ...
                                     if (canInteract) {
                                       final finalSeekPosition =
-                                          duration * _finalDragRatio;
+                                          playerState.duration *
+                                          _finalDragRatio;
                                       context.read<AudioPlayerBloc>().add(
                                         SeekAudio(position: finalSeekPosition),
                                       );
@@ -708,7 +792,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                     }
                                   }
                                 },
-                                // *** Pass hoveredMarker to painter ***
+                                // --- Child CustomPaint ---
                                 child: CustomPaint(
                                   size: Size.infinite,
                                   painter: WaveformPainter(
@@ -721,20 +805,26 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                         .withOpacity(0.5),
                                     playbackProgress:
                                         canInteract &&
-                                                duration.inMilliseconds > 0
-                                            ? (position.inMilliseconds /
-                                                    duration.inMilliseconds)
+                                                playerState
+                                                        .duration
+                                                        .inMilliseconds >
+                                                    0
+                                            ? (playerState
+                                                        .position
+                                                        .inMilliseconds /
+                                                    playerState
+                                                        .duration
+                                                        .inMilliseconds)
                                                 .clamp(0.0, 1.0)
                                             : 0.0,
                                     dragProgress: _dragProgress,
                                     markers: timeMarkers,
-                                    // REMOVED: hoveredMarker parameter
-                                    // ADDED: hoverPosition parameter
-                                    hoverPosition: _hoverPositionForPainter,
+                                    hoverPosition:
+                                        _hoverPositionForPainter, // Pass hover position
                                   ),
                                 ),
-                              ),
-                            ),
+                              ), // End GestureDetector
+                            ), // End MouseRegion
                           ),
                         ),
                       ),
