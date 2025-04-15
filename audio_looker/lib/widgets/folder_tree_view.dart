@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as pathLib;
 import 'package:collection/collection.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:audio_looker/services/collection_service.dart';
 
 typedef FolderDeleteCallback =
@@ -36,6 +37,7 @@ class _FolderTreeViewState extends State<FolderTreeView> {
   late Map<String, dynamic> _folderStructure;
   final Set<String> _expandedFolders = {};
   final Set<String> _hoveredItems = {};
+  Offset _tapPosition = Offset.zero;
 
   @override
   void initState() {
@@ -255,6 +257,151 @@ class _FolderTreeViewState extends State<FolderTreeView> {
     if (changed && mounted) setState(() {});
   }
 
+  void _storePosition(TapDownDetails details) {
+    _tapPosition = details.globalPosition;
+  }
+
+  void _showTrackContextMenu(BuildContext context, Track track) {
+    final RenderBox overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+
+    showMenu(
+      context: context,
+      position: RelativeRect.fromRect(
+        _tapPosition & const Size(40, 40), // Small rectangle at tap pos
+        Offset.zero & overlay.size, // Bigger rectangle of the overlay
+      ),
+      items: <PopupMenuEntry>[
+        PopupMenuItem(
+          value: 'reveal_enclosing', // Unique value for this action
+          child: ListTile(
+            leading: Icon(Icons.folder_open_outlined),
+            title: Text('Open Enclosing Folder'),
+          ),
+        ),
+        // Add other track-specific options here if needed (e.g., Play, Add to Playlist)
+        // You might want to reuse logic from ContextMenuHandler if you add more options.
+      ],
+    ).then((value) {
+      // Handle menu selection
+      if (value == 'reveal_enclosing') {
+        // Use the existing _revealFolderLocation, passing the file's *parent* directory
+        _revealEnclosingFolder(track.path);
+      }
+    });
+  }
+
+  Future<void> _revealEnclosingFolder(String filePath) async {
+    try {
+      // Ensure the path is absolute before getting the directory
+      if (!pathLib.isAbsolute(filePath)) {
+        print(
+          "Error revealing enclosing folder: Path is not absolute: $filePath",
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "Cannot reveal location for relative path: $filePath",
+            ),
+          ),
+        );
+        return;
+      }
+
+      // Get the parent directory path
+      final String directoryPath = pathLib.dirname(filePath);
+
+      // Check if dirname returned the root or '.' which might not be launchable directly
+      if (directoryPath == '.' ||
+          directoryPath == '/' ||
+          directoryPath == pathLib.dirname(directoryPath)) {
+        print("Cannot reveal root or invalid directory: $directoryPath");
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Cannot open directory: $directoryPath")),
+        );
+        return;
+      }
+
+      final Uri directoryUri = Uri.file(directoryPath);
+
+      if (await canLaunchUrl(directoryUri)) {
+        await launchUrl(directoryUri);
+      } else {
+        throw Exception('Could not launch directory URI: $directoryUri');
+      }
+    } catch (e) {
+      print("Error revealing enclosing folder: $e");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Could not open enclosing folder: $e")),
+      );
+    }
+  }
+
+  void _showFolderContextMenu(
+    BuildContext context,
+    String folderName,
+    String folderAbsolutePath,
+  ) {
+    final RenderBox overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+
+    showMenu(
+      context: context,
+      position: RelativeRect.fromRect(
+        _tapPosition & const Size(40, 40), // Small rectangle at tap pos
+        Offset.zero & overlay.size, // Bigger rectangle of the overlay
+      ),
+      items: <PopupMenuEntry>[
+        PopupMenuItem(
+          value: 'reveal', // Unique value for this action
+          child: ListTile(
+            leading: Icon(Icons.folder_open),
+            // Optional: Use Platform.isMacOS ? 'Reveal in Finder' : 'Show in Explorer'
+            title: Text('Reveal in Finder'),
+          ),
+        ),
+        // Add other folder-specific options here if needed
+      ],
+    ).then((value) {
+      // Handle menu selection
+      if (value == 'reveal') {
+        _revealFolderLocation(folderAbsolutePath);
+      }
+    });
+  }
+
+  Future<void> _revealFolderLocation(String folderPath) async {
+    try {
+      // The folderPath received should already be absolute
+      if (!pathLib.isAbsolute(folderPath)) {
+        print("Error revealing folder: Path is not absolute: $folderPath");
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Cannot reveal relative path: $folderPath")),
+        );
+        return;
+      }
+
+      // We want to open the folder itself, not its parent like for files
+      final Uri directoryUri = Uri.file(folderPath);
+
+      if (await canLaunchUrl(directoryUri)) {
+        await launchUrl(directoryUri);
+      } else {
+        throw Exception('Could not launch directory URI: $directoryUri');
+      }
+    } catch (e) {
+      print("Error revealing folder location: $e");
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Could not open folder: $e")));
+    }
+  }
+
   // --- Build Methods ---
   @override
   Widget build(BuildContext context) {
@@ -334,123 +481,142 @@ class _FolderTreeViewState extends State<FolderTreeView> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            MouseRegion(
-              // Wrap only the interactive row
-              onEnter: (_) => setState(() => _hoveredItems.add(folderPathKey)),
-              onExit:
-                  (_) => setState(() => _hoveredItems.remove(folderPathKey)),
-              child: InkWell(
-                onTap:
-                    () => setState(() {
-                      if (isExpanded)
-                        _expandedFolders.remove(folderPathKey);
-                      else
-                        _expandedFolders.add(folderPathKey);
-                    }),
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(4),
-                    color:
-                        _hoveredItems.contains(folderPathKey)
-                            ? Theme.of(context).hoverColor
-                            : (isRootFolder
-                                ? Theme.of(
-                                  context,
-                                ).primaryColor.withOpacity(0.05)
-                                : null),
-                  ),
-                  padding: EdgeInsets.only(
-                    left: 16.0 * currentPathSegments.length,
-                    top: 6.0,
-                    bottom: 6.0,
-                    right: 8.0,
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        isExpanded ? Icons.folder_open : Icons.folder,
-                        color:
-                            isSpecialFolder
-                                ? Colors.blueGrey.shade400
-                                : (isRootFolder
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Colors.amber.shade700),
-                        size: isRootFolder ? 20 : 18,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          entry.key, // Display name
-                          style: TextStyle(
-                            fontWeight:
-                                isRootFolder || isSpecialFolder
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                            fontSize: isRootFolder ? 14 : 13,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+            GestureDetector(
+              onTapDown:
+                  (details) =>
+                      _storePosition(details), // Store position for menu
+              onSecondaryTapDown:
+                  (details) =>
+                      _storePosition(details), // Store position for menu
+              onSecondaryTap: () {
+                // Only show context menu for non-special folders
+                if (!isSpecialFolder) {
+                  _showFolderContextMenu(
+                    context,
+                    entry.key,
+                    currentFolderAbsolutePath,
+                  );
+                }
+              },
+              child: MouseRegion(
+                // Wrap only the interactive row
+                onEnter:
+                    (_) => setState(() => _hoveredItems.add(folderPathKey)),
+                onExit:
+                    (_) => setState(() => _hoveredItems.remove(folderPathKey)),
+                child: InkWell(
+                  onTap:
+                      () => setState(() {
+                        if (isExpanded)
+                          _expandedFolders.remove(folderPathKey);
+                        else
+                          _expandedFolders.add(folderPathKey);
+                      }),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
+                      color:
+                          _hoveredItems.contains(folderPathKey)
+                              ? Theme.of(context).hoverColor
+                              : (isRootFolder
+                                  ? Theme.of(
+                                    context,
+                                  ).primaryColor.withOpacity(0.05)
+                                  : null),
+                    ),
+                    padding: EdgeInsets.only(
+                      left: 16.0 * currentPathSegments.length,
+                      top: 6.0,
+                      bottom: 6.0,
+                      right: 8.0,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isExpanded ? Icons.folder_open : Icons.folder,
+                          color:
+                              isSpecialFolder
+                                  ? Colors.blueGrey.shade400
+                                  : (isRootFolder
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Colors.amber.shade700),
+                          size: isRootFolder ? 20 : 18,
                         ),
-                      ),
-                      Visibility(
-                        visible:
-                            _hoveredItems.contains(folderPathKey) &&
-                            !isSpecialFolder,
-                        maintainSize: true,
-                        maintainAnimation: true,
-                        maintainState: true,
-                        child: IconButton(
-                          icon: Icon(
-                            Icons.delete_outline,
-                            size: 18,
-                            color: Colors.redAccent.shade100,
-                          ),
-                          onPressed: () {
-                            // *** Pass the calculated absolute path ***
-                            print(
-                              "Delete requested for Absolute Path: $currentFolderAbsolutePath (display name: ${entry.key})",
-                            );
-                            widget.onFolderDeleted(
-                              currentFolderAbsolutePath,
-                              entry.key,
-                            );
-                          },
-                          tooltip: 'Remove Folder',
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
-                      ),
-                      Visibility(
-                        visible:
-                            !(_hoveredItems.contains(folderPathKey) &&
-                                !isSpecialFolder),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 1,
-                          ),
-                          decoration: BoxDecoration(
-                            color:
-                                isRootFolder
-                                    ? Theme.of(
-                                      context,
-                                    ).primaryColor.withOpacity(0.1)
-                                    : Colors.grey.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+                        const SizedBox(width: 8),
+                        Expanded(
                           child: Text(
-                            trackCount.toString(),
+                            entry.key, // Display name
                             style: TextStyle(
-                              fontSize: 11,
+                              fontWeight:
+                                  isRootFolder || isSpecialFolder
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                              fontSize: isRootFolder ? 14 : 13,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Visibility(
+                          visible:
+                              _hoveredItems.contains(folderPathKey) &&
+                              !isSpecialFolder,
+                          maintainSize: true,
+                          maintainAnimation: true,
+                          maintainState: true,
+                          child: IconButton(
+                            icon: Icon(
+                              Icons.delete_outline,
+                              size: 18,
+                              color: Colors.redAccent.shade100,
+                            ),
+                            onPressed: () {
+                              // *** Pass the calculated absolute path ***
+                              print(
+                                "Delete requested for Absolute Path: $currentFolderAbsolutePath (display name: ${entry.key})",
+                              );
+                              widget.onFolderDeleted(
+                                currentFolderAbsolutePath,
+                                entry.key,
+                              );
+                            },
+                            tooltip: 'Remove Folder',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ),
+                        Visibility(
+                          visible:
+                              !(_hoveredItems.contains(folderPathKey) &&
+                                  !isSpecialFolder),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
                               color:
                                   isRootFolder
-                                      ? Theme.of(context).primaryColor
-                                      : Colors.grey[700],
+                                      ? Theme.of(
+                                        context,
+                                      ).primaryColor.withOpacity(0.1)
+                                      : Colors.grey.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              trackCount.toString(),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color:
+                                    isRootFolder
+                                        ? Theme.of(context).primaryColor
+                                        : Colors.grey[700],
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -490,116 +656,130 @@ class _FolderTreeViewState extends State<FolderTreeView> {
           Padding(
             // Use padding for indentation
             padding: EdgeInsets.only(left: 16.0 * currentPathSegments.length),
-            child: MouseRegion(
-              onEnter: (_) => setState(() => _hoveredItems.add(trackHoverKey)),
-              onExit:
-                  (_) => setState(() => _hoveredItems.remove(trackHoverKey)),
-              child: InkWell(
-                onTap: () => widget.onTrackSelected(track),
-                child: Container(
-                  color:
-                      isSelected || isCurrentlyPlaying
-                          ? Theme.of(
-                            context,
-                          ).colorScheme.primary.withOpacity(0.1)
-                          : (_hoveredItems.contains(trackHoverKey)
-                              ? Theme.of(context).hoverColor
-                              : null),
-                  padding: const EdgeInsets.only(
-                    left: 16 + 4,
-                    top: 6.0,
-                    bottom: 6.0,
-                    right: 8.0,
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        isCurrentlyPlaying
-                            ? Icons.volume_up
-                            : (track.isUrl ? Icons.link : Icons.music_note),
-                        size: 16,
-                        color:
-                            isCurrentlyPlaying
-                                ? Theme.of(context).colorScheme.primary
-                                : (track.isUrl
-                                    ? Colors.blueAccent.shade100
-                                    : Colors.grey.shade600),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              track.title,
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight:
-                                    isSelected || isCurrentlyPlaying
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
-                                color:
-                                    isCurrentlyPlaying
-                                        ? Theme.of(context).colorScheme.primary
-                                        : null,
-                              ),
-                            ),
-                            if (track.artist.isNotEmpty &&
-                                track.artist != 'Unknown')
+            child: GestureDetector(
+              // <<< Wrap existing MouseRegion/InkWell
+              onTapDown: _storePosition, // Store position for menu
+              onSecondaryTapDown: _storePosition, // Store position for menu
+              onSecondaryTap: () {
+                // Only show context menu for local files, not URLs
+                if (!track.isUrl) {
+                  _showTrackContextMenu(context, track);
+                }
+              },
+              child: MouseRegion(
+                onEnter:
+                    (_) => setState(() => _hoveredItems.add(trackHoverKey)),
+                onExit:
+                    (_) => setState(() => _hoveredItems.remove(trackHoverKey)),
+                child: InkWell(
+                  onTap: () => widget.onTrackSelected(track),
+                  child: Container(
+                    color:
+                        isSelected || isCurrentlyPlaying
+                            ? Theme.of(
+                              context,
+                            ).colorScheme.primary.withOpacity(0.1)
+                            : (_hoveredItems.contains(trackHoverKey)
+                                ? Theme.of(context).hoverColor
+                                : null),
+                    padding: const EdgeInsets.only(
+                      left: 16 + 4,
+                      top: 6.0,
+                      bottom: 6.0,
+                      right: 8.0,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isCurrentlyPlaying
+                              ? Icons.volume_up
+                              : (track.isUrl ? Icons.link : Icons.music_note),
+                          size: 16,
+                          color:
+                              isCurrentlyPlaying
+                                  ? Theme.of(context).colorScheme.primary
+                                  : (track.isUrl
+                                      ? Colors.blueAccent.shade100
+                                      : Colors.grey.shade600),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
                               Text(
-                                track.artist,
+                                track.title,
                                 overflow: TextOverflow.ellipsis,
                                 maxLines: 1,
                                 style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontSize: 11,
+                                  fontSize: 13,
+                                  fontWeight:
+                                      isSelected || isCurrentlyPlaying
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                  color:
+                                      isCurrentlyPlaying
+                                          ? Theme.of(
+                                            context,
+                                          ).colorScheme.primary
+                                          : null,
                                 ),
                               ),
-                          ],
+                              if (track.artist.isNotEmpty &&
+                                  track.artist != 'Unknown')
+                                Text(
+                                  track.artist,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 11,
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
-                      if (track.rating > 0)
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: List.generate(
-                            5,
-                            (index) => Icon(
-                              index < track.rating
-                                  ? Icons.star
-                                  : Icons.star_border,
-                              size: 13,
-                              color: Colors.amber.shade600,
+                        if (track.rating > 0)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: List.generate(
+                              5,
+                              (index) => Icon(
+                                index < track.rating
+                                    ? Icons.star
+                                    : Icons.star_border,
+                                size: 13,
+                                color: Colors.amber.shade600,
+                              ),
                             ),
                           ),
-                        ),
-                      const SizedBox(width: 4),
-                      Visibility(
-                        visible: _hoveredItems.contains(trackHoverKey),
-                        maintainSize: true,
-                        maintainAnimation: true,
-                        maintainState: true,
-                        child: IconButton(
-                          icon: Icon(
-                            Icons.delete_outline,
-                            size: 18,
-                            color: Colors.redAccent.shade100,
+                        const SizedBox(width: 4),
+                        Visibility(
+                          visible: _hoveredItems.contains(trackHoverKey),
+                          maintainSize: true,
+                          maintainAnimation: true,
+                          maintainState: true,
+                          child: IconButton(
+                            icon: Icon(
+                              Icons.delete_outline,
+                              size: 18,
+                              color: Colors.redAccent.shade100,
+                            ),
+                            onPressed:
+                                track.id != null
+                                    ? () => widget.onTrackDeleted(track.id!)
+                                    : null,
+                            tooltip: 'Remove from collection',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
                           ),
-                          onPressed:
-                              track.id != null
-                                  ? () => widget.onTrackDeleted(track.id!)
-                                  : null,
-                          tooltip: 'Remove from collection',
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
                         ),
-                      ),
-                      if (!_hoveredItems.contains(trackHoverKey))
-                        const SizedBox(width: 40),
-                    ],
+                        if (!_hoveredItems.contains(trackHoverKey))
+                          const SizedBox(width: 40),
+                      ],
+                    ),
                   ),
                 ),
               ),
