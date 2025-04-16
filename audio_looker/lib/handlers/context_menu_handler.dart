@@ -69,15 +69,15 @@ class ContextMenuHandler {
           ),
         ),
         // --- >>> NEW: Open File Item <<< ---
-        if (selectedTrackIds.length == 1 &&
-            !track.isUrl) // Only show for single local files
-          PopupMenuItem(
-            value: 'open_file',
-            child: const ListTile(
-              leading: Icon(Icons.audiotrack_outlined), // Or Icons.open_in_new
-              title: Text('Open File'),
-            ),
-          ),
+        // if (selectedTrackIds.length == 1 &&
+        //     !track.isUrl) // Only show for single local files
+        //   PopupMenuItem(
+        //     value: 'open_file',
+        //     child: const ListTile(
+        //       leading: Icon(Icons.audiotrack_outlined), // Or Icons.open_in_new
+        //       title: Text('Open File'),
+        //     ),
+        //   ),
         // --- >>> END NEW <<< ---
         // Use spread operator to add playlist items
         ...buildAddToPlaylistItems(context),
