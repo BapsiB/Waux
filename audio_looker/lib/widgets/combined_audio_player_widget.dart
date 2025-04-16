@@ -3,7 +3,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'dart:async'; // For Timer
-import 'dart:math' as math; // For finding next/prev tag
 
 // Import BLoCs and Services/Models
 import '../blocs/audio_player/audio_player_bloc.dart';
@@ -411,7 +410,6 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     }
   }
 
-  // Build the UI for the expanded player
   Widget _buildExpandedPlayerUI(AudioPlayerLoaded playerState, Track track) {
     final isPlaying = playerState.isPlaying;
     final duration = playerState.duration;
@@ -420,32 +418,24 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     final timeMarkers = playerState.markers;
     final bool canInteract = duration > Duration.zero;
 
-    // **** WRAP the part needing TrackDataState with BlocBuilder ****
     return BlocBuilder<TrackDataBloc, TrackDataState>(
       builder: (context, trackDataState) {
-        // --- Define currentGeneralTags INSIDE the builder scope ---
         List<String> currentGeneralTags = [];
         if (trackDataState is TrackDataLoaded) {
           try {
-            // Find the most up-to-date track info from the state
             final currentTrackFromBloc = trackDataState.tracks.firstWhere(
               (t) => t.id == track.id,
-              // Use the track passed to the widget as a fallback if not found (should be rare)
               orElse: () => track,
             );
             currentGeneralTags = currentTrackFromBloc.generalTags;
           } catch (e) {
             print("Error finding track in TrackDataBloc state: $e");
-            currentGeneralTags =
-                track.generalTags; // Fallback to widget's track data
+            currentGeneralTags = track.generalTags;
           }
         } else {
-          // If TrackDataBloc isn't loaded, use the tags from the track object passed to the widget
           currentGeneralTags = track.generalTags;
         }
-        // --- End Define currentGeneralTags ---
 
-        // Now return the UI that uses currentGeneralTags
         return SingleChildScrollView(
           child: Padding(
             padding: const EdgeInsets.only(bottom: 16.0),
@@ -484,7 +474,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 8),
-                            _buildRatingBar(track.id!), // Pass track ID
+                            _buildRatingBar(track.id!),
                           ],
                         ),
                       ),
@@ -494,7 +484,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                         crossAxisAlignment: CrossAxisAlignment.end,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          // **** Use the defined currentGeneralTags here ****
+                          // --- Display Existing Tags ---
                           if (currentGeneralTags.isNotEmpty)
                             SizedBox(
                               width: MediaQuery.of(context).size.width * 0.35,
@@ -505,7 +495,6 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                 children:
                                     currentGeneralTags.map((tag) {
                                       return Chip(
-                                        // Simplified Chip for now
                                         label: Text(tag),
                                         labelStyle: const TextStyle(
                                           fontSize: 12,
@@ -521,38 +510,73 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                               ),
                             ),
                           const SizedBox(height: 4),
+                          // --- Add Tag Button (Conditional UI) ---
                           BlocBuilder<GlobalTagBloc, GlobalTagState>(
                             builder: (context, globalTagState) {
-                              // Determine if the button should be enabled
                               final bool tagsLoaded =
                                   globalTagState is GlobalTagLoaded;
+                              final bool hasTags =
+                                  currentGeneralTags.isNotEmpty;
 
-                              return IconButton(
-                                icon: const Icon(Icons.add_circle_outline),
-                                tooltip:
-                                    tagsLoaded
-                                        ? 'Edit General Tags'
-                                        : 'Loading tags...', // Dynamic tooltip
-                                // Disable onPressed if tags are not loaded
-                                onPressed:
-                                    tagsLoaded
-                                        ? () => _openTagEditor(
-                                          context,
-                                        ) // Call helper method
-                                        : null, // Button is disabled if null
-                                // Optionally change icon color when disabled
-                                color:
-                                    tagsLoaded
-                                        ? Theme.of(context).iconTheme.color
-                                        : Colors.grey,
-                              );
+                              // *** CONDITIONAL BUTTON RENDERING ***
+                              if (hasTags) {
+                                // If tags exist, show the '+' icon button
+                                return IconButton(
+                                  icon: const Icon(Icons.add_circle_outline),
+                                  tooltip: // IconButton *does* have tooltip
+                                      tagsLoaded
+                                          ? 'Edit Tags'
+                                          : 'Loading tags...',
+                                  onPressed:
+                                      tagsLoaded
+                                          ? () => _openTagEditor(context)
+                                          : null,
+                                  color:
+                                      tagsLoaded
+                                          ? Theme.of(context).iconTheme.color
+                                          : Colors.grey,
+                                );
+                              } else {
+                                // If no tags exist, show the "Add Tag" button
+                                // *** WRAP TextButton.icon with Tooltip ***
+                                return Tooltip(
+                                  message:
+                                      tagsLoaded // Use 'message' parameter
+                                          ? 'Add Tags'
+                                          : 'Loading tags...',
+                                  child: TextButton.icon(
+                                    icon: const Icon(
+                                      Icons.add_circle_outline,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Add Tag'),
+                                    style: TextButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                    // 'tooltip' parameter removed from TextButton.icon
+                                    onPressed:
+                                        tagsLoaded
+                                            ? () => _openTagEditor(context)
+                                            : null,
+                                    // Style adjustments might be needed for disabled state
+                                  ),
+                                );
+                                // *** END WRAP ***
+                              }
+                              // *** END CONDITIONAL BUTTON RENDERING ***
                             },
                           ),
                         ],
                       ),
                     ],
                   ),
-                ), // End Header Padding
+                ),
                 // --- Waveform Display Section ---
                 Container(
                   key: _waveformContainerKey, // Assign key
@@ -963,10 +987,10 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                         ],
                       ),
                       const Spacer(flex: 1),
-                      // Add Time Tag IconButton
+                      // Add Time Marker IconButton
                       IconButton(
                         icon: const Icon(Icons.bookmark_add_outlined),
-                        tooltip: 'Add Time Tag at Current Position',
+                        tooltip: 'Add Time Marker at Current Position',
                         iconSize: 28,
                         color:
                             canInteract
