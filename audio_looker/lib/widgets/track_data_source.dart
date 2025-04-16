@@ -13,15 +13,22 @@ typedef RatingChangeCallback = void Function(int trackId, int newRating);
 typedef PlayAndMinimizeCallback = void Function(Track track, bool togglePlay);
 typedef SelectAndOpenPlayerCallback = void Function(Track track);
 
+// lib/widgets/track_data_source.dart
+
 class TrackDataSource extends DataGridSource {
   /// Creates the track data source class with required details.
   TrackDataSource({
     required List<Track> trackData,
     required AudioPlayerBloc audioPlayerBloc,
     required this.onRatingChanged,
-    required this.onPlayPreviewAndMinimize, // Callback for play/edit button
-    required this.onEditMetadata, // Callback for play/edit button
-  }) : _audioPlayerBloc = audioPlayerBloc {
+    required this.onPlayPreviewAndMinimize,
+    required this.onEditMetadata,
+    required List<String> initialColumnOrder, // <<< ADD initial order
+  }) : _audioPlayerBloc = audioPlayerBloc,
+       _currentColumnOrder = List<String>.from(
+         initialColumnOrder.where((name) => name != 'id'),
+       ) // Store initial order (exclude 'id')
+       {
     _trackData = trackData;
     _updateDataGridRows();
   }
@@ -30,14 +37,28 @@ class TrackDataSource extends DataGridSource {
   List<DataGridRow> _dataGridRows = [];
   List<Track> _trackData = [];
   final RatingChangeCallback onRatingChanged;
-  final PlayAndMinimizeCallback onPlayPreviewAndMinimize; // Store callback
-  final SelectAndOpenPlayerCallback onEditMetadata; // Store callback
+  final PlayAndMinimizeCallback onPlayPreviewAndMinimize;
+  final SelectAndOpenPlayerCallback onEditMetadata;
+
+  // --- ADDED: Store current visual column order ---
+  List<String> _currentColumnOrder;
+
+  // --- ADDED: Method to update column order ---
+  void updateColumnOrder(List<String> newOrder) {
+    // Filter out 'id' if it's present in the new order list
+    _currentColumnOrder = List<String>.from(
+      newOrder.where((name) => name != 'id'),
+    );
+    // Important: Notify listeners AFTER updating the order internally
+    // This tells the SfDataGrid to request rows again using the new order logic
+    notifyListeners();
+  }
 
   // --- State Management for Hover ---
   final Map<int, bool> _rowHoverState = {};
-  int? _currentlyHoveredTrackId; // Track the currently hovered row ID
-  // --- End State Management ---
+  int? _currentlyHoveredTrackId;
 
+  // --- setHoverState remains the same ---
   void setHoverState(int? trackId, bool isHovering) {
     bool changed = false;
     int? previousHoveredTrackId = _currentlyHoveredTrackId;
@@ -69,13 +90,11 @@ class TrackDataSource extends DataGridSource {
         // Ensure previousHoveredTrackId is set for notification below
         previousHoveredTrackId = targetTrackId;
       }
-      // No need for the trackId == null check here, as exit from a specific cell handles it
     }
 
     if (changed) {
       try {
         // Notify listeners about the change
-        // Using the basic notifyListeners as the optimized version had issues
         notifyListeners();
       } catch (e) {
         debugPrint("Error notifying hover listeners: $e");
@@ -83,7 +102,6 @@ class TrackDataSource extends DataGridSource {
       }
     }
   }
-  // --- End Method ---
 
   // Method to update the underlying data and refresh the grid rows
   void updateDataGridSource({required List<Track> trackData}) {
@@ -93,9 +111,11 @@ class TrackDataSource extends DataGridSource {
     _rowHoverState.clear();
     _currentlyHoveredTrackId = null;
     try {
-      // Use WidgetsBinding to ensure notifyListeners is called safely
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (rows.isNotEmpty) {
+        // Check if the source is still associated with a grid and has listeners
+        // *** CORRECTED CHECK HERE ***
+        if (hasListeners) {
+          // Use the hasListeners getter directly
           notifyListeners();
         }
       });
@@ -109,10 +129,13 @@ class TrackDataSource extends DataGridSource {
     _dataGridRows =
         _trackData.map<DataGridRow>((track) {
           final trackId = track.id ?? -1;
-          // Map track data to DataGridCells
+          // --- Keep this structure based on ACTUAL track data ---
           return DataGridRow(
             cells: [
-              DataGridCell<int>(columnName: 'id', value: trackId),
+              DataGridCell<int>(
+                columnName: 'id',
+                value: trackId,
+              ), // Keep id cell
               DataGridCell<Track>(columnName: 'preview', value: track),
               DataGridCell<String>(columnName: 'title', value: track.title),
               DataGridCell<String>(columnName: 'artist', value: track.artist),
@@ -120,6 +143,7 @@ class TrackDataSource extends DataGridSource {
               DataGridCell<Track>(columnName: 'rating', value: track),
               DataGridCell<Track>(columnName: 'tags', value: track),
               DataGridCell<Track>(columnName: 'source', value: track),
+              // Add other cells corresponding to _defaultColumnConfig keys if needed
             ],
           );
         }).toList();
@@ -132,7 +156,7 @@ class TrackDataSource extends DataGridSource {
 
   @override
   DataGridRowAdapter? buildRow(DataGridRow row) {
-    // --- Find the Track object for this row ---
+    // --- Find the Track object for this row (remains the same) ---
     final int trackId =
         row
                 .getCells()
@@ -148,239 +172,217 @@ class TrackDataSource extends DataGridSource {
     try {
       track = _trackData.firstWhere((t) => t.id == trackId);
     } catch (e) {
-      return null; // Return null if track not found
+      return null;
     }
+    if (track == null) return null;
     // --- End Track object finding ---
 
-    if (track == null) return null;
-
-    // Data to be dragged (the track's file path)
+    final bool isHovering = _rowHoverState[trackId] ?? false;
     final String draggableData = track.path;
 
-    // Get hover state for this specific row from the map
-    final bool isHovering = _rowHoverState[trackId] ?? false;
+    // *** MODIFIED: Build cellWidgets list based on _currentColumnOrder ***
+    final List<Widget> cellWidgets = [];
 
-    // Generate the list of cell widgets using the isHovering state
-    List<Widget> cellWidgets =
-        row.getCells().map<Widget>((dataGridCell) {
-          Widget cellContent; // Widget to hold the actual cell content
+    // Create a map of cells from the row for easy lookup by columnName
+    final Map<String, DataGridCell> cellMap = {
+      for (var cell in row.getCells()) cell.columnName: cell,
+    };
 
-          // --- Cell Rendering Logic ---
-          switch (dataGridCell.columnName) {
-            case 'id':
-              cellContent = const SizedBox.shrink(); // Hide ID column visually
-              break; // IMPORTANT: Added break statement
+    // Iterate through the CURRENT VISUAL ORDER
+    for (final String columnName in _currentColumnOrder) {
+      final DataGridCell? dataGridCell = cellMap[columnName];
+      Widget cellContent; // Widget to hold the actual cell content
 
-            case 'preview':
-              // Use the existing PreviewCellWidget
-              cellContent = PreviewCellWidget(
-                track: track!, // Use track! (safe due to null check above)
-                audioPlayerBloc: _audioPlayerBloc,
-                onPlayAndMinimize: () => onPlayPreviewAndMinimize(track!, true),
-              );
-              break; // IMPORTANT: Added break statement
-
-            case 'title':
-              // --- WRAP 'title' CELL WITH DRAGGABLE ---
-              cellContent = Draggable<String>(
-                data: draggableData,
-                feedback: Material(
-                  // Ensure Material widget for theme context
-                  elevation: 4.0,
-                  child: Builder(
-                    builder: (BuildContext context) {
-                      // Explicitly name the context
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        color: Theme.of(context).colorScheme.primaryContainer,
-                        child: Text(
-                          track!.title, // Use track!
-                          style: TextStyle(
-                            fontSize: 14,
-                            color:
-                                Theme.of(
-                                  context,
-                                ).colorScheme.onPrimaryContainer,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                childWhenDragging: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8.0,
-                    vertical: 4.0,
-                  ),
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    dataGridCell.value.toString(),
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: Colors.grey.shade400),
-                  ),
-                ),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8.0,
-                    vertical: 4.0,
-                  ),
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    dataGridCell.value.toString(),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              );
-              break; // IMPORTANT: Added break statement
-            // --- END DRAGGABLE WRAPPER ---
-            case 'source':
-              final Track sourceTrack = dataGridCell.value as Track;
-              IconData iconData;
-              Color? defaultIconColor; // Use nullable color
-              String tooltip;
-
-              switch (sourceTrack.sourceType) {
-                case TrackSource.local:
-                  iconData = Icons.music_note_outlined;
-                  tooltip = 'Local File';
-                  break;
-                case TrackSource.url:
-                  iconData = Icons.link;
-                  tooltip = 'Web URL';
-                  break;
-                case TrackSource.youtube:
-                  iconData = FontAwesomeIcons.youtube;
-                  defaultIconColor = Colors.red; // YouTube red
-                  tooltip = 'YouTube';
-                  break;
-              }
-              // *** Wrap in Builder to get context ***
-              cellContent = Builder(
-                builder: (context) {
-                  // *** Get color from theme using the Builder's context ***
-                  final Color iconColor =
-                      defaultIconColor ??
-                      Theme.of(context).colorScheme.onSurfaceVariant;
-                  return Container(
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                    child: Tooltip(
-                      message: tooltip,
-                      child: FaIcon(
-                        iconData,
-                        size: 16,
-                        color: iconColor, // Use color from context
-                      ),
-                    ),
-                  );
-                },
-              );
-              break;
-            case 'rating':
-              // Use the existing RatingCellWidget
-              cellContent = RatingCellWidget(
-                trackId: track!.id!, // Use track!
-                currentRating: track.rating,
-                onRatingChanged: onRatingChanged,
-              );
-              break; // IMPORTANT: Added break statement
-
-            case 'tags':
-              // --- Modified 'tags' cell to include the hover button ---
-              final tags = track!.generalTags; // Use track!
-              Widget tagsWidget =
-                  tags.isEmpty
-                      ? const SizedBox.shrink() // Show nothing if no tags
-                      : Wrap(
-                        spacing: 4.0,
-                        runSpacing: 4.0,
-                        children:
-                            tags
-                                .map(
-                                  (tag) => Chip(
-                                    label: Text(tag),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                      vertical: 0,
-                                    ),
-                                    materialTapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    labelStyle: const TextStyle(fontSize: 11),
-                                  ),
-                                )
-                                .toList(),
-                      );
-
-              // Container holding a Row with tags and the conditional button
-              cellContent = Container(
-                alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8.0,
-                  vertical: 4.0,
-                ),
+      if (dataGridCell == null) {
+        // Should not happen if _currentColumnOrder is correct, but handle defensively
+        cellContent = SizedBox.shrink();
+        print(
+          "Warning: Could not find cell for columnName '$columnName' in buildRow",
+        );
+      } else {
+        // --- Cell Rendering Logic (Use existing switch, but apply it to the looked-up cell) ---
+        switch (dataGridCell.columnName) {
+          // NOTE: 'id' case is removed because we iterate through _currentColumnOrder which excludes 'id'
+          case 'preview':
+            cellContent = PreviewCellWidget(
+              track: track,
+              audioPlayerBloc: _audioPlayerBloc,
+              onPlayAndMinimize: () => onPlayPreviewAndMinimize(track!, true),
+            );
+            break;
+          case 'title':
+            cellContent = Draggable<String>(
+              data: draggableData,
+              feedback: Material(
+                elevation: 4.0,
                 child: Builder(
-                  builder: (context) {
-                    // Use Builder for context
-                    return Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween, // Align items
-                      children: [
-                        Expanded(
-                          child: tagsWidget,
-                        ), // Tags take available space
-                        // --- Conditional Play/Edit Button ---
-                        if (isHovering)
-                          IconButton(
-                            icon: const Icon(Icons.edit),
-                            iconSize: 18,
-                            color: Theme.of(context).colorScheme.primary,
-                            tooltip: 'Edit Metadatas',
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            splashRadius: 18,
-                            onPressed:
-                                () => onEditMetadata(track!), // Call callback
-                          ),
-                        // --- End Conditional Button ---
-                      ],
+                  builder: (BuildContext context) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      child: Text(
+                        track!.title,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color:
+                              Theme.of(context).colorScheme.onPrimaryContainer,
+                        ),
+                      ),
                     );
                   },
                 ),
-              );
-              break; // IMPORTANT: Added break statement
-
-            default:
-              // Default rendering for other columns (artist, album, etc.)
-              cellContent = Container(
-                alignment: Alignment.centerLeft,
+              ),
+              childWhenDragging: Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 8.0,
                   vertical: 4.0,
                 ),
+                alignment: Alignment.centerLeft,
                 child: Text(
-                  dataGridCell.value?.toString() ?? '',
+                  dataGridCell.value.toString(),
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.grey.shade400),
+                ),
+              ),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8.0,
+                  vertical: 4.0,
+                ),
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  dataGridCell.value.toString(),
                   overflow: TextOverflow.ellipsis,
                 ),
-              );
-              break; // IMPORTANT: Added break statement
-          }
-          // --- End Cell Rendering Logic ---
+              ),
+            );
+            break;
+          case 'source':
+            final Track sourceTrack = dataGridCell.value as Track;
+            IconData iconData;
+            Color? defaultIconColor;
+            String tooltip;
+            switch (sourceTrack.sourceType) {
+              case TrackSource.local:
+                iconData = Icons.music_note_outlined;
+                tooltip = 'Local File';
+                break;
+              case TrackSource.url:
+                iconData = Icons.link;
+                tooltip = 'Web URL';
+                break;
+              case TrackSource.youtube:
+                iconData = FontAwesomeIcons.youtube;
+                defaultIconColor = Colors.red;
+                tooltip = 'YouTube';
+                break;
+            }
+            cellContent = Builder(
+              builder: (context) {
+                final Color iconColor =
+                    defaultIconColor ??
+                    Theme.of(context).colorScheme.onSurfaceVariant;
+                return Container(
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  child: Tooltip(
+                    message: tooltip,
+                    child: FaIcon(iconData, size: 16, color: iconColor),
+                  ),
+                );
+              },
+            );
+            break;
+          case 'rating':
+            cellContent = RatingCellWidget(
+              trackId: track.id!,
+              currentRating: track.rating,
+              onRatingChanged: onRatingChanged,
+            );
+            break;
+          case 'tags':
+            final tags = track.generalTags;
+            Widget tagsWidget =
+                tags.isEmpty
+                    ? const SizedBox.shrink()
+                    : Wrap(
+                      spacing: 4.0,
+                      runSpacing: 4.0,
+                      children:
+                          tags
+                              .map(
+                                (tag) => Chip(
+                                  label: Text(tag),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 0,
+                                  ),
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  labelStyle: const TextStyle(fontSize: 11),
+                                ),
+                              )
+                              .toList(),
+                    );
+            cellContent = Container(
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8.0,
+                vertical: 4.0,
+              ),
+              child: Builder(
+                builder: (context) {
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(child: tagsWidget),
+                      if (isHovering)
+                        IconButton(
+                          icon: const Icon(Icons.edit),
+                          iconSize: 18,
+                          color: Theme.of(context).colorScheme.primary,
+                          tooltip: 'Edit Metadatas',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          splashRadius: 18,
+                          onPressed: () => onEditMetadata(track!),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            );
+            break;
+          default:
+            // Default rendering for other columns (artist, album, etc.)
+            cellContent = Container(
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8.0,
+                vertical: 4.0,
+              ),
+              child: Text(
+                dataGridCell.value?.toString() ?? '',
+                overflow: TextOverflow.ellipsis,
+              ),
+            );
+            break;
+        }
+      }
+      // *** Wrap the generated cellContent widget with MouseRegion ***
+      cellWidgets.add(
+        MouseRegion(
+          onEnter: (_) => setHoverState(trackId, true),
+          onExit: (_) => setHoverState(trackId, false),
+          child: cellContent, // The actual widget for the cell
+        ),
+      );
+    } // End for loop through _currentColumnOrder
 
-          // *** Wrap the generated cellContent widget with MouseRegion ***
-          return MouseRegion(
-            // Use trackId which is guaranteed non-null here
-            onEnter: (_) => setHoverState(trackId, true),
-            onExit: (_) => setHoverState(trackId, false),
-            child: cellContent, // The actual widget for the cell
-          );
-        }).toList(); // End map
-
-    // Return the DataGridRowAdapter directly.
-    return DataGridRowAdapter(
-      cells: cellWidgets, // Pass the list of widgets here
-    );
+    // Return the DataGridRowAdapter with cells in the correct visual order.
+    return DataGridRowAdapter(cells: cellWidgets);
   }
 }
