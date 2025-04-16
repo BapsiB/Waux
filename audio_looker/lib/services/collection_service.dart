@@ -1,3 +1,5 @@
+// lib/services/collection_service.dart
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -6,11 +8,16 @@ import 'package:flutter/material.dart'; // For Color
 import 'package:path/path.dart' as pathLib; // Use alias
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:uuid/uuid.dart'; // Import uuid
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
-import '../../services/audio_service.dart';
+import '../../services/audio_service.dart'; // Assuming TimeMarker is here
 
+// Enum definitions (TrackSource, CollectionType) remain the same...
 enum TrackSource { local, url, youtube }
 
+enum CollectionType { local, shared }
+
+// Track class definition remains the same...
 class Track {
   final int? id;
   final String title;
@@ -34,9 +41,7 @@ class Track {
     required this.path,
     required this.isUrl,
     required this.duration,
-    // --- MODIFIED: Default value is now an empty list ---
     this.timeMarkers = const [],
-    // --- END MODIFIED ---
     this.waveformData,
     this.rating = 0,
     this.comment = '',
@@ -44,19 +49,12 @@ class Track {
   });
 
   factory Track.fromJson(Map<String, dynamic> json) {
-    var jsonM = json['timeMarkers'];
-    var decoded;
-    if (jsonM != null) {
-      decoded = jsonDecode(json['timeMarkers']);
-    }
-
     return Track(
       id: json['id'],
       title: json['title'],
       artist: json['artist'],
       album: json['album'],
       path: json['path'],
-      // Ensure isUrl is handled correctly (might be stored as 0/1)
       isUrl:
           json['isUrl'] is bool
               ? json['isUrl']
@@ -64,9 +62,7 @@ class Track {
       duration: json['duration'],
       timeMarkers:
           (json['timeMarkers'] != null)
-              ? _parseTimeMarkersJson(
-                json['timeMarkers'],
-              ) // Use a helper function
+              ? _parseTimeMarkersJson(json['timeMarkers'])
               : [],
       waveformData:
           json['waveformData'] != null
@@ -83,37 +79,32 @@ class Track {
 
   static List<TimeMarker> _parseTimeMarkersJson(dynamic markersJsonInput) {
     try {
-      // First, decode if it's a string
       final dynamic decodedJson =
           (markersJsonInput is String)
               ? jsonDecode(markersJsonInput)
-              : markersJsonInput; // Assume already decoded if not string
+              : markersJsonInput;
 
-      // Check if the decoded result is a List
       if (decodedJson is List) {
         return decodedJson
             .map((markerJson) {
-              // Ensure each item in the list is a map before parsing
               if (markerJson is Map<String, dynamic>) {
                 return TimeMarker.fromJson(markerJson);
               } else {
                 print(
                   "Warning: Found non-map item in timeMarkers list: $markerJson",
                 );
-                return null; // Or throw an error, or return a default marker
+                return null;
               }
             })
-            .whereType<TimeMarker>() // Filter out any nulls from bad data
+            .whereType<TimeMarker>()
             .toList();
       } else {
-        // If it's not a list (e.g., it's a Map like {}), return an empty list
         print(
           "Warning: Expected List for timeMarkers, but got ${decodedJson.runtimeType}. Defaulting to empty list.",
         );
         return [];
       }
     } catch (e) {
-      // Handle potential jsonDecode errors or other issues
       print(
         "Error parsing timeMarkers JSON: $e. Input: $markersJsonInput. Defaulting to empty list.",
       );
@@ -121,21 +112,18 @@ class Track {
     }
   }
 
-  // toJson remains the same
   Map<String, dynamic> toJson() {
     return {
       'id': id,
       'title': title,
       'artist': artist,
       'album': album,
-      'path': path, // Store the path as is (absolute or relative)
+      'path': path,
       'isUrl': isUrl ? 1 : 0,
       'duration': duration,
-      // --- MODIFIED: Encode List<TimeMarker> to JSON string ---
       'timeMarkers': jsonEncode(
         timeMarkers.map((marker) => marker.toJson()).toList(),
       ),
-      // --- END MODIFIED ---
       'waveformData': waveformData != null ? jsonEncode(waveformData) : null,
       'rating': rating,
       'comment': comment,
@@ -143,7 +131,6 @@ class Track {
     };
   }
 
-  // copyWith remains the same
   Track copyWith({
     int? id,
     String? title,
@@ -152,9 +139,7 @@ class Track {
     String? path,
     bool? isUrl,
     int? duration,
-    // --- MODIFIED: Type is List<TimeMarker> ---
     List<TimeMarker>? timeMarkers,
-    // --- END MODIFIED ---
     List<double>? waveformData,
     int? rating,
     String? comment,
@@ -168,9 +153,7 @@ class Track {
       path: path ?? this.path,
       isUrl: isUrl ?? this.isUrl,
       duration: duration ?? this.duration,
-      // --- MODIFIED: Assign tags ---
       timeMarkers: timeMarkers ?? this.timeMarkers,
-      // --- END MODIFIED ---
       waveformData: waveformData ?? this.waveformData,
       rating: rating ?? this.rating,
       comment: comment ?? this.comment,
@@ -182,7 +165,6 @@ class Track {
     if (!isUrl) {
       return TrackSource.local;
     } else {
-      // Basic check for YouTube URLs (adjust patterns if needed)
       if (path.contains('youtube.com') || path.contains('youtu.be')) {
         return TrackSource.youtube;
       } else {
@@ -192,7 +174,7 @@ class Track {
   }
 }
 
-// Tag model remains the same (global tags stored in SharedPreferences)
+// Tag class definition remains the same...
 class Tag {
   final String name;
   final int? colorValue; // Store color as int
@@ -207,9 +189,7 @@ class Tag {
   Color? get color => colorValue == null ? null : Color(colorValue!);
 }
 
-// --- NEW: Collection Definition ---
-enum CollectionType { local, shared }
-
+// CollectionDefinition class definition remains the same...
 class CollectionDefinition {
   final String id; // Unique ID for managing definitions
   final String name;
@@ -224,12 +204,10 @@ class CollectionDefinition {
     required this.dbPath,
     this.rootPath, // Nullable, only set for shared type
   }) {
-    // Ensure rootPath is provided for shared collections
     if (type == CollectionType.shared &&
         (rootPath == null || rootPath!.isEmpty)) {
       throw ArgumentError('Shared collections must have a non-empty rootPath.');
     }
-    // Ensure rootPath is null for local collections
     if (type == CollectionType.local && rootPath != null) {
       throw ArgumentError('Local collections should not have a rootPath.');
     }
@@ -238,7 +216,7 @@ class CollectionDefinition {
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
-    'type': type.name, // Store enum name as string
+    'type': type.name,
     'dbPath': dbPath,
     'rootPath': rootPath,
   };
@@ -247,9 +225,7 @@ class CollectionDefinition {
       CollectionDefinition(
         id: json['id'],
         name: json['name'],
-        type: CollectionType.values.firstWhere(
-          (e) => e.name == json['type'],
-        ), // Get enum from name
+        type: CollectionType.values.firstWhere((e) => e.name == json['type']),
         dbPath: json['dbPath'],
         rootPath: json['rootPath'],
       );
@@ -259,62 +235,56 @@ class CollectionDefinition {
 
 class CollectionService {
   // --- Constants ---
-  static const int _databaseVersion =
-      3; // Keep DB version (or increment if needed for playlist tables)
+  static const int _databaseVersion = 4; // <<< INCREMENTED DB VERSION
   static const String tableMusic = 'music';
-  static const String tablePlaylists = 'playlists'; // <<< NEW
-  static const String tablePlaylistTracks = 'playlist_tracks'; // <<< NEW
-  static const String tableLocalRoots =
-      'local_root_folders'; // <<< Renamed for clarity
+  static const String tablePlaylists = 'playlists';
+  static const String tablePlaylistTracks = 'playlist_tracks';
+  static const String tableLocalRoots = 'local_root_folders';
+  static const String tableUiSettings = 'ui_settings'; // <<< NEW TABLE
 
-  // Column names remain the same for music table
+  // Column names for music table...
   static const String columnId = 'id';
   static const String columnTitle = 'title';
   static const String columnArtist = 'artist';
   static const String columnAlbum = 'album';
-  static const String columnPath = 'path'; // Holds absolute OR relative path
+  static const String columnPath = 'path';
   static const String columnIsUrl = 'isUrl';
   static const String columnDuration = 'duration';
-  static const String columnTimeMarkers = 'timeMarkers'; // Time-based tags
+  static const String columnTimeMarkers = 'timeMarkers';
   static const String columnWaveformData = 'waveformData';
   static const String columnRating = 'rating';
   static const String columnComment = 'comment';
   static const String columnGeneralTags = 'generalTags';
   final _yt = YoutubeExplode();
 
-  // Playlist table columns <<< NEW
+  // Playlist table columns...
   static const String columnPlaylistId = 'id';
   static const String columnPlaylistName = 'name';
 
-  // Playlist tracks table columns <<< NEW
+  // Playlist tracks table columns...
   static const String columnPlaylistTracksPlaylistId = 'playlist_id';
-  static const String columnPlaylistTracksTrackPath =
-      'track_path'; // Relative/Absolute based on collection
+  static const String columnPlaylistTracksTrackPath = 'track_path';
   static const String columnPlaylistTracksSortOrder = 'sort_order';
 
-  // SharedPreferences Keys
+  // UI Settings table columns <<< NEW
+  static const String columnUiSettingsKey = 'key';
+  static const String columnUiSettingsValue = 'value';
+
+  // SharedPreferences Keys...
   static const String _collectionDefinitionsKey = 'collection_definitions_list';
-  static const String _generalTagsKey = 'general_tags_list'; // Global tags
+  static const String _generalTagsKey = 'general_tags_list';
   static const String _lastActiveCollectionIdKey = 'last_active_collection_id';
 
   // --- State ---
-  Database? _database; // Connection to the *active* database
-  CollectionDefinition?
-  _activeCollectionDefinition; // Info about the active collection
-  List<String> _localCollectionRootFolders =
-      []; // Root folders for the *active* local collection
-
-  // Keep loading state stream
+  Database? _database;
+  CollectionDefinition? _activeCollectionDefinition;
+  List<String> _localCollectionRootFolders = [];
   final _loadingController = StreamController<bool>.broadcast();
   Stream<bool> get loadingStream => _loadingController.stream;
   bool _isLoading = false;
 
-  // Keep AudioService if needed
-  // final AudioService _audioService = AudioService();
-
-  // --- Collection Definition Management (using SharedPreferences) ---
+  // --- Collection Definition Management ---
   // (Methods: loadCollectionDefinitions, _saveCollectionDefinitions, addCollectionDefinition, removeCollectionDefinition)
-  // ... (Keep existing methods from previous step) ...
   Future<List<CollectionDefinition>> loadCollectionDefinitions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -332,7 +302,7 @@ class CollectionService {
     } catch (e) {
       print('Error loading collection definitions: $e');
     }
-    return []; // Return empty list on error or if none exist
+    return [];
   }
 
   Future<void> _saveCollectionDefinitions(
@@ -348,104 +318,14 @@ class CollectionService {
     }
   }
 
-  Future<bool> deleteFolderFromDisk(String folderPath) async {
-    print("[deleteFolderFromDisk] Attempting to delete: '$folderPath'");
-    try {
-      final dir = Directory(folderPath);
-      if (await dir.exists()) {
-        await dir.delete(recursive: true);
-        print("[deleteFolderFromDisk] Successfully deleted: '$folderPath'");
-        return true;
-      } else {
-        print("[deleteFolderFromDisk] Folder not found on disk: '$folderPath'");
-        return false;
-      }
-    } catch (e) {
-      print("[deleteFolderFromDisk] ERROR deleting '$folderPath': $e");
-      return false;
-    }
-  }
-
-  Future<List<Track>> getTracksInFolder(String folderPath) async {
-    if (_database == null || !_database!.isOpen) return [];
-    final activeDef = _activeCollectionDefinition;
-    if (activeDef == null) return [];
-
-    List<Track> tracksInFolder = [];
-    // Get tracks with resolved absolute paths
-    final allTracks = await getAllTracks();
-
-    // --- Normalize the target folder path ---
-    // Assuming folderPath is intended to be an absolute path from the UI
-    final normalizedTargetFolderPath = pathLib.normalize(folderPath);
-    print(
-      "[getTracksInFolder] Normalized Target Path: '$normalizedTargetFolderPath'",
-    );
-
-    for (final track in allTracks) {
-      // Skip URLs
-      if (!track.isUrl) {
-        // Track path should be absolute here due to _resolveTrackPath in getAllTracks
-        final normalizedTrackPath = pathLib.normalize(track.path);
-        // Get the directory containing the track file
-        final trackDirectory = pathLib.dirname(normalizedTrackPath);
-
-        // --- Log paths being compared ---
-        print("  [Checking Track] ID: ${track.id}, Title: ${track.title}");
-        print("    Track Path (Normalized): '$normalizedTrackPath'");
-        print("    Track Dir  (Normalized): '$trackDirectory'");
-
-        // --- Robust Comparison ---
-        // Use pathLib.equals for exact directory match
-        // Use pathLib.isWithin for checking subdirectories
-        if (pathLib.equals(trackDirectory, normalizedTargetFolderPath) ||
-            pathLib.isWithin(normalizedTargetFolderPath, trackDirectory)) {
-          print("    --> MATCH FOUND!");
-          tracksInFolder.add(track);
-        }
-      }
-    }
-    print(
-      "[getTracksInFolder] Found ${tracksInFolder.length} tracks for folder '$folderPath'",
-    );
-    return tracksInFolder;
-  }
-
-  Future<String?> loadLastActiveCollectionId() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getString(_lastActiveCollectionIdKey);
-    } catch (e) {
-      print('Error loading last active collection ID: $e');
-      return null;
-    }
-  }
-
-  Future<void> saveLastActiveCollectionId(String? id) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (id != null && id.isNotEmpty) {
-        await prefs.setString(_lastActiveCollectionIdKey, id);
-        print('Saved last active collection ID: $id');
-      } else {
-        await prefs.remove(_lastActiveCollectionIdKey);
-        print('Cleared last active collection ID.');
-      }
-    } catch (e) {
-      print('Error saving last active collection ID: $e');
-    }
-  }
-
   Future<void> addCollectionDefinition(CollectionDefinition definition) async {
     final definitions = await loadCollectionDefinitions();
-    // Avoid adding duplicates by ID or potentially Name/Path
     if (!definitions.any((def) => def.id == definition.id)) {
       definitions.add(definition);
       await _saveCollectionDefinitions(definitions);
       print('Added collection definition: ${definition.name}');
     } else {
       print('Collection definition with ID ${definition.id} already exists.');
-      // Optionally update if needed?
     }
   }
 
@@ -456,13 +336,11 @@ class CollectionService {
     if (definitions.length < initialLength) {
       await _saveCollectionDefinitions(definitions);
       print('Removed collection definition with ID: $id');
-      // Note: This does NOT delete the actual database file
     }
   }
 
   // --- Service Lifecycle & Collection Switching ---
-  // (Methods: initialize, openCollection, closeCollection, getActiveCollection)
-  // ... (Keep existing methods from previous step) ...
+  // (Methods: initialize, openCollection, closeCollection, getActiveCollection, getActiveDatabase)
   Future<void> initialize() async {
     print("CollectionService initialized. Ready to open a collection.");
   }
@@ -474,6 +352,7 @@ class CollectionService {
       await closeCollection();
       _activeCollectionDefinition = definition;
       String dbFilePath = definition.dbPath;
+      // Ensure directories exist
       if (definition.type == CollectionType.shared) {
         final dbDir = Directory(definition.rootPath!);
         if (!await dbDir.exists()) {
@@ -482,6 +361,7 @@ class CollectionService {
           );
         }
       } else {
+        // Local
         final dbDir = Directory(pathLib.dirname(dbFilePath));
         if (!await dbDir.exists()) {
           await dbDir.create(recursive: true);
@@ -523,9 +403,7 @@ class CollectionService {
     return _activeCollectionDefinition;
   }
 
-  // <<< NEW: Helper to get the active DB connection >>>
   Database? getActiveDatabase() {
-    // Ensure DB is open before returning
     if (_database != null && _database!.isOpen) {
       return _database;
     }
@@ -533,7 +411,7 @@ class CollectionService {
     return null;
   }
 
-  // Modified: Initializes or opens database at a specific path
+  // --- Database Initialization and Migration ---
   Future<Database> _initDatabase(String dbPath) async {
     final dbDir = Directory(pathLib.dirname(dbPath));
     if (!await dbDir.exists()) {
@@ -545,43 +423,32 @@ class CollectionService {
       version: _databaseVersion, // Use the constant
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
-      // Enable foreign keys for cascade delete
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
     );
   }
 
-  // --- MODIFIED: _onCreate includes playlist tables ---
   Future _onCreate(Database db, int version) async {
     // Music Table
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableMusic (
-        $columnId INTEGER PRIMARY KEY,
-        $columnTitle TEXT NOT NULL,
-        $columnArtist TEXT NOT NULL,
-        $columnAlbum TEXT NOT NULL,
-        $columnPath TEXT NOT NULL,
-        $columnIsUrl INTEGER NOT NULL,
-        $columnDuration INTEGER NOT NULL,
-        $columnTimeMarkers TEXT,
-        $columnWaveformData TEXT,
-        $columnRating INTEGER DEFAULT 0,
-        $columnComment TEXT DEFAULT '',
-        $columnGeneralTags TEXT
+        $columnId INTEGER PRIMARY KEY, $columnTitle TEXT NOT NULL,
+        $columnArtist TEXT NOT NULL, $columnAlbum TEXT NOT NULL,
+        $columnPath TEXT NOT NULL, $columnIsUrl INTEGER NOT NULL,
+        $columnDuration INTEGER NOT NULL, $columnTimeMarkers TEXT,
+        $columnWaveformData TEXT, $columnRating INTEGER DEFAULT 0,
+        $columnComment TEXT DEFAULT '', $columnGeneralTags TEXT
       )
     ''');
     // Local Root Folders Table
     await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableLocalRoots (
-        path TEXT PRIMARY KEY
-      )
+      CREATE TABLE IF NOT EXISTS $tableLocalRoots ( path TEXT PRIMARY KEY )
     ''');
-    // --- Playlist Tables ---
+    // Playlist Tables
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tablePlaylists (
-        $columnPlaylistId TEXT PRIMARY KEY,
-        $columnPlaylistName TEXT NOT NULL
+        $columnPlaylistId TEXT PRIMARY KEY, $columnPlaylistName TEXT NOT NULL
       )
     ''');
     await db.execute('''
@@ -592,25 +459,24 @@ class CollectionService {
         FOREIGN KEY ($columnPlaylistTracksPlaylistId) REFERENCES $tablePlaylists ($columnPlaylistId) ON DELETE CASCADE
       )
     ''');
-    // Add index for faster track lookup in playlists
     await db.execute('''
       CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_id
       ON $tablePlaylistTracks ($columnPlaylistTracksPlaylistId)
     ''');
+    // --- UI Settings Table --- <<< NEW
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableUiSettings (
+        $columnUiSettingsKey TEXT PRIMARY KEY,
+        $columnUiSettingsValue TEXT
+      )
+    ''');
   }
 
-  // --- MODIFIED: _onUpgrade potentially adds playlist tables if upgrading ---
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    // Migrations from v1 to v2 (Waveform, Rating, Comment, Tags, Playlist tables)
     if (oldVersion < 2) {
-      try {
-        await db.execute(
-          'ALTER TABLE $tableMusic ADD COLUMN $columnWaveformData TEXT',
-        );
-      } catch (e) {
-        print("Could not add $columnWaveformData: $e");
-      }
-
-      // Add new columns for version 2 to music table
+      print("Applying v1 -> v2 upgrades...");
+      // Add columns to music table (use try-catch for safety)
       try {
         await db.execute(
           'ALTER TABLE $tableMusic ADD COLUMN $columnWaveformData TEXT',
@@ -639,7 +505,7 @@ class CollectionService {
       } catch (e) {
         print("Could not add $columnGeneralTags: $e");
       }
-      // Add tables introduced in v2 (local roots, playlists)
+      // Add new tables
       try {
         await db.execute(
           'CREATE TABLE IF NOT EXISTS $tableLocalRoots (path TEXT PRIMARY KEY)',
@@ -655,46 +521,51 @@ class CollectionService {
         print("Could not add $tablePlaylists table: $e");
       }
       try {
-        await db.execute('''
-              CREATE TABLE IF NOT EXISTS $tablePlaylistTracks (
-                $columnPlaylistTracksPlaylistId TEXT NOT NULL,
-                $columnPlaylistTracksTrackPath TEXT NOT NULL,
-                $columnPlaylistTracksSortOrder INTEGER,
-                FOREIGN KEY ($columnPlaylistTracksPlaylistId) REFERENCES $tablePlaylists ($columnPlaylistId) ON DELETE CASCADE
-              )
-            ''');
-        await db.execute('''
-              CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_id
-              ON $tablePlaylistTracks ($columnPlaylistTracksPlaylistId)
-            ''');
+        await db.execute(
+          ''' CREATE TABLE IF NOT EXISTS $tablePlaylistTracks (
+              $columnPlaylistTracksPlaylistId TEXT NOT NULL, $columnPlaylistTracksTrackPath TEXT NOT NULL,
+              $columnPlaylistTracksSortOrder INTEGER,
+              FOREIGN KEY ($columnPlaylistTracksPlaylistId) REFERENCES $tablePlaylists ($columnPlaylistId) ON DELETE CASCADE )''',
+        );
+        await db.execute(
+          ''' CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_id ON $tablePlaylistTracks ($columnPlaylistTracksPlaylistId) ''',
+        );
       } catch (e) {
         print("Could not add $tablePlaylistTracks table/index: $e");
       }
     }
-    // --- NEW: v2 -> v3 upgrade (Rename tags column) ---
+    // Migration from v2 to v3 (Rename 'tags' to 'timeMarkers')
     if (oldVersion < 3) {
       print("Applying v2 -> v3 upgrades...");
       try {
-        // Define the OLD column name explicitly here for the migration
-        const String oldColumnTags =
-            'tags'; // Or whatever the old constant was named
+        const String oldColumnTags = 'tags'; // Define old name for migration
         await db.execute(
           'ALTER TABLE $tableMusic RENAME COLUMN $oldColumnTags TO $columnTimeMarkers',
         );
         print("Renamed column '$oldColumnTags' to '$columnTimeMarkers'.");
       } catch (e) {
         print("Error renaming 'tags' column to '$columnTimeMarkers': $e");
-        // Handle potential errors, e.g., if the old column doesn't exist
-        // You might need more robust error checking or alternative strategies if rename fails.
-        // For example, add the new column and try to copy data if possible (though format differs here).
       }
-      print("Finished v2 -> v3 upgrades.");
+    }
+    // --- NEW: v3 -> v4 upgrade (Add ui_settings table) ---
+    if (oldVersion < 4) {
+      print("Applying v3 -> v4 upgrades...");
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS $tableUiSettings (
+            $columnUiSettingsKey TEXT PRIMARY KEY,
+            $columnUiSettingsValue TEXT
+          )
+        ''');
+        print("Added '$tableUiSettings' table.");
+      } catch (e) {
+        print("Error adding '$tableUiSettings' table: $e");
+      }
     }
   }
 
-  // --- Root Folder Management (Revised) ---
+  // --- Root Folder Management ---
   // (Methods: _loadLocalCollectionRootFolders, addRootFolder, removeRootFolder, getRootFolders)
-  // ... (Keep existing methods from previous step) ...
   Future<void> _loadLocalCollectionRootFolders() async {
     if (_database == null ||
         !_database!.isOpen ||
@@ -775,34 +646,11 @@ class CollectionService {
     }
   }
 
-  Future<void> updateTrackMarkers(int trackId, List<TimeMarker> markers) async {
-    if (_database == null || !_database!.isOpen) {
-      throw Exception("Database not open");
-    }
-    try {
-      final String markersJson = jsonEncode(
-        markers.map((marker) => marker.toJson()).toList(),
-      );
-      final count = await _database!.update(
-        tableMusic,
-        {columnTimeMarkers: markersJson}, // Update only the 'tags' column
-        where: '$columnId = ?',
-        whereArgs: [trackId],
-      );
-      if (count == 0) {
-        print("Warning: updateTrackMarkers - Track ID $trackId not found.");
-      } else {
-        print("Successfully updated markers for track ID $trackId.");
-      }
-    } catch (e) {
-      print("Error updating track markers for ID $trackId: $e");
-      rethrow; // Re-throw the error to be caught by the BLoC
-    }
-  }
-
-  // --- Track CRUD Operations (Revised for Path Handling) ---
+  // --- Track CRUD Operations ---
   // (Helpers: _resolveTrackPath, _prepareTrackForDb)
   // (Methods: addTrack, updateTrack, deleteTrack, getTrack, getTrackByPath, getAllTracks, searchTracks)
+
+  // Resolves relative path to absolute for shared collections
   Track _resolveTrackPath(Track track) {
     if (_activeCollectionDefinition?.type == CollectionType.shared &&
         !track.isUrl &&
@@ -810,24 +658,24 @@ class CollectionService {
       try {
         final absolutePath = pathLib.join(
           _activeCollectionDefinition!.rootPath!,
-          track.path,
+          track.path, // track.path is relative here
         );
         return track.copyWith(path: absolutePath);
       } catch (e) {
         print(
           "Error resolving relative path ${track.path} with root ${_activeCollectionDefinition!.rootPath}: $e",
         );
-        // Return original track if resolution fails
-        return track;
+        return track; // Return original track if resolution fails
       }
     }
-    return track;
+    return track; // Return as is for local or URLs
   }
 
+  // Converts absolute path to relative for shared collections before DB storage
   Map<String, dynamic> _prepareTrackForDb(Track track) {
     String pathToStore = track.path;
     if (_activeCollectionDefinition?.type == CollectionType.shared &&
-        !track.isUrl &&
+        !track.isUrl && // Don't make URLs relative
         _activeCollectionDefinition?.rootPath != null) {
       try {
         // Ensure paths are absolute before making relative
@@ -835,40 +683,49 @@ class CollectionService {
           print(
             "Warning: Trying to make non-absolute path relative: ${track.path}",
           );
-          // Decide on fallback: store as is, or throw error? Storing as is for now.
         } else if (!pathLib.isAbsolute(
           _activeCollectionDefinition!.rootPath!,
         )) {
           print(
             "Warning: Root path is not absolute: ${_activeCollectionDefinition!.rootPath}",
           );
-        } else {
+        } else if (pathLib.isWithin(
+          _activeCollectionDefinition!.rootPath!,
+          track.path,
+        )) {
+          // Only make relative if it's actually within the root
           pathToStore = pathLib.relative(
             track.path,
             from: _activeCollectionDefinition!.rootPath!,
           );
+        } else {
+          print(
+            "Warning: Track path ${track.path} is outside shared root ${_activeCollectionDefinition!.rootPath}. Storing absolute path.",
+          );
+          // Keep pathToStore as the absolute path
         }
       } catch (e) {
         print(
           "Warning: Could not make path relative for ${track.path} against root ${_activeCollectionDefinition!.rootPath}. Storing absolute path. Error: $e",
         );
-        pathToStore = track.path;
+        pathToStore = track.path; // Fallback to absolute path
       }
     }
+    // Return JSON representation with the potentially modified path
     return track.copyWith(path: pathToStore).toJson();
   }
 
   Future<int> addTrack(Track track) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
-    final data = _prepareTrackForDb(track);
+    final data = _prepareTrackForDb(track); // Convert path if needed
     return await _database!.insert(tableMusic, data);
   }
 
   Future<int> updateTrack(Track track) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
-    final data = _prepareTrackForDb(track);
+    final data = _prepareTrackForDb(track); // Convert path if needed
     return await _database!.update(
       tableMusic,
       data,
@@ -897,7 +754,7 @@ class CollectionService {
     );
     if (maps.isNotEmpty) {
       final track = Track.fromJson(maps.first);
-      return _resolveTrackPath(track);
+      return _resolveTrackPath(track); // Resolve path after loading
     }
     return null;
   }
@@ -906,8 +763,11 @@ class CollectionService {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
     String pathQuery = absolutePath;
+    // Convert search path to relative if it's a shared collection
     if (_activeCollectionDefinition?.type == CollectionType.shared &&
-        _activeCollectionDefinition?.rootPath != null) {
+        _activeCollectionDefinition?.rootPath != null &&
+        !Uri.tryParse(absolutePath)!.isAbsolute) {
+      // Don't try to make URLs relative
       try {
         if (pathLib.isAbsolute(absolutePath) &&
             pathLib.isWithin(
@@ -919,21 +779,25 @@ class CollectionService {
             from: _activeCollectionDefinition!.rootPath!,
           );
         } else if (!pathLib.isAbsolute(absolutePath)) {
-          // If input is already relative maybe? Less likely scenario. Query as is.
-          pathQuery = absolutePath;
+          pathQuery = absolutePath; // Assume already relative
           print(
             "Warning: getTrackByPath received potentially relative path for shared collection: $absolutePath",
           );
         } else {
-          return null;
+          print(
+            "Warning: getTrackByPath received absolute path outside shared root: $absolutePath",
+          );
+          return null; // Path is outside the shared root, cannot exist in DB relatively
         }
       } catch (e) {
         print(
           "Warning: Could not make search path relative. Querying absolute path. Error: $e",
         );
-        pathQuery = absolutePath;
+        pathQuery =
+            absolutePath; // Fallback to querying absolute path (might fail for shared)
       }
     }
+    // Query using the potentially modified path
     final List<Map<String, dynamic>> maps = await _database!.query(
       tableMusic,
       where: '$columnPath = ?',
@@ -941,7 +805,7 @@ class CollectionService {
     );
     if (maps.isNotEmpty) {
       final track = Track.fromJson(maps.first);
-      return _resolveTrackPath(track);
+      return _resolveTrackPath(track); // Resolve path after loading
     }
     return null;
   }
@@ -949,6 +813,7 @@ class CollectionService {
   Future<List<Track>> getAllTracks() async {
     if (_database == null || !_database!.isOpen) return [];
     final List<Map<String, dynamic>> maps = await _database!.query(tableMusic);
+    // Resolve paths for all tracks after loading
     return maps.map((map) => _resolveTrackPath(Track.fromJson(map))).toList();
   }
 
@@ -956,86 +821,96 @@ class CollectionService {
     if (_database == null || !_database!.isOpen) return [];
     final String lowercaseQuery = query.toLowerCase();
     final String wildcardQuery = '%$lowercaseQuery%';
+    // Search across relevant fields
     String whereClause = '''
-      LOWER($columnTitle) LIKE ? OR
-      LOWER($columnArtist) LIKE ? OR
-      LOWER($columnAlbum) LIKE ? OR
-      LOWER($columnComment) LIKE ? OR
-      LOWER($columnGeneralTags) LIKE ? OR
-      LOWER($columnPath) LIKE ?
+      LOWER($columnTitle) LIKE ? OR LOWER($columnArtist) LIKE ? OR
+      LOWER($columnAlbum) LIKE ? OR LOWER($columnComment) LIKE ? OR
+      LOWER($columnGeneralTags) LIKE ? OR LOWER($columnPath) LIKE ?
     ''';
-    List<dynamic> whereArgs = [
-      wildcardQuery,
-      wildcardQuery,
-      wildcardQuery,
-      wildcardQuery,
-      wildcardQuery,
-      wildcardQuery,
-    ];
+    List<dynamic> whereArgs = List.filled(6, wildcardQuery);
+
     final List<Map<String, dynamic>> maps = await _database!.query(
       tableMusic,
       where: whereClause,
       whereArgs: whereArgs,
     );
+    // Resolve paths for search results
     return maps.map((map) => _resolveTrackPath(Track.fromJson(map))).toList();
   }
 
   // --- Metadata Update Methods ---
-  // (Methods: updateRating, updateComment, addGeneralTag, removeGeneralTag)
-  // ... (Keep existing methods from previous step) ...
+  // (Methods: updateRating, updateComment, addGeneralTag, removeGeneralTag, updateTrackMarkers)
+
   Future<void> updateRating(int trackId, int rating) async {
-    final track = await getTrack(trackId);
-    if (track != null) {
-      final updatedTrack = track.copyWith(rating: rating);
-      await updateTrack(updatedTrack);
-    }
-  }
-
-  Future<void> updateComment(int trackId, String comment) async {
-    final track = await getTrack(trackId);
-    if (track != null) {
-      final updatedTrack = track.copyWith(comment: comment);
-      await updateTrack(updatedTrack);
-    }
-  }
-
-  Future<void> addGeneralTag(int trackId, String tag) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
-    final List<Map<String, dynamic>> maps = await _database!.query(
+    await _database!.update(
       tableMusic,
+      {columnRating: rating},
       where: '$columnId = ?',
       whereArgs: [trackId],
     );
-    if (maps.isEmpty) return;
-    final trackFromDb = Track.fromJson(maps.first);
-    final tags = List<String>.from(trackFromDb.generalTags);
-    if (!tags.contains(tag)) {
-      tags.add(tag);
-      final updatedTrack = trackFromDb.copyWith(generalTags: tags);
-      await updateTrack(updatedTrack); // Handles path prep
+  }
+
+  Future<void> updateComment(int trackId, String comment) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnComment: comment},
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+  }
+
+  Future<void> addGeneralTag(int trackId, String tag) async {
+    final track = await getTrack(trackId); // Gets track with resolved path
+    if (track != null) {
+      final tags = List<String>.from(track.generalTags);
+      if (!tags.contains(tag)) {
+        tags.add(tag);
+        // Use updateTrack which handles path preparation for DB
+        await updateTrack(track.copyWith(generalTags: tags));
+      }
     }
   }
 
   Future<void> removeGeneralTag(int trackId, String tag) async {
-    if (_database == null || !_database!.isOpen)
-      throw Exception("Database not open");
-    final List<Map<String, dynamic>> maps = await _database!.query(
-      tableMusic,
-      where: '$columnId = ?',
-      whereArgs: [trackId],
-    );
-    if (maps.isEmpty) return;
-    final trackFromDb = Track.fromJson(maps.first);
-    final tags = List<String>.from(trackFromDb.generalTags);
-    tags.remove(tag);
-    final updatedTrack = trackFromDb.copyWith(generalTags: tags);
-    await updateTrack(updatedTrack); // Handles path prep
+    final track = await getTrack(trackId); // Gets track with resolved path
+    if (track != null) {
+      final tags = List<String>.from(track.generalTags);
+      if (tags.remove(tag)) {
+        // Use updateTrack which handles path preparation for DB
+        await updateTrack(track.copyWith(generalTags: tags));
+      }
+    }
   }
 
-  // --- Tag Definition Management (Global via SharedPreferences - Unchanged) ---
+  Future<void> updateTrackMarkers(int trackId, List<TimeMarker> markers) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    try {
+      final String markersJson = jsonEncode(
+        markers.map((marker) => marker.toJson()).toList(),
+      );
+      final count = await _database!.update(
+        tableMusic,
+        {columnTimeMarkers: markersJson},
+        where: '$columnId = ?',
+        whereArgs: [trackId],
+      );
+      if (count == 0)
+        print("Warning: updateTrackMarkers - Track ID $trackId not found.");
+      else
+        print("Successfully updated markers for track ID $trackId.");
+    } catch (e) {
+      print("Error updating track markers for ID $trackId: $e");
+      rethrow;
+    }
+  }
+
+  // --- Tag Definition Management (Global via SharedPreferences) ---
   // (Methods: getAllTags, _saveAllTags, addTag, removeTag, updateTag)
-  // ... (Keep existing methods from previous step) ...
   Future<List<Tag>> getAllTags() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1100,9 +975,68 @@ class CollectionService {
     }
   }
 
+  // --- UI Settings --- <<< NEW
+  Future<void> saveUiSetting(String key, String value) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    try {
+      await _database!.insert(tableUiSettings, {
+        columnUiSettingsKey: key,
+        columnUiSettingsValue: value,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      // print("Saved UI setting: $key");
+    } catch (e) {
+      print("Error saving UI setting for key $key: $e");
+      rethrow;
+    }
+  }
+
+  Future<String?> loadUiSetting(String key) async {
+    if (_database == null || !_database!.isOpen) return null;
+    try {
+      final List<Map<String, dynamic>> maps = await _database!.query(
+        tableUiSettings,
+        where: '$columnUiSettingsKey = ?',
+        whereArgs: [key],
+        limit: 1,
+      );
+      if (maps.isNotEmpty) {
+        return maps.first[columnUiSettingsValue] as String?;
+      }
+    } catch (e) {
+      print("Error loading UI setting for key $key: $e");
+    }
+    return null;
+  }
+
+  // --- Column Config Convenience Methods --- <<< NEW
+  static const String _columnConfigKey = 'trackTableColumnConfig';
+
+  Future<void> saveColumnConfig(Map<String, dynamic> config) async {
+    try {
+      final jsonString = jsonEncode(config);
+      await saveUiSetting(_columnConfigKey, jsonString);
+      print("Saved column configuration.");
+    } catch (e) {
+      print("Error saving column config: $e");
+    }
+  }
+
+  Future<Map<String, dynamic>?> loadColumnConfig() async {
+    try {
+      final jsonString = await loadUiSetting(_columnConfigKey);
+      if (jsonString != null && jsonString.isNotEmpty) {
+        return jsonDecode(jsonString) as Map<String, dynamic>?;
+      }
+    } catch (e) {
+      print("Error loading/decoding column config: $e");
+    }
+    print("No saved column config found or error loading.");
+    return null;
+  }
+
   // --- Utility Methods ---
-  // (Methods: setLoading, isLoading, dispose)
-  // ... (Keep existing methods from previous step) ...
+  // (Methods: setLoading, isLoading, dispose, deleteFolderFromDisk, getTracksInFolder, loadLastActiveCollectionId, saveLastActiveCollectionId)
   void setLoading(bool loading) {
     if (_isLoading != loading) {
       _isLoading = loading;
@@ -1111,42 +1045,127 @@ class CollectionService {
   }
 
   bool get isLoading => _isLoading;
+
   Future<void> dispose() async {
     await closeCollection();
     await _loadingController.close();
     print("CollectionService disposed.");
   }
 
-  // --- Methods needing review/implementation based on AudioService ---
+  Future<bool> deleteFolderFromDisk(String folderPath) async {
+    print("[deleteFolderFromDisk] Attempting to delete: '$folderPath'");
+    try {
+      final dir = Directory(folderPath);
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+        print("[deleteFolderFromDisk] Successfully deleted: '$folderPath'");
+        return true;
+      } else {
+        print("[deleteFolderFromDisk] Folder not found on disk: '$folderPath'");
+        return false;
+      }
+    } catch (e) {
+      print("[deleteFolderFromDisk] ERROR deleting '$folderPath': $e");
+      return false;
+    }
+  }
+
+  Future<List<Track>> getTracksInFolder(String folderPath) async {
+    if (_database == null || !_database!.isOpen) return [];
+    final activeDef = _activeCollectionDefinition;
+    if (activeDef == null) return [];
+
+    List<Track> tracksInFolder = [];
+    final allTracks =
+        await getAllTracks(); // Gets tracks with resolved absolute paths
+
+    final normalizedTargetFolderPath = pathLib.normalize(folderPath);
+    print(
+      "[getTracksInFolder] Normalized Target Path: '$normalizedTargetFolderPath'",
+    );
+
+    for (final track in allTracks) {
+      if (!track.isUrl) {
+        final normalizedTrackPath = pathLib.normalize(track.path);
+        final trackDirectory = pathLib.dirname(normalizedTrackPath);
+
+        // print("  [Checking Track] ID: ${track.id}, Title: ${track.title}");
+        // print("    Track Path (Normalized): '$normalizedTrackPath'");
+        // print("    Track Dir  (Normalized): '$trackDirectory'");
+
+        if (pathLib.equals(trackDirectory, normalizedTargetFolderPath) ||
+            pathLib.isWithin(normalizedTargetFolderPath, trackDirectory)) {
+          // print("    --> MATCH FOUND!");
+          tracksInFolder.add(track);
+        }
+      }
+    }
+    print(
+      "[getTracksInFolder] Found ${tracksInFolder.length} tracks for folder '$folderPath'",
+    );
+    return tracksInFolder;
+  }
+
+  Future<String?> loadLastActiveCollectionId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_lastActiveCollectionIdKey);
+    } catch (e) {
+      print('Error loading last active collection ID: $e');
+      return null;
+    }
+  }
+
+  Future<void> saveLastActiveCollectionId(String? id) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (id != null && id.isNotEmpty) {
+        await prefs.setString(_lastActiveCollectionIdKey, id);
+        print('Saved last active collection ID: $id');
+      } else {
+        await prefs.remove(_lastActiveCollectionIdKey);
+        print('Cleared last active collection ID.');
+      }
+    } catch (e) {
+      print('Error saving last active collection ID: $e');
+    }
+  }
+
+  // --- Methods needing review/implementation ---
   // (Methods: addLocalFile, addUrl, importFromFile, exportToFile)
-  // ... (Keep existing methods from previous step, ensure they use helpers) ...
   Future<Track> addLocalFile(String filePath) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
     if (_activeCollectionDefinition == null)
       throw Exception("No active collection");
-    final existingTrack = await getTrackByPath(filePath);
+
+    final existingTrack = await getTrackByPath(filePath); // Uses absolute path
     if (existingTrack != null) {
       print('Track already exists in database: ${existingTrack.title}');
       return existingTrack;
     }
+
+    // Basic metadata extraction (could be enhanced)
     final filename = pathLib.basename(filePath);
     final title = pathLib.basenameWithoutExtension(filePath);
-    List<double>? waveformData; // Placeholder
+
     final track = Track(
       title: title,
       artist: 'Unknown',
       album: 'Unknown',
-      path: filePath,
+      path: filePath, // Store absolute path initially
       isUrl: false,
-      duration: 0,
-      waveformData: waveformData,
+      duration: 0, // Duration needs to be fetched later if needed
+      waveformData: null, // Waveform needs to be generated later
       rating: 0,
       comment: '',
       generalTags: [],
     );
-    final id = await addTrack(track); // Handles path prep
-    return _resolveTrackPath(track.copyWith(id: id));
+
+    final id = await addTrack(track); // Handles path prep for DB storage
+    return _resolveTrackPath(
+      track.copyWith(id: id),
+    ); // Resolve path for return value
   }
 
   Future<Track> addUrl(String url) async {
@@ -1157,18 +1176,18 @@ class CollectionService {
 
     setLoading(true);
     try {
-      // Check if it already exists by the original URL
       final existingTrack = await getTrackByPath(url);
       if (existingTrack != null) {
         print('URL already exists in database: ${existingTrack.title}');
         return existingTrack;
       }
 
-      String trackTitle = url; // Default title
-      int trackDurationMs = 0; // Default duration
+      String trackTitle = url;
+      int trackDurationMs = 0;
       bool isYouTube = false;
+      String artist = 'Unknown';
+      String album = 'Unknown';
 
-      // --- YouTube Integration ---
       var videoId = VideoId.parseVideoId(url);
       if (videoId != null) {
         isYouTube = true;
@@ -1177,41 +1196,42 @@ class CollectionService {
           var video = await _yt.videos.get(videoId);
           trackTitle = video.title;
           trackDurationMs = video.duration?.inMilliseconds ?? 0;
-          print('Fetched title: $trackTitle, Duration: $trackDurationMs ms');
+          artist = video.author;
+          album = 'YouTube';
+          print(
+            'Fetched title: $trackTitle, Duration: $trackDurationMs ms, Artist: $artist',
+          );
         } catch (ytError) {
           print(
             'Error fetching YouTube metadata: $ytError. Using URL as title.',
           );
-          // Keep default title/duration on error
         }
       } else {
-        // Fallback for non-YouTube URLs (maybe try getting filename?)
         final uri = Uri.tryParse(url);
         final filename =
             (uri != null && uri.pathSegments.isNotEmpty)
                 ? uri.pathSegments.last
                 : '';
-        if (filename.isNotEmpty) {
-          trackTitle = filename;
-        }
+        if (filename.isNotEmpty) trackTitle = filename;
       }
-      List<double>? waveformData;
+
       final track = Track(
         title: trackTitle,
-        artist: 'Unknown',
-        album: isYouTube ? 'YouTube' : 'Unknown',
-        path: url,
+        artist: artist,
+        album: album,
+        path: url, // Store the original URL
         isUrl: true,
-        duration: 0,
-        waveformData: waveformData,
+        duration: trackDurationMs,
+        waveformData: null,
         rating: 0,
         comment: '',
         generalTags: [],
       );
+
       final id = await addTrack(track); // Handles path prep (no-op for URL)
       return _resolveTrackPath(
         track.copyWith(id: id),
-      ); // Resolves path (no-op for URL)
+      ); // Resolve path (no-op for URL)
     } catch (e) {
       print('Error adding URL: $e');
       rethrow;
@@ -1222,7 +1242,7 @@ class CollectionService {
 
   Future<void> importFromFile(String jsonFilePath) async {
     print("Import not fully implemented for hybrid collections.");
-    // TODO: Read JSON, check active collection type, make paths relative if importing to 'shared', add tracks.
+    // TODO: Implement import logic considering collection type and path handling.
   }
 
   Future<void> exportToFile(String jsonFilePath) async {
@@ -1231,8 +1251,10 @@ class CollectionService {
     try {
       final tracks =
           await getAllTracks(); // Gets tracks with resolved absolute paths
-      // Convert to JSON using the absolute paths suitable for export
-      final jsonData = tracks.map((track) => track.toJson()).toList();
+      final jsonData =
+          tracks
+              .map((track) => track.toJson())
+              .toList(); // Use resolved paths for export
       final jsonString = jsonEncode(jsonData);
       final file = File(jsonFilePath);
       await file.writeAsString(jsonString);
