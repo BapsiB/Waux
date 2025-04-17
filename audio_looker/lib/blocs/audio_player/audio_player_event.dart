@@ -89,6 +89,20 @@ class UpdateWaveformData extends AudioPlayerEvent {
   List<Object?> get props => [waveformData];
 }
 
+/// Event to load the shuffle preference from storage.
+class LoadShufflePreference extends AudioPlayerEvent {}
+
+/// Event to toggle the shuffle state (on/off).
+class ToggleShuffle extends AudioPlayerEvent {}
+
+/// Internal event to update the shuffle state after loading preference.
+class _UpdateShuffleState extends AudioPlayerEvent {
+  final bool isShuffleActive;
+  const _UpdateShuffleState(this.isShuffleActive);
+  @override
+  List<Object> get props => [isShuffleActive];
+}
+
 class UpdateDuration extends AudioPlayerEvent {
   final Duration? duration;
 

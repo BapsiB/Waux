@@ -10,6 +10,7 @@ import 'dart:convert'; // For JSON encoding/decoding
 import 'package:audio_looker/services/performance_profiler.dart';
 import 'package:audio_looker/services/collection_service.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class TimeMarker {
   final double position;
@@ -28,6 +29,8 @@ class TimeMarker {
 
 class AudioService {
   final _yt = YoutubeExplode();
+
+  static const String _shufflePrefKey = 'shuffle_active';
 
   static final AudioService _instance =
       AudioService._internal(); // Private static instance
@@ -565,6 +568,25 @@ class AudioService {
     print(
       '✅ AudioService: Generated ${_waveformData?.length ?? 0} random data points',
     );
+  }
+
+  Future<void> saveShufflePreference(bool isActive) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_shufflePrefKey, isActive);
+    } catch (e) {
+      print("Error saving shuffle preference: $e");
+    }
+  }
+
+  Future<bool> loadShufflePreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_shufflePrefKey) ?? false; // Default to false
+    } catch (e) {
+      print("Error loading shuffle preference: $e");
+      return false;
+    }
   }
 
   // Playback controls

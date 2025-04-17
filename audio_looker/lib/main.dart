@@ -91,10 +91,8 @@ class MyApp extends StatelessWidget {
             create:
                 (context) => AudioPlayerBloc(
                   context.read<AudioService>(),
-                  context
-                      .read<
-                        TrackMetadataBloc
-                      >(), // <<< Inject TrackMetadataBloc
+                  context.read<TrackMetadataBloc>(),
+                  context.read<CollectionService>(),
                 ),
           ),
           BlocProvider<PlaylistBloc>(

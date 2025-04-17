@@ -26,8 +26,8 @@ class AudioPlayerLoaded extends AudioPlayerState {
   final Duration position;
   final Duration duration;
   final List<double>? waveformData;
-  // *** Renamed tags to markers and use TimeMarker ***
   final List<TimeMarker> markers;
+  final bool isShuffleActive; // <<< ADDED FIELD
 
   const AudioPlayerLoaded({
     required this.currentSource,
@@ -35,8 +35,8 @@ class AudioPlayerLoaded extends AudioPlayerState {
     required this.position,
     required this.duration,
     this.waveformData,
-    // *** Use markers ***
     this.markers = const [],
+    this.isShuffleActive = false, // <<< ADDED to constructor with default
   });
 
   @override
@@ -46,8 +46,8 @@ class AudioPlayerLoaded extends AudioPlayerState {
     position,
     duration,
     waveformData,
-    // *** Use markers ***
     markers,
+    isShuffleActive, // <<< ADDED to props
   ];
 
   AudioPlayerLoaded copyWith({
@@ -57,8 +57,8 @@ class AudioPlayerLoaded extends AudioPlayerState {
     Duration? duration,
     List<double>? waveformData,
     bool clearWaveform = false,
-    // *** Renamed tags to markers and use TimeMarker ***
     List<TimeMarker>? markers,
+    bool? isShuffleActive, // <<< ADDED to copyWith
   }) {
     return AudioPlayerLoaded(
       currentSource: currentSource ?? this.currentSource,
@@ -66,8 +66,9 @@ class AudioPlayerLoaded extends AudioPlayerState {
       position: position ?? this.position,
       duration: duration ?? this.duration,
       waveformData: clearWaveform ? null : (waveformData ?? this.waveformData),
-      // *** Use markers ***
       markers: markers ?? this.markers,
+      isShuffleActive:
+          isShuffleActive ?? this.isShuffleActive, // <<< ADDED logic
     );
   }
 }

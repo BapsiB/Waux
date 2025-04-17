@@ -1,5 +1,7 @@
 // lib/handlers/player_control_handler.dart
 
+import 'dart:math'; // Required for Random
+import 'package:collection/collection.dart'; // Required for firstWhereOrNull
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -14,31 +16,114 @@ class PlayerControlHandler {
   final BuildContext context;
   final Track? selectedTrackForPlayer;
   final List<Track> Function() getCurrentDisplayedTracksFn;
+  final bool isShuffleActive; // <<< ADDED: Shuffle state
 
   PlayerControlHandler({
     required this.context,
     required this.selectedTrackForPlayer,
     required this.getCurrentDisplayedTracksFn,
+    required this.isShuffleActive, // <<< ADDED: Require shuffle state
   });
 
-  /// Play the next track in the current view
+  /// Play the next track in the current view, considering shuffle state.
   void playNextTrack({required Function(Track, bool) onTrackSelected}) {
-    if (selectedTrackForPlayer == null) return;
+    if (selectedTrackForPlayer == null) {
+      print("PlayerControlHandler: Cannot play next, no track selected.");
+      return;
+    }
 
     final List<Track> currentList = getCurrentDisplayedTracksFn();
-    if (currentList.isEmpty) return;
+    if (currentList.isEmpty) {
+      print("PlayerControlHandler: Cannot play next, current list is empty.");
+      return;
+    }
 
-    final currentIndex = currentList.indexWhere(
-      (t) => t.id == selectedTrackForPlayer!.id,
-    );
+    Track? nextTrack;
 
-    if (currentIndex != -1 && currentIndex < currentList.length - 1) {
-      final nextTrack = currentList[currentIndex + 1];
-      print("Selecting next track: ${nextTrack.title}");
-      onTrackSelected(nextTrack, false);
+    if (isShuffleActive) {
+      // --- Shuffle Logic ---
+      print("PlayerControlHandler: Shuffle is active.");
+      if (currentList.length > 1) {
+        // Get tracks other than the current one
+        var potentialNextTracks =
+            currentList
+                .where((t) => t.id != selectedTrackForPlayer!.id)
+                .toList();
+        if (potentialNextTracks.isNotEmpty) {
+          // Pick a random track from the remaining ones
+          final randomIndex = Random().nextInt(potentialNextTracks.length);
+          nextTrack = potentialNextTracks[randomIndex];
+          print(
+            "PlayerControlHandler: Shuffling to track ID: ${nextTrack.id} ('${nextTrack.title}')",
+          );
+        } else {
+          // This case should technically not happen if length > 1,
+          // but as a fallback, play the first track if it's different.
+          nextTrack = currentList.firstWhereOrNull(
+            (t) => t.id != selectedTrackForPlayer!.id,
+          );
+          // If still null (meaning only one track in list), replay it.
+          if (nextTrack == null) {
+            nextTrack = currentList.first;
+            print(
+              "PlayerControlHandler: Shuffle fallback - only one other/same track, replaying ID: ${nextTrack.id}",
+            );
+          }
+        }
+      } else if (currentList.length == 1) {
+        // Only one track in the list, just play it again (or seek to start)
+        nextTrack = currentList.first;
+        print(
+          "PlayerControlHandler: Shuffle - Only one track in list, selecting ID: ${nextTrack.id}",
+        );
+        // Optionally seek to 0 instead of re-selecting if it's the same track
+        // context.read<AudioPlayerBloc>().add(const SeekAudio(position: Duration.zero));
+        // return; // Exit early if just seeking
+      }
     } else {
-      print("No next track available or current track not found.");
-      // Optional: Stop playback or loop?
+      // --- Sequential Logic ---
+      print("PlayerControlHandler: Shuffle is inactive (sequential).");
+      final currentIndex = currentList.indexWhere(
+        (t) => t.id == selectedTrackForPlayer!.id,
+      );
+
+      if (currentIndex != -1 && currentIndex < currentList.length - 1) {
+        // Found current track and it's not the last one
+        nextTrack = currentList[currentIndex + 1];
+        print(
+          "PlayerControlHandler: Sequential - Playing next track ID: ${nextTrack.id} ('${nextTrack.title}')",
+        );
+      } else {
+        // Current track is last or not found in the current list
+        print(
+          "PlayerControlHandler: Sequential - End of list reached or current track not found.",
+        );
+        // Optional: Stop playback, loop to the first track, etc.
+        // Example: Loop to first
+        // if (currentList.isNotEmpty) {
+        //   nextTrack = currentList.first;
+        //   print("PlayerControlHandler: Sequential - Looping to first track ID: ${nextTrack.id}");
+        // } else {
+        //   context.read<AudioPlayerBloc>().add(StopAudio()); // Stop if list is empty
+        // }
+        // For now, let's just stop if we reach the end sequentially
+        context.read<AudioPlayerBloc>().add(StopAudio());
+        return; // Don't call onTrackSelected if stopping
+      }
+    }
+
+    // --- Play the selected track ---
+    if (nextTrack != null) {
+      print(
+        "PlayerControlHandler: Calling onTrackSelected for track ID: ${nextTrack.id}",
+      );
+      onTrackSelected(nextTrack, false); // Select and play the determined track
+    } else {
+      // This case might occur in shuffle if list length is 0 or 1 and logic fails
+      print("PlayerControlHandler: No next track determined.");
+      context.read<AudioPlayerBloc>().add(
+        StopAudio(),
+      ); // Stop if no track found
     }
   }
 

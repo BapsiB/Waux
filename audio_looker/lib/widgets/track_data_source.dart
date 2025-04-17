@@ -142,11 +142,24 @@ class TrackDataSource extends DataGridSource {
               DataGridCell<String>(columnName: 'album', value: track.album),
               DataGridCell<Track>(columnName: 'rating', value: track),
               DataGridCell<Track>(columnName: 'tags', value: track),
+              DataGridCell<int>(columnName: 'duration', value: track.duration),
               DataGridCell<Track>(columnName: 'source', value: track),
-              // Add other cells corresponding to _defaultColumnConfig keys if needed
             ],
           );
         }).toList();
+  }
+
+  // Helper function to format duration (add this within the class or globally)
+  String _formatDuration(int milliseconds) {
+    if (milliseconds <= 0) return '--:--'; // Handle zero or negative duration
+    final duration = Duration(milliseconds: milliseconds);
+    String twoDigits(int n) => n.toString().padLeft(2, "0");
+    String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
+    String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
+    // Optionally add hours if needed:
+    // String hours = duration.inHours > 0 ? '${twoDigits(duration.inHours)}:' : '';
+    // return "$hours$twoDigitMinutes:$twoDigitSeconds";
+    return "$twoDigitMinutes:$twoDigitSeconds";
   }
 
   // --- DataGridSource Overrides ---
@@ -294,6 +307,23 @@ class TrackDataSource extends DataGridSource {
                   ),
                 );
               },
+            );
+            break;
+          case 'duration':
+            cellContent = Container(
+              alignment: Alignment.centerRight, // Align numeric data right
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8.0,
+                vertical: 4.0,
+              ),
+              child: Text(
+                _formatDuration(dataGridCell.value as int? ?? 0),
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ), // Adjust style
+              ),
             );
             break;
           case 'rating':

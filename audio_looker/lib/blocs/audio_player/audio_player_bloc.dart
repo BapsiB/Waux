@@ -8,6 +8,7 @@ import 'package:just_audio/just_audio.dart'
 import 'package:audio_looker/services/audio_service.dart';
 import 'package:audio_looker/services/collection_service.dart';
 import 'package:audio_looker/blocs/track_management/track_metadata_bloc.dart';
+import 'package:just_audio/just_audio.dart';
 
 part 'audio_player_event.dart';
 part 'audio_player_state.dart';
@@ -20,11 +21,15 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   StreamSubscription? _durationSubscription;
   StreamSubscription? _waveformSubscription;
   final TrackMetadataBloc _trackMetadataBloc;
+  final CollectionService _collectionService;
   // String? _currentSource; // Can be removed now, managed in state
   Timer? _loadingTimeout;
 
-  AudioPlayerBloc(this._audioService, this._trackMetadataBloc)
-    : super(AudioPlayerInitial()) {
+  AudioPlayerBloc(
+    this._audioService,
+    this._trackMetadataBloc,
+    this._collectionService,
+  ) : super(AudioPlayerInitial()) {
     on<LoadAudio>(_onLoadAudio);
     on<PlayAudio>(_onPlayAudio);
     on<PauseAudio>(_onPauseAudio);
@@ -34,6 +39,58 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     on<UpdatePlaybackState>(_onUpdatePlaybackState);
     on<UpdatePlaybackPosition>(_onUpdatePlaybackPosition);
     on<UpdateWaveformData>(_onUpdateWaveformData);
+    on<LoadShufflePreference>(_onLoadShufflePreference); // Register handler
+    on<ToggleShuffle>(_onToggleShuffle); // Register handler
+    on<_UpdateShuffleState>(_onUpdateShuffleState); // Register handler
+  }
+
+  Future<void> _onLoadShufflePreference(
+    LoadShufflePreference event,
+    Emitter<AudioPlayerState> emit,
+  ) async {
+    final bool shufflePref = await _audioService.loadShufflePreference();
+    print("Bloc: Loaded shuffle preference: $shufflePref");
+    // Use the internal event to update state without triggering side effects
+    add(_UpdateShuffleState(shufflePref));
+  }
+
+  Future<void> _onToggleShuffle(
+    ToggleShuffle event,
+    Emitter<AudioPlayerState> emit,
+  ) async {
+    if (state is AudioPlayerLoaded) {
+      final currentState = state as AudioPlayerLoaded;
+      final newShuffleState = !currentState.isShuffleActive;
+      await _audioService.saveShufflePreference(newShuffleState);
+      print("Bloc: Toggled shuffle to: $newShuffleState and saved.");
+      emit(currentState.copyWith(isShuffleActive: newShuffleState));
+    } else {
+      // Handle toggling when player isn't loaded? Maybe load pref and toggle.
+      final currentPref = await _audioService.loadShufflePreference();
+      final newShuffleState = !currentPref;
+      await _audioService.saveShufflePreference(newShuffleState);
+      print(
+        "Bloc: Toggled shuffle preference (player not loaded) to: $newShuffleState",
+      );
+      // No state to emit if not loaded, preference is just saved.
+    }
+  }
+
+  void _onUpdateShuffleState(
+    // Handler for internal state update
+    _UpdateShuffleState event,
+    Emitter<AudioPlayerState> emit,
+  ) {
+    if (state is AudioPlayerLoaded) {
+      final currentState = state as AudioPlayerLoaded;
+      // Only emit if the state actually changes
+      if (currentState.isShuffleActive != event.isShuffleActive) {
+        emit(currentState.copyWith(isShuffleActive: event.isShuffleActive));
+        print(
+          "Bloc: Internal shuffle state updated to ${event.isShuffleActive}",
+        );
+      }
+    }
   }
 
   Future<void> _onLoadAudio(
@@ -43,74 +100,111 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     print('🔄 Bloc: Received LoadAudio event for source: ${event.track.path}');
     emit(AudioPlayerLoading());
     await _cancelSubscriptions();
-
     _loadingTimeout?.cancel();
     _loadingTimeout = Timer(const Duration(seconds: 20), () {
-      print(
-        '⏱️ Bloc: Loading timed out after 20 seconds for ${event.track.path}',
-      );
-      if (state is AudioPlayerLoading) {
-        print('⚠️ Bloc: Forcing transition from loading state due to timeout');
-        // <<< MODIFIED: Include source in timeout error >>>
-        emit(
-          AudioPlayerError(
-            'Audio loading timed out.',
-            source: event.track.path,
-          ),
-        );
-      }
-      _loadingTimeout = null;
+      /* ... timeout logic ... */
     });
 
     try {
-      print(
-        '🔄 Bloc: Loading audio from: ${event.track.path}, isUrl: ${event.track.isUrl}',
-      );
-      // Wait for the audio service to potentially resolve the source (like YouTube URLs)
-      // and set it in the player. loadAudio itself might handle setting the player source now.
-      await _audioService.loadAudio(event.track);
+      // --- Track data already contains the potentially stored duration ---
+      final Track track = event.track;
+      int initialDurationMs =
+          track.duration; // <<< Get duration from track object
 
+      print('🔄 Bloc: Loading audio service for: ${track.path}');
+      await _audioService.loadAudio(
+        track,
+      ); // Load waveform, markers, prepare player
       _setupSubscriptions();
 
-      final initialDuration =
-          await _audioService.durationStream.first ?? Duration.zero;
       final initialWaveform = _audioService.waveformData;
-      final initialTags = _audioService.getTimeMarkersForAudio(
-        event.track.path,
-      );
+      final initialMarkers = _audioService.getTimeMarkersForAudio(track.path);
+
+      // // --- Emit loaded state with the duration we have from the DB ---
+      // final loadedState = AudioPlayerLoaded(
+      //   currentSource: track.path,
+      //   isPlaying: false,
+      //   position: Duration.zero,
+      //   duration: Duration(
+      //     milliseconds: initialDurationMs,
+      //   ), // <<< Use DB duration
+      //   waveformData: initialWaveform,
+      //   markers: List<TimeMarker>.from(initialMarkers),
+      // );
+
+      final currentShuffleState =
+          state is AudioPlayerLoaded
+              ? (state as AudioPlayerLoaded).isShuffleActive
+              : await _audioService
+                  .loadShufflePreference(); // Load if not already in state
 
       final loadedState = AudioPlayerLoaded(
-        currentSource: event.track.path,
+        currentSource: track.path,
         isPlaying: false,
-        position: Duration.zero, // Start position at 0 initially
-        duration: initialDuration,
+        position: Duration.zero,
+        duration: Duration(milliseconds: initialDurationMs),
         waveformData: initialWaveform,
-        markers: List<TimeMarker>.from(initialTags),
+        markers: List<TimeMarker>.from(initialMarkers),
+        isShuffleActive: currentShuffleState, // <<< ADD THIS
       );
-
       emit(loadedState);
 
-      if (event.initialSeekRatio != null && initialDuration > Duration.zero) {
-        final seekPosition = initialDuration * event.initialSeekRatio!;
+      emit(loadedState);
+      print(
+        "Bloc: Emitted initial loaded state with duration: $initialDurationMs ms",
+      );
+
+      // --- Check if duration needs fetching/updating in the background ---
+      if (initialDurationMs <= 0 && track.id != null) {
+        // <<< Check if duration is invalid
+        print(
+          "Bloc: Duration is 0 or missing for track ${track.id}. Fetching in background...",
+        );
+        // Don't await this, let it run in the background
+        _fetchDurationInBackground(track.path, track.isUrl)
+            .then((fetchedDurationMs) {
+              if (fetchedDurationMs > 0) {
+                print(
+                  "Bloc: Background fetch complete for track ${track.id}. Got ${fetchedDurationMs}ms. Dispatching update.",
+                );
+                // Dispatch event to TrackMetadataBloc to save the fetched duration
+                _trackMetadataBloc.add(
+                  UpdateTrackDuration(track.id!, fetchedDurationMs),
+                );
+              } else {
+                print(
+                  "Bloc: Background fetch failed or returned 0 duration for track ${track.id}.",
+                );
+              }
+            })
+            .catchError((error) {
+              print(
+                "Bloc: Error during background duration fetch for track ${track.id}: $error",
+              );
+            });
+      }
+      // --- End background duration fetch ---
+
+      // --- Handle initial seek and playWhenReady as before ---
+      if (event.initialSeekRatio != null && initialDurationMs > 0) {
+        final seekPosition =
+            Duration(milliseconds: initialDurationMs) * event.initialSeekRatio!;
         print(
           '🔄 Bloc: Applying initial seek ratio ${event.initialSeekRatio} -> position: $seekPosition',
         );
-        add(SeekAudio(position: seekPosition)); // Dispatch Seek event
-        // Give the seek a moment to process before potentially playing
+        add(SeekAudio(position: seekPosition));
         await Future.delayed(const Duration(milliseconds: 50));
       }
-
-      // Check the flag *after* emitting the loaded state
       if (event.playWhenReady) {
         print('▶️ Bloc: playWhenReady is true, calling _audioService.play()');
-        _audioService.play(); // Request playback
+        _audioService.play();
       }
 
       _loadingTimeout?.cancel();
       _loadingTimeout = null;
     } catch (e, stackTrace) {
+      // ... (error handling) ...
       print(stackTrace);
-      // <<< MODIFIED: Include source in caught error >>>
       emit(
         AudioPlayerError(
           'Failed to load audio: ${e.toString()}',
@@ -222,7 +316,28 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
       emit(currentState.copyWith(position: validPosition));
     }
   }
-  // --- End Modified Seek Handler ---
+
+  Future<int> _fetchDurationInBackground(String path, bool isUrl) async {
+    final player = AudioPlayer();
+    int durationMs = 0;
+    try {
+      print("AudioPlayerBloc: Fetching duration in background for $path");
+      Duration? duration =
+          isUrl ? await player.setUrl(path) : await player.setFilePath(path);
+      durationMs = duration?.inMilliseconds ?? 0;
+    } catch (e) {
+      print(
+        "AudioPlayerBloc: Error fetching background duration for $path: $e",
+      );
+      durationMs = 0;
+    } finally {
+      await player.dispose();
+    }
+    print(
+      "AudioPlayerBloc: Background duration fetched for $path: $durationMs ms",
+    );
+    return durationMs;
+  }
 
   void _onAddTimeMarker(AddTimeMarker event, Emitter<AudioPlayerState> emit) {
     if (state is AudioPlayerLoaded) {

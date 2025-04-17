@@ -277,7 +277,33 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
             onPressed: widget.onNextPressed, // Use callback from props
             tooltip: 'Next Track',
           ),
-          const SizedBox(width: 12),
+          // const SizedBox(width: 4),
+          IconButton(
+            icon: Icon(
+              playerState.isShuffleActive
+                  ? Icons
+                      .shuffle_on_outlined // Icon when shuffle is ON
+                  : Icons.shuffle, // Icon when shuffle is OFF
+            ),
+            iconSize: 20, // Adjust size as needed
+            color:
+                playerState.isShuffleActive
+                    ? Theme.of(context)
+                        .colorScheme
+                        .primary // Highlight color when ON
+                    : Theme.of(
+                      context,
+                    ).colorScheme.onSurfaceVariant, // Default color
+            tooltip:
+                playerState.isShuffleActive
+                    ? 'Disable Shuffle'
+                    : 'Enable Shuffle',
+            onPressed: () {
+              // Dispatch the toggle event to the BLoC
+              context.read<AudioPlayerBloc>().add(ToggleShuffle());
+            },
+          ),
+          const SizedBox(width: 12), // Add spacing before track info
           // Track Info
           Expanded(
             flex: 3, // Give more space to title/artist
@@ -310,15 +336,22 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
           const SizedBox(width: 12),
           // Time Display & Progress Bar
           Text(
-            _formatDuration(position),
+            _formatDuration(position), // Current position from playerState
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(width: 8),
           Expanded(
-            flex: 2, // Give progress bar reasonable space
+            flex: 2,
             child: LinearProgressIndicator(
-              value: progress,
-              minHeight: 3, // Slightly thicker
+              // >>> Use track.duration for progress calculation <<<
+              value:
+                  widget.track.duration > 0
+                      ? (position.inMilliseconds / widget.track.duration).clamp(
+                        0.0,
+                        1.0,
+                      )
+                      : 0.0,
+              minHeight: 3,
               backgroundColor: Theme.of(
                 context,
               ).colorScheme.onSurface.withOpacity(0.1),
@@ -329,7 +362,9 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
           ),
           const SizedBox(width: 8),
           Text(
-            _formatDuration(duration),
+            // >>> Use track.duration for total duration <<<
+            _formatDuration(Duration(milliseconds: widget.track.duration)),
+
             style: Theme.of(context).textTheme.bodySmall,
           ),
           // Expand button is part of the toggle bar now
@@ -697,8 +732,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                     }
                                   } else {
                                     // No marker area tapped - perform standard waveform seek
-                                    final tapRatio = (localPosition.dx /
-                                            size.width)
+                                    final tapRatio = ((localPosition.dx - 16) /
+                                            (size.width - 32))
                                         .clamp(0.0, 1.0);
                                     final seekPosition =
                                         playerState.duration * tapRatio;
@@ -909,8 +944,15 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(_formatDuration(position)),
-                      Text(_formatDuration(duration)),
+                      Text(
+                        _formatDuration(position),
+                      ), // Current position from playerState
+                      // >>> Use track.duration for total duration <<<
+                      Text(
+                        _formatDuration(
+                          Duration(milliseconds: widget.track.duration),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1084,219 +1126,6 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
     return "$twoDigitMinutes:$twoDigitSeconds";
   }
-
-  void _handleHover(
-    Offset localPosition,
-    List<TimeMarker> markers,
-    AudioPlayerLoaded playerState,
-  ) {
-    if (!mounted) return;
-
-    // --- Find the hovered marker (existing logic) ---
-    final RenderBox? box =
-        _waveformContainerKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return;
-
-    final containerWidth = box.size.width;
-    if (containerWidth <= 0) return;
-
-    final double hoverX = localPosition.dx;
-    const double hitTolerancePixels = 8.0; // Increased tolerance slightly
-
-    TimeMarker? newlyHoveredMarker;
-    for (final marker in markers) {
-      final markerX = marker.position * containerWidth;
-      if ((hoverX - markerX).abs() < hitTolerancePixels) {
-        newlyHoveredMarker = marker;
-        break;
-      }
-    }
-
-    // --- MODIFIED LOGIC ---
-    // Only update state IF a marker is actually hovered
-    if (newlyHoveredMarker != null) {
-      // _cancelHideOverlayTimer(); // Cancel timer if we hover over a marker
-      // Update state only if the marker changed or position changed significantly
-      if (_hoveredMarker != newlyHoveredMarker ||
-          (_hoverPosition != null &&
-              (localPosition - _hoverPosition!).distance > 2.0)) {
-        setState(() {
-          _hoveredMarker = newlyHoveredMarker;
-          _hoverPosition = localPosition;
-        });
-      }
-    }
-    // *** DO NOT clear _hoveredMarker here if newlyHoveredMarker is null ***
-    // The timer mechanism will handle clearing when the mouse leaves relevant areas.
-    // --- END MODIFIED LOGIC ---
-  }
-
-  // void _handleHoverExit() {
-  //   if (!mounted) return;
-  //   _startHideOverlayTimer(); // Start timer when leaving waveform container
-  // }
-
-  // Widget _buildHoverOverlay(AudioPlayerLoaded playerState) {
-  //   // if (_hoveredMarker == null || _hoverPosition == null) {
-  //   return Positioned(
-  //     left: 0,
-  //     top: 0,
-  //     child: Container(
-  //       width: 0,
-  //       height: 0,
-  //       color: Colors.orange.withOpacity(0.5),
-  //     ),
-  //   );
-  // }
-
-  // final RenderBox? box =
-  //     _waveformContainerKey.currentContext?.findRenderObject() as RenderBox?;
-  // if (box == null || !box.hasSize) return const SizedBox.shrink();
-  // final containerWidth = box.size.width;
-  // final markerX = _hoveredMarker!.position * containerWidth;
-
-  // // --- Configuration for the new overlay ---
-  // final double overlayHeight = 30.0; // Adjust height as needed
-  // final double playButtonWidth = 30.0;
-  // final double barWidth = 3.0; // Width of the visual bar in the overlay
-  // final double labelMinWidth = 60.0; // Minimum width for the label area
-  // final double horizontalPadding = 6.0;
-  // final double totalMinWidth =
-  //     playButtonWidth +
-  //     barWidth +
-  //     labelMinWidth +
-  //     (horizontalPadding * 2); // Rough estimate
-
-  // // Positioning logic (center the overlay horizontally over the marker position)
-  // double left = markerX - (totalMinWidth / 2);
-  // // Clamp position to stay within visible waveform bounds
-  // left = left.clamp(0, containerWidth - totalMinWidth);
-  // // Position slightly above the waveform center or at the top
-  // final double top = 5.0; // Position near the top, adjust as needed
-
-  // return Positioned(
-  //   left: left,
-  //   top: top,
-  //   // Width will adapt to content, but set minimum if needed
-  //   // width: totalMinWidth, // Or let it size automatically
-  //   height: overlayHeight,
-  //   child: MouseRegion(
-  //     // Keep mouse region to manage hover state via timer
-  //     onEnter: (_) => _cancelHideOverlayTimer(),
-  //     onExit: (_) => _startHideOverlayTimer(),
-  //     cursor: SystemMouseCursors.click,
-  //     child: Material(
-  //       elevation: 4.0,
-  //       borderRadius: BorderRadius.circular(6),
-  //       color: Theme.of(
-  //         context,
-  //       ).colorScheme.secondaryContainer.withOpacity(0.95),
-  //       child: GestureDetector(
-  //         // Make the whole area clickable for seeking
-  //         onTap: () {
-  //           print("Tapped overlay for marker: ${_hoveredMarker!.label}");
-  //           final seekPosition =
-  //               playerState.duration * _hoveredMarker!.position;
-  //           context.read<AudioPlayerBloc>().add(
-  //             SeekAudio(position: seekPosition),
-  //           );
-  //           // Optionally play if paused or just seek
-  //           if (!playerState.isPlaying) {
-  //             context.read<AudioPlayerBloc>().add(PlayAudio());
-  //           }
-  //           // Hide overlay after interaction
-  //           setState(() {
-  //             _hoveredMarker = null;
-  //             _hoverPosition = null;
-  //           });
-  //         },
-  //         child: Container(
-  //           // Container for padding
-  //           padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-  //           height: overlayHeight,
-  //           child: Row(
-  //             mainAxisSize: MainAxisSize.min, // Keep row tight
-  //             crossAxisAlignment: CrossAxisAlignment.center,
-  //             children: [
-  //               // 1. Play Button (Left)
-  //               IconButton(
-  //                 icon: Icon(
-  //                   Icons.play_arrow, // Use play_arrow or play_circle_outline
-  //                   color: Theme.of(context).colorScheme.onSecondaryContainer,
-  //                 ),
-  //                 iconSize: 18,
-  //                 padding: EdgeInsets.zero,
-  //                 constraints: const BoxConstraints(),
-  //                 tooltip: 'Play from "${_hoveredMarker!.label}"',
-  //                 onPressed: () {
-  //                   // Play button specifically plays
-  //                   print(
-  //                     "Tapped play button for marker: ${_hoveredMarker!.label}",
-  //                   );
-  //                   final seekPosition =
-  //                       playerState.duration * _hoveredMarker!.position;
-  //                   context.read<AudioPlayerBloc>().add(
-  //                     SeekAudio(position: seekPosition),
-  //                   );
-  //                   context.read<AudioPlayerBloc>().add(
-  //                     PlayAudio(),
-  //                   ); // Ensure it plays
-  //                   // Hide overlay after interaction
-  //                   setState(() {
-  //                     _hoveredMarker = null;
-  //                     _hoverPosition = null;
-  //                   });
-  //                 },
-  //               ),
-  //               const SizedBox(width: 4), // Spacer
-  //               // 2. Visual Marker Bar (Middle)
-  //               Container(
-  //                 width: barWidth,
-  //                 height:
-  //                     overlayHeight *
-  //                     0.6, // Make bar slightly shorter than overlay bg
-  //                 decoration: BoxDecoration(
-  //                   color:
-  //                       Theme.of(
-  //                         context,
-  //                       ).colorScheme.primary, // Use a distinct color
-  //                   borderRadius: BorderRadius.circular(barWidth / 2),
-  //                 ),
-  //               ),
-  //               const SizedBox(width: 4), // Spacer
-  //               // 3. Label (Right) - Expanded text
-  //               Flexible(
-  //                 // Use Flexible to allow text to take space
-  //                 child: Container(
-  //                   // Optional Container for label alignment/padding
-  //                   constraints: BoxConstraints(
-  //                     minWidth: labelMinWidth,
-  //                   ), // Ensure minimum space for label
-  //                   alignment: Alignment.centerLeft,
-  //                   child: Text(
-  //                     _hoveredMarker!.label, // Show full label on hover
-  //                     style: TextStyle(
-  //                       color:
-  //                           Theme.of(
-  //                             context,
-  //                           ).colorScheme.onSecondaryContainer,
-  //                       fontWeight: FontWeight.bold,
-  //                       fontSize: 13,
-  //                     ),
-  //                     textAlign: TextAlign.left, // Align text to the left
-  //                     overflow: TextOverflow.ellipsis,
-  //                     maxLines: 1,
-  //                   ),
-  //                 ),
-  //               ),
-  //             ],
-  //           ),
-  //         ),
-  //       ),
-  //     ),
-  //   ),
-  // );
-  // }
 
   // Add time tag at the current playback position
   void _addMarkerAtCurrentTime(AudioPlayerLoaded playerState) {

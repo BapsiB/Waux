@@ -110,17 +110,22 @@ class _HomeScreenState extends State<HomeScreen> {
       currentMinimumRating = trackDataState.minimumRating;
     }
 
+    // --- Get current shuffle state from AudioPlayerBloc ---
+    final audioPlayerState = context.read<AudioPlayerBloc>().state;
+    bool currentShuffleState = false; // Default to false
+    if (audioPlayerState is AudioPlayerLoaded) {
+      currentShuffleState = audioPlayerState.isShuffleActive;
+    }
+    // ----------------------------------------------------
+
     _trackSelectionHandler = TrackSelectionHandler(
       context: context,
       selectedTrackIds: _selectedTrackIds,
       anchorTrackId: _anchorTrackId,
       selectedTrackForPlayer: _selectedTrackForPlayer,
-      // currentlyLoadedPathInPlayer: _currentlyLoadedPathInPlayer, // Not directly needed by handler?
       sortColumnName: _sortColumnName,
       sortDirectionSf: _sortDirectionSf,
       currentlySelectedPlaylist: _currentlySelectedPlaylist,
-      // Pass the rating filter obtained from TrackDataBloc state if needed by handler logic
-      // minimumRating: currentMinimumRating, // Pass if handler needs it directly
     );
 
     _contextMenuHandler = ContextMenuHandler(
@@ -138,29 +143,42 @@ class _HomeScreenState extends State<HomeScreen> {
     _playerControlHandler = PlayerControlHandler(
       context: context,
       selectedTrackForPlayer: _selectedTrackForPlayer,
-      // Pass the function that gets the *currently displayed* tracks from the handler itself
       getCurrentDisplayedTracksFn:
           _trackSelectionHandler.getCurrentDisplayedTracks,
+      isShuffleActive: currentShuffleState, // <<< PASS SHUFFLE STATE HERE
     );
   }
 
-  // Listener for Audio Player state changes (mostly unchanged)
+  // Listener for Audio Player state changes
   void _setupAudioPlayerListener() {
     context.read<AudioPlayerBloc>().stream.listen((playerState) {
       if (!mounted) return;
       String? newPath;
+      bool shuffleStateChanged = false; // Track if shuffle state changed
+
       if (playerState is AudioPlayerLoaded) {
         newPath = playerState.currentSource;
+        // Check if shuffle state differs from the handler's current state
+        if (_playerControlHandler.isShuffleActive !=
+            playerState.isShuffleActive) {
+          shuffleStateChanged = true;
+        }
       } else if (playerState is! AudioPlayerLoading) {
         // Clear path if stopped, error, or initial
         newPath = null;
       }
+
       // Only update state if the path actually changed
-      if (_currentlyLoadedPathInPlayer != newPath) {
+      bool pathChanged = _currentlyLoadedPathInPlayer != newPath;
+      if (pathChanged) {
         setState(() {
           _currentlyLoadedPathInPlayer = newPath;
         });
-        _initializeHandlers(); // Re-initialize handlers if player path changes
+      }
+
+      // Re-initialize handlers if player path OR shuffle state changes
+      if (pathChanged || shuffleStateChanged) {
+        _initializeHandlers();
       }
     });
   }

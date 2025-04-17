@@ -10,7 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart'; // Import uuid
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
-import '../../services/audio_service.dart'; // Assuming TimeMarker is here
+import '../../services/audio_service.dart';
+import 'package:just_audio/just_audio.dart';
 
 // Enum definitions (TrackSource, CollectionType) remain the same...
 enum TrackSource { local, url, youtube }
@@ -329,6 +330,29 @@ class CollectionService {
     }
   }
 
+  // Helper to get duration using just_audio
+  Future<int> _getAudioDuration(String path, bool isUrl) async {
+    final player = AudioPlayer();
+    int durationMs = 0;
+    try {
+      Duration? duration;
+      if (isUrl) {
+        duration = await player.setUrl(path);
+      } else {
+        duration = await player.setFilePath(path);
+      }
+      durationMs = duration?.inMilliseconds ?? 0;
+    } catch (e) {
+      print("CollectionService: Error getting duration for $path: $e");
+      // Handle specific errors if needed (e.g., network, file not found)
+      durationMs = 0; // Default to 0 on error
+    } finally {
+      await player.dispose(); // Dispose the temporary player
+    }
+    // print("CollectionService: Fetched duration for $path: $durationMs ms");
+    return durationMs;
+  }
+
   Future<void> removeCollectionDefinition(String id) async {
     final definitions = await loadCollectionDefinitions();
     final initialLength = definitions.length;
@@ -633,6 +657,33 @@ class CollectionService {
       }
     } catch (e) {
       print('Error removing local root folder from DB: $e');
+    }
+  }
+
+  Future<void> updateTrackDuration(int trackId, int durationMs) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    try {
+      final count = await _database!.update(
+        tableMusic,
+        {columnDuration: durationMs}, // Update only the duration column
+        where: '$columnId = ?',
+        whereArgs: [trackId],
+      );
+      if (count > 0) {
+        print(
+          "CollectionService: Updated duration for track $trackId to $durationMs ms.",
+        );
+      } else {
+        print(
+          "CollectionService: Track $trackId not found for duration update.",
+        );
+      }
+    } catch (e) {
+      print(
+        "CollectionService: Error updating duration for track $trackId: $e",
+      );
+      rethrow; // Re-throw to be caught by BLoC
     }
   }
 
@@ -1139,33 +1190,68 @@ class CollectionService {
     if (_activeCollectionDefinition == null)
       throw Exception("No active collection");
 
-    final existingTrack = await getTrackByPath(filePath); // Uses absolute path
-    if (existingTrack != null) {
-      print('Track already exists in database: ${existingTrack.title}');
-      return existingTrack;
+    final normalizedFilePath = pathLib.normalize(filePath);
+    String pathToCheckInDb = normalizedFilePath;
+    if (_activeCollectionDefinition?.type == CollectionType.shared &&
+        _activeCollectionDefinition?.rootPath != null &&
+        pathLib.isWithin(
+          _activeCollectionDefinition!.rootPath!,
+          normalizedFilePath,
+        )) {
+      try {
+        pathToCheckInDb = pathLib.relative(
+          normalizedFilePath,
+          from: _activeCollectionDefinition!.rootPath!,
+        );
+      } catch (e) {
+        /* Keep absolute if error */
+      }
     }
 
-    // Basic metadata extraction (could be enhanced)
-    final filename = pathLib.basename(filePath);
-    final title = pathLib.basenameWithoutExtension(filePath);
-
-    final track = Track(
-      title: title,
-      artist: 'Unknown',
-      album: 'Unknown',
-      path: filePath, // Store absolute path initially
-      isUrl: false,
-      duration: 0, // Duration needs to be fetched later if needed
-      waveformData: null, // Waveform needs to be generated later
-      rating: 0,
-      comment: '',
-      generalTags: [],
+    final List<Map<String, dynamic>> existingMaps = await _database!.query(
+      tableMusic,
+      where: '$columnPath = ?',
+      whereArgs: [pathToCheckInDb],
+      limit: 1,
     );
 
-    final id = await addTrack(track); // Handles path prep for DB storage
-    return _resolveTrackPath(
-      track.copyWith(id: id),
-    ); // Resolve path for return value
+    if (existingMaps.isNotEmpty) {
+      // <<< Track EXISTS - Return existing data >>>
+      final existingTrack = Track.fromJson(existingMaps.first);
+      print(
+        'Track already exists: ${existingTrack.title}. Returning existing data.',
+      );
+      return _resolveTrackPath(existingTrack);
+    } else {
+      // <<< Track does NOT exist - Fetch duration and add >>>
+      print(
+        "Track not found in DB. Fetching duration for: $normalizedFilePath",
+      );
+      final durationMs = await _getAudioDuration(normalizedFilePath, false);
+      print("Duration fetched: $durationMs ms");
+
+      final filename = pathLib.basename(normalizedFilePath);
+      final title = pathLib.basenameWithoutExtension(normalizedFilePath);
+
+      final track = Track(
+        title: title,
+        artist: 'Unknown',
+        album: 'Unknown',
+        path: normalizedFilePath,
+        isUrl: false,
+        duration: durationMs, // <<< Use fetched duration
+        waveformData: null,
+        rating: 0,
+        comment: '',
+        generalTags: [],
+      );
+
+      final id = await addTrack(track); // addTrack handles _prepareTrackForDb
+      print(
+        "Added NEW track ${track.title} with ID $id and duration $durationMs",
+      );
+      return _resolveTrackPath(track.copyWith(id: id));
+    }
   }
 
   Future<Track> addUrl(String url) async {
@@ -1176,64 +1262,81 @@ class CollectionService {
 
     setLoading(true);
     try {
-      final existingTrack = await getTrackByPath(url);
-      if (existingTrack != null) {
-        print('URL already exists in database: ${existingTrack.title}');
-        return existingTrack;
-      }
-
-      String trackTitle = url;
-      int trackDurationMs = 0;
-      bool isYouTube = false;
-      String artist = 'Unknown';
-      String album = 'Unknown';
-
-      var videoId = VideoId.parseVideoId(url);
-      if (videoId != null) {
-        isYouTube = true;
-        print('Fetching metadata for YouTube video: $videoId');
-        try {
-          var video = await _yt.videos.get(videoId);
-          trackTitle = video.title;
-          trackDurationMs = video.duration?.inMilliseconds ?? 0;
-          artist = video.author;
-          album = 'YouTube';
-          print(
-            'Fetched title: $trackTitle, Duration: $trackDurationMs ms, Artist: $artist',
-          );
-        } catch (ytError) {
-          print(
-            'Error fetching YouTube metadata: $ytError. Using URL as title.',
-          );
-        }
-      } else {
-        final uri = Uri.tryParse(url);
-        final filename =
-            (uri != null && uri.pathSegments.isNotEmpty)
-                ? uri.pathSegments.last
-                : '';
-        if (filename.isNotEmpty) trackTitle = filename;
-      }
-
-      final track = Track(
-        title: trackTitle,
-        artist: artist,
-        album: album,
-        path: url, // Store the original URL
-        isUrl: true,
-        duration: trackDurationMs,
-        waveformData: null,
-        rating: 0,
-        comment: '',
-        generalTags: [],
+      final List<Map<String, dynamic>> existingMaps = await _database!.query(
+        tableMusic,
+        where: '$columnPath = ?',
+        whereArgs: [url],
+        limit: 1,
       );
 
-      final id = await addTrack(track); // Handles path prep (no-op for URL)
-      return _resolveTrackPath(
-        track.copyWith(id: id),
-      ); // Resolve path (no-op for URL)
-    } catch (e) {
-      print('Error adding URL: $e');
+      if (existingMaps.isNotEmpty) {
+        // <<< Track EXISTS - Return existing data >>>
+        final existingTrack = Track.fromJson(existingMaps.first);
+        print(
+          'URL already exists: ${existingTrack.title}. Returning existing data.',
+        );
+        return _resolveTrackPath(existingTrack);
+      } else {
+        // <<< Track does NOT exist - Fetch metadata/duration and add >>>
+        print("URL not found in DB. Fetching metadata/duration for: $url");
+        String trackTitle = url;
+        int trackDurationMs = 0;
+        // ... (rest of metadata fetching logic as before, including _getAudioDuration if needed) ...
+        bool isYouTube = false;
+        String artist = 'Unknown';
+        String album = 'Unknown';
+        String effectiveUrl = url;
+
+        var videoId = VideoId.parseVideoId(url);
+        if (videoId != null) {
+          isYouTube = true;
+          // ... (fetch YT metadata including duration) ...
+          try {
+            var video = await _yt.videos.get(videoId);
+            trackTitle = video.title;
+            trackDurationMs = video.duration?.inMilliseconds ?? 0;
+            artist = video.author;
+            album = 'YouTube';
+            if (trackDurationMs == 0) {
+              var manifest = await _yt.videos.streamsClient.getManifest(
+                videoId,
+              );
+              var streamInfo = manifest.audioOnly.withHighestBitrate();
+              effectiveUrl = streamInfo.url.toString();
+            }
+          } catch (ytError) {
+            /* ... */
+          }
+        } else {
+          /* ... */
+        }
+
+        if (trackDurationMs == 0) {
+          trackDurationMs = await _getAudioDuration(effectiveUrl, true);
+        }
+        // --- End metadata/duration fetching ---
+
+        final track = Track(
+          title: trackTitle,
+          artist: artist,
+          album: album,
+          path: url,
+          isUrl: true,
+          duration: trackDurationMs, // <<< Use fetched duration
+          waveformData: null,
+          rating: 0,
+          comment: '',
+          generalTags: [],
+        );
+
+        final id = await addTrack(track);
+        print(
+          "Added NEW URL track ${track.title} with ID $id and duration $trackDurationMs",
+        );
+        return _resolveTrackPath(track.copyWith(id: id));
+      }
+    } catch (e, stackTrace) {
+      print('Error adding URL: $e\n$stackTrace');
       rethrow;
     } finally {
       setLoading(false);

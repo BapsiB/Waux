@@ -124,6 +124,13 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       'allowSorting': false,
       'isNumeric': false,
     },
+    'duration': {
+      'width': 80.0, // Adjust width as needed
+      'visible': true, // Make it visible by default
+      'label': 'Duration',
+      'allowSorting': true, // Allow sorting by duration
+      'isNumeric': true, // Important for sorting
+    },
     'source': {
       'width': 60.0,
       'visible': true,
@@ -288,76 +295,6 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       print("Error saving column config in TrackTableWidget: $e");
       // Optionally show a snackbar or log the error
     }
-  }
-
-  // Shows the dialog to toggle column visibility
-  void _showColumnVisibilityDialog() {
-    Set<String> originalVisibleColumns = Set<String>.from(_visibleColumns);
-
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Show/Hide Columns'),
-              content: SizedBox(
-                width: 250,
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _defaultColumnConfig.length,
-                  itemBuilder: (context, index) {
-                    final columnName = _defaultColumnConfig.keys.elementAt(
-                      index,
-                    );
-                    final config = _defaultColumnConfig[columnName];
-                    if (columnName == 'id')
-                      return const SizedBox.shrink(); // Don't show 'id'
-
-                    return CheckboxListTile(
-                      title: Text(config['label']),
-                      value: _visibleColumns.contains(columnName),
-                      onChanged: (bool? newValue) {
-                        if (newValue != null) {
-                          setDialogState(() {
-                            if (newValue) {
-                              _visibleColumns.add(columnName);
-                            } else {
-                              _visibleColumns.remove(columnName);
-                            }
-                          });
-                          // NOTE: Rebuilding columns happens *after* dialog closes
-                        }
-                      },
-                    );
-                  },
-                ),
-              ),
-              actions: <Widget>[
-                TextButton(
-                  child: const Text('Done'),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    ).then((_) {
-      // After dialog closes
-      if (!const SetEquality().equals(
-        originalVisibleColumns,
-        _visibleColumns,
-      )) {
-        print("Column visibility changed, rebuilding columns and saving.");
-        // Rebuild columns based on the new visibility state
-        _buildGridColumnsFromState();
-        // Update the DataSource with the potentially new order
-        _trackDataSource.updateColumnOrder(_columnOrder);
-        // Save the configuration
-        _saveColumnConfiguration();
-      }
-    });
   }
 
   // Builds the GridColumn list based on the current state (_columnOrder, _visibleColumns, _columnWidths)

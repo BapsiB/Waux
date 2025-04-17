@@ -24,6 +24,36 @@ class TrackMetadataBloc extends Bloc<TrackMetadataEvent, TrackMetadataState> {
     on<AddTrackGeneralTag>(_onAddTrackGeneralTag);
     on<RemoveTrackGeneralTag>(_onRemoveTrackGeneralTag);
     on<UpdateTrackMarkers>(_onUpdateTrackMarkers);
+    on<UpdateTrackDuration>(_onUpdateTrackDuration);
+  }
+
+  Future<void> _onUpdateTrackDuration(
+    UpdateTrackDuration event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    // Emit updating state *only* if we want UI feedback during this specific update.
+    // Since it might happen in the background, maybe just success/error is enough.
+    // emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      await _collectionService.updateTrackDuration(
+        event.trackId,
+        event.durationMs,
+      );
+      // Emit success - the UI (e.g., HomeScreen) should listen for this
+      // and trigger a reload in TrackDataBloc to get the updated track list.
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+      print(
+        "TrackMetadataBloc: Duration update successful for track ${event.trackId}",
+      );
+    } catch (e) {
+      print('TrackMetadataBloc Error updating duration: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update duration: ${e.toString()}",
+        ),
+      );
+    }
   }
 
   Future<void> _onUpdateTrackMarkers(
