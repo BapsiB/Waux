@@ -40,32 +40,29 @@ class WaveformProcessingBloc
     // completion is determined by comparing processed vs total count.
 
     _trackDataSubscription = _trackDataBloc.stream.listen((trackDataState) {
+      // Listen for the specific state emitted by TrackDataBloc
       if (trackDataState is TrackDataProcessingNeeded &&
           trackDataState.addedTracks.isNotEmpty) {
         print(
           '[WaveformBloc] Detected TrackDataProcessingNeeded state with ${trackDataState.addedTracks.length} tracks.',
         );
-        // Prepare data for the service
-        final List<Map<String, String>> trackDataForService =
+
+        // Extract the necessary info (IDs) from the state
+        // Note: We assume TrackDataBloc already added tracks to the service queue
+        final List<String> trackIds =
             trackDataState.addedTracks
-                .where(
-                  (track) =>
-                      !track.isUrl && track.path.isNotEmpty && track.id != null,
-                )
-                .map(
-                  (track) => {'id': track.id!.toString(), 'path': track.path},
-                )
+                .where((track) => track.id != null)
+                .map((track) => track.id!.toString())
                 .toList();
 
-        if (trackDataForService.isNotEmpty) {
-          // Add tracks to the processing queue via the service
-          _waveformProcessingService.addTracksToQueue(trackDataForService);
+        final int totalTracks = trackIds.length; // Get count from the list
 
+        if (totalTracks > 0) {
           // Dispatch the BatchStarted event *to this BLoC*
           add(
             WaveformProcessingBatchStarted(
-              trackIds: trackDataForService.map((data) => data['id']!).toList(),
-              totalTracks: trackDataForService.length,
+              trackIds: trackIds,
+              totalTracks: totalTracks,
             ),
           );
           print('[WaveformBloc] Dispatched WaveformProcessingBatchStarted.');
@@ -73,11 +70,14 @@ class WaveformProcessingBloc
           // *** IMPORTANT: Trigger reload in TrackDataBloc *after* starting processing ***
           // This ensures the UI eventually settles back to TrackDataLoaded
           _trackDataBloc.add(ReloadDataPreservingFilters());
+          print(
+            '[WaveformBloc] Dispatched ReloadDataPreservingFilters to TrackDataBloc.',
+          );
         } else {
           print(
-            '[WaveformBloc] No valid tracks found in TrackDataProcessingNeeded state for waveform processing.',
+            '[WaveformBloc] TrackDataProcessingNeeded state had no valid track IDs. Reloading TrackDataBloc.',
           );
-          // If no tracks need processing, still need to ensure TrackDataBloc reloads
+          // If no tracks need processing based on the state event, still reload TrackDataBloc
           _trackDataBloc.add(ReloadDataPreservingFilters());
         }
       }

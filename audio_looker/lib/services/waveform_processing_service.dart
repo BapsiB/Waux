@@ -3,20 +3,21 @@
 import 'dart:async';
 import 'dart:isolate';
 import 'dart:collection'; // For Queue
-import 'dart:io'; // Needed for Directory/File access within static methods if used directly
+import 'dart:io'; // Needed for Directory/File access
+import 'dart:math'; // Required for pow, round, max, min
 import 'package:path/path.dart' as pathLib;
 
-// Import path_provider for getTemporaryDirectory used in static method
+// Import path_provider for getTemporaryDirectory
 import 'package:path_provider/path_provider.dart';
-// Import ffmpeg_kit_flutter for FFmpegKit/ReturnCode used in static method
+// Import ffmpeg_kit_flutter and ffprobe_kit_flutter
 import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter/return_code.dart';
+import 'package:ffmpeg_kit_flutter/media_information.dart';
+import 'package:ffmpeg_kit_flutter/media_information_session.dart'; // Ensure this import is present
 
-import 'package:flutter/services.dart';
-// import '../models/track.dart'; // Adjust path as needed
-
-// Import the AudioService to call the static method
-import 'audio_service.dart'; // Adjust path as needed
+// Import the AudioService to call the static method - needed for the isolate entry point
+import 'audio_service.dart'; // Adjust path as needed - needed if _processWaveformFileIsolateEntry uses it
 
 // Define a class to represent updates from the service
 class WaveformProcessingUpdate {
@@ -36,25 +37,22 @@ class WaveformProcessingUpdate {
 
 class WaveformProcessingService {
   // Queue to hold track information for processing
-  // Using a Map to easily store path along with ID
   final Queue<Map<String, String>> _processingQueue = Queue();
   bool _isProcessing = false;
-  ReceivePort? _receivePort;
-  Isolate? _isolate; // For simplicity, start with one isolate at a time
 
-  // StreamController to broadcast updates to listeners (e.g., WaveformProcessingBloc)
-  // Using broadcast so multiple listeners could potentially attach (though likely just one BLoC)
+  // Isolate/Port for DATA processing (parsing the text file)
+  ReceivePort? _dataProcessingReceivePort;
+  Isolate? _dataProcessingIsolate;
+
+  // StreamController to broadcast updates
   final _updateStreamController =
       StreamController<WaveformProcessingUpdate>.broadcast();
 
-  // Public stream for BLoCs or other parts of the app to listen to
+  // Public stream for listeners
   Stream<WaveformProcessingUpdate> get updates =>
       _updateStreamController.stream;
 
   // --- Public Methods ---
-
-  /// Adds a list of tracks to the processing queue.
-  /// Requires track ID and file path.
   void addTracksToQueue(List<Map<String, String>> tracks) {
     _processingQueue.addAll(tracks);
     print(
@@ -66,7 +64,6 @@ class WaveformProcessingService {
   // --- Internal Methods ---
 
   Future<void> _startProcessingNext() async {
-    // Make async
     if (_isProcessing || _processingQueue.isEmpty) {
       if (_processingQueue.isEmpty) {
         print('[WaveformService] Queue empty, processing finished for now.');
@@ -74,111 +71,164 @@ class WaveformProcessingService {
       return;
     }
     _isProcessing = true;
-    // ReceivePort? receivePort; // Define later if needed for isolate communication
 
     final trackInfo = _processingQueue.removeFirst();
     final trackId = trackInfo['id']!;
-    final filePath = trackInfo['path']!;
-    String? ffmpegOutputFile; // Path to the file FFmpeg creates
+    final inputFilePath = trackInfo['path']!;
+    String? ffmpegOutputFile; // For the astats output
 
     try {
       print(
-        '[WaveformService] Starting FFmpeg extraction for track: $trackId ($filePath)',
+        '[WaveformService] Step 1: Getting media info for track: $trackId ($inputFilePath)',
       );
 
-      // --- Execute FFmpeg in the MAIN isolate ---
-      final Directory tempDir = await getTemporaryDirectory();
-      ffmpegOutputFile =
-          '${tempDir.path}/waveform_data_$trackId.txt'; // Unique name per track
+      // --- Step 1: Get Media Information (Duration) using FFprobeKit ---
+      final MediaInformationSession sessionInfo =
+          await FFprobeKit.getMediaInformation(inputFilePath);
+      final MediaInformation? mediaInfo = sessionInfo.getMediaInformation();
+      final String? durationString = mediaInfo?.getDuration();
 
-      // Ensure output dir exists
+      if (durationString == null) {
+        throw Exception('Could not get duration from media information.');
+      }
+      final double durationSeconds = double.tryParse(durationString) ?? 0.0;
+      if (durationSeconds <= 0) {
+        throw Exception(
+          'Invalid duration ($durationSeconds) obtained from media information.',
+        );
+      }
+      print(
+        '[WaveformService] Duration found: ${durationSeconds.toStringAsFixed(2)}s',
+      );
+
+      // --- Step 2: Calculate Target Sample Rate for ~1024 points ---
+      const int desiredPoints = 1024;
+      const int fixedSamplesPerSegment =
+          200; // Keep analysis window size fixed (e.g., 200 samples)
+      final double targetTotalSamples =
+          (desiredPoints * fixedSamplesPerSegment).toDouble();
+      int targetSampleRate = (targetTotalSamples / durationSeconds).round();
+      targetSampleRate = targetSampleRate.clamp(500, 48000); // Clamp rate
+
+      print(
+        '[WaveformService] Calculated targetSampleRate: $targetSampleRate Hz for ~1024 points with fixed segment size $fixedSamplesPerSegment',
+      );
+
+      // --- Step 3: Prepare and Run FFmpeg with calculated sample rate ---
+      final Directory tempDir = await getTemporaryDirectory();
+      ffmpegOutputFile = '${tempDir.path}/waveform_data_$trackId.txt';
+
       final outputDir = Directory(pathLib.dirname(ffmpegOutputFile));
       if (!await outputDir.exists()) {
         await outputDir.create(recursive: true);
       }
 
-      final session = await FFmpegKit.execute(
-        '-y -i "$filePath" -ac 1 -filter:a aresample=8000 -map 0:a -c:a pcm_s16le -f data "$ffmpegOutputFile"',
+      final String ffmpegCommand =
+          '-i "$inputFilePath" '
+          '-af "aresample=$targetSampleRate,asetnsamples=$fixedSamplesPerSegment,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.Peak_level:file=\'$ffmpegOutputFile\'" '
+          '-f null -';
+
+      print(
+        '[WaveformService] Step 3: Executing FFmpeg command: $ffmpegCommand',
       );
-      final returnCode = await session.getReturnCode();
+      final sessionExec = await FFmpegKit.execute(ffmpegCommand);
+      final returnCode = await sessionExec.getReturnCode();
+      final ffmpegReturnCodeValue = returnCode?.getValue();
 
       if (ReturnCode.isSuccess(returnCode)) {
         print(
-          '[WaveformService] FFmpeg success for $trackId. Spawning isolate for processing.',
+          '[WaveformService] FFmpeg astats SUCCESS for $trackId. Spawning data processing isolate.',
         );
-        // --- FFmpeg Success: Spawn Isolate to Process Data File ---
-
-        ReceivePort receivePort =
-            ReceivePort(); // Create receive port for this isolate
-        _receivePort = receivePort; // Store it for cleanup
-
-        final isolateData = {
-          'sendPort': receivePort.sendPort,
-          'trackId': trackId,
-          // Pass the path to the FFmpeg output file, NOT the original audio file path
-          'dataFilePath': ffmpegOutputFile,
-        };
-
-        _isolate = await Isolate.spawn(
-          _processWaveformFileIsolateEntry, // Use a new entry point
-          isolateData,
-        );
-
-        receivePort.listen((message) {
-          _handleIsolateResult(message as Map<String, dynamic>);
-          _cleanUpAfterProcessing(); // Clean up port/isolate
-          _startProcessingNext(); // Process next item
-        });
-        // --- End Isolate Spawning ---
+        // *** Call the method defined below ***
+        _spawnDataProcessingIsolate(trackId, ffmpegOutputFile);
       } else {
         // --- FFmpeg Failure ---
         print(
-          '[WaveformService] FFmpeg failed for $trackId. Code: ${returnCode?.getValue()}',
+          '[WaveformService] FFmpeg astats FAILED for $trackId. Code: $ffmpegReturnCodeValue',
         );
-        final logs = await session.getLogsAsString();
+        final logs = await sessionExec.getLogsAsString();
         print("[WaveformService] FFmpeg Logs:\n$logs");
-
-        // Clean up potentially created (but empty/invalid) output file
-        if (ffmpegOutputFile != null) {
-          final file = File(ffmpegOutputFile);
-          if (await file.exists()) await file.delete();
-        }
-
-        _handleIsolateResult({
-          // Report failure back
-          'status': 'error',
-          'trackId': trackId,
-          'error': 'FFmpeg extraction failed (Code: ${returnCode?.getValue()})',
-        });
-        _isProcessing = false; // Reset flag
-        _startProcessingNext(); // Try next item
+        _cleanupTempFile(ffmpegOutputFile);
+        _reportError(
+          trackId,
+          'FFmpeg processing failed (Code: $ffmpegReturnCodeValue)',
+        );
+        _finalizeProcessingStep();
       }
     } catch (error, stackTrace) {
+      // Catch errors from ffprobe or ffmpeg setup/execution
       print(
-        '[WaveformService] Error during FFmpeg execution/Isolate setup: $error\n$stackTrace',
+        '[WaveformService] Error during processing for $trackId: $error\n$stackTrace',
       );
-      // Clean up temp file if path exists
-      if (ffmpegOutputFile != null) {
-        try {
-          final file = File(ffmpegOutputFile);
-          if (await file.exists()) await file.delete();
-        } catch (_) {}
-      }
-      _handleIsolateResult({
-        'status': 'error',
-        'trackId': trackId,
-        'error': 'WaveformService error: ${error.toString()}',
-      });
-      _isProcessing = false; // Reset flag
-      _cleanUpAfterProcessing(); // Clean up any potential isolate/port
-      _startProcessingNext(); // Attempt next item
+      _cleanupTempFile(ffmpegOutputFile);
+      _reportError(trackId, 'WaveformService error: ${error.toString()}');
+      _finalizeProcessingStep();
     }
   }
 
-  /// Handles messages received from the isolate.
-  void _handleIsolateResult(Map<String, dynamic> result) {
+  // --- Helper Methods (Now explicitly included) ---
+
+  /// Spawns the isolate to process the text data file generated by FFmpeg.
+  void _spawnDataProcessingIsolate(String trackId, String dataFilePath) {
+    _cleanupDataProcessingResources(); // Clean up previous ones if any
+    _dataProcessingReceivePort = ReceivePort();
+
+    final isolateData = {
+      'sendPort': _dataProcessingReceivePort!.sendPort,
+      'trackId': trackId,
+      'dataFilePath': dataFilePath, // Path to the TEXT file
+    };
+
+    print(
+      '[WaveformService] Spawning data processing isolate for $trackId with file: $dataFilePath',
+    );
+    Isolate.spawn(
+          _processWaveformFileIsolateEntry, // Static function defined below
+          isolateData,
+          onError: _dataProcessingReceivePort!.sendPort,
+          onExit: _dataProcessingReceivePort!.sendPort,
+        )
+        .then((isolate) {
+          _dataProcessingIsolate = isolate;
+          print(
+            '[WaveformService] Data processing isolate spawned for $trackId.',
+          );
+        })
+        .catchError((error, stackTrace) {
+          print(
+            '[WaveformService] Failed to spawn data processing isolate for $trackId: $error\n$stackTrace',
+          );
+          _cleanupTempFile(dataFilePath);
+          _reportError(trackId, 'Failed to start data processing.');
+          _finalizeProcessingStep();
+        });
+
+    _dataProcessingReceivePort!.listen((message) {
+      if (message is Map<String, dynamic>) {
+        _handleDataProcessingIsolateResult(message);
+      } else {
+        print(
+          '[WaveformService] Received unexpected message from data isolate for $trackId: $message',
+        );
+        _reportError(
+          trackId,
+          'Unexpected result from data processing isolate.',
+        );
+      }
+      _cleanupDataProcessingResources();
+      _finalizeProcessingStep();
+    });
+  }
+
+  /// Handles messages received from the DATA PROCESSING isolate.
+  void _handleDataProcessingIsolateResult(Map<String, dynamic> result) {
     final trackId = result['trackId'] as String;
-    final status = result['status'] as String;
+    final status = result['status'] as String?;
+
+    print(
+      '[WaveformService] Received result from DATA processing isolate for $trackId: Status=$status',
+    );
+
     if (status == 'success') {
       final waveformData = (result['waveformData'] as List?)?.cast<double>();
       _updateStreamController.add(
@@ -188,152 +238,183 @@ class WaveformProcessingService {
           isCompletionUpdate: true,
         ),
       );
+      print('[WaveformService] Data processing SUCCESS for $trackId.');
     } else {
       final errorMsg =
-          result['error'] as String? ?? 'Unknown error from isolate';
-      _updateStreamController.add(
-        WaveformProcessingUpdate(
-          trackId: trackId,
-          error: errorMsg,
-          isCompletionUpdate: true,
-        ),
-      );
+          result['error'] as String? ??
+          'Unknown error from data processing isolate';
+      _reportError(trackId, errorMsg);
+      print('[WaveformService] Data processing FAILED for $trackId: $errorMsg');
     }
   }
 
-  static Future<void> _processWaveformFileIsolateEntry(
-    Map<String, dynamic> message,
-  ) async {
-    final SendPort sendPort = message['sendPort'] as SendPort;
-    final String trackId = message['trackId'] as String;
-    final String dataFilePath =
-        message['dataFilePath'] as String; // Path to the FFmpeg output
+  /// Reports an error via the stream controller.
+  void _reportError(String trackId, String errorMsg) {
+    _updateStreamController.add(
+      WaveformProcessingUpdate(
+        trackId: trackId,
+        error: errorMsg,
+        isCompletionUpdate: true,
+      ),
+    );
+  }
 
-    // NO Platform channels needed here!
-
-    try {
-      print('[Isolate $trackId] Processing data file: $dataFilePath');
-      // Call the static helper from AudioService (or move the logic here)
-      final List<double>? waveformData =
-          await AudioService.processWaveformBytesFromFile(dataFilePath);
-
-      // Clean up the data file *after* processing
+  /// Cleans up a temporary file if it exists.
+  Future<void> _cleanupTempFile(String? filePath) async {
+    if (filePath != null) {
       try {
-        final file = File(dataFilePath);
+        final file = File(filePath);
         if (await file.exists()) {
           await file.delete();
-          print('[Isolate $trackId] Deleted temp data file: $dataFilePath');
+          print('[WaveformService] Cleaned up temp file: $filePath');
         }
       } catch (e) {
         print(
-          '[Isolate $trackId] Warning: Failed to delete temp data file $dataFilePath: $e',
+          '[WaveformService] Warning: Failed to clean up temp file $filePath: $e',
         );
       }
-
-      if (waveformData != null) {
-        print('[Isolate $trackId] Processing successful. Sending data back.');
-        sendPort.send({
-          'status': 'success',
-          'trackId': trackId,
-          'waveformData': waveformData,
-        });
-      } else {
-        print(
-          '[Isolate $trackId] Processing failed (returned null). Sending error back.',
-        );
-        sendPort.send({
-          'status': 'error',
-          'trackId': trackId,
-          'error': 'Waveform data processing failed.',
-        });
-      }
-    } catch (e, stackTrace) {
-      print(
-        '[Isolate $trackId] Unexpected error during data processing: $e\n$stackTrace',
-      );
-      // Attempt cleanup even on error
-      try {
-        File(dataFilePath).deleteSync();
-      } catch (_) {}
-      sendPort.send({
-        'status': 'error',
-        'trackId': trackId,
-        'error': 'Isolate processing error: ${e.toString()}',
-      });
     }
   }
 
-  void _cleanUpAfterProcessing() {
-    _receivePort?.close();
-    _receivePort = null;
-    _isolate = null;
+  /// Finalizes the current processing step and attempts to start the next.
+  void _finalizeProcessingStep() {
     _isProcessing = false;
-    print('[WaveformService] Cleaned up resources.');
+    print('[WaveformService] Finalized processing step. Checking queue...');
+    _startProcessingNext();
+  }
+
+  /// Cleans up resources associated with the data processing isolate.
+  void _cleanupDataProcessingResources() {
+    try {
+      _dataProcessingReceivePort?.close();
+      print('[WaveformService] Data processing receive port closed.');
+    } catch (e) {
+      print('[WaveformService] Error closing data processing receive port: $e');
+    }
+    try {
+      _dataProcessingIsolate?.kill(priority: Isolate.immediate);
+      print('[WaveformService] Data processing isolate killed.');
+    } catch (e) {
+      print('[WaveformService] Error killing data processing isolate: $e');
+    }
+    _dataProcessingReceivePort = null;
+    _dataProcessingIsolate = null;
+    print('[WaveformService] Cleaned up data processing resources.');
   }
 
   void dispose() {
-    _isolate?.kill(priority: Isolate.immediate);
-    _receivePort?.close();
+    print('[WaveformService] Disposing...');
+    _cleanupDataProcessingResources(); // Clean up active resources
     _updateStreamController.close();
+    _processingQueue.clear();
     print('[WaveformService] Disposed.');
   }
+} // End of WaveformProcessingService class
+
+// --- Static Isolate Entry Point (defined outside the class) ---
+
+/// Isolate entry point for processing the waveform data file (PARSING TEXT NOW).
+Future<void> _processWaveformFileIsolateEntry(
+  Map<String, dynamic> message,
+) async {
+  final SendPort sendPort = message['sendPort'] as SendPort;
+  final String trackId = message['trackId'] as String;
+  final String dataFilePath =
+      message['dataFilePath'] as String; // This is now a TEXT file path
+
+  List<double> waveformData = [];
+  // Regex to find the peak level value (e.g., lavfi.astats.Overall.Peak_level=-12.345)
+  final RegExp peakLevelRegex = RegExp(
+    r"lavfi\.astats\.Overall\.Peak_level=([-\d\.]+|inf|-inf)",
+  );
+
+  try {
+    print('[Data Isolate $trackId] Parsing astats data file: $dataFilePath');
+    final file = File(dataFilePath);
+
+    if (!await file.exists()) {
+      print(
+        '[Data Isolate $trackId] Error: astats data file not found at: $dataFilePath',
+      );
+      throw Exception('FFmpeg output file not found.');
+    }
+
+    // *** CORRECTED CODE HERE: await the Future, then use standard for loop ***
+    final List<String> lines =
+        await file.readAsLines(); // Get the list of lines
+    for (String line in lines) {
+      // Iterate over the list
+      // --- Loop body remains the same ---
+      final match = peakLevelRegex.firstMatch(line);
+      if (match != null) {
+        final String dbValueString = match.group(1)!;
+        double dbValue;
+
+        // Handle negative infinity (silence)
+        if (dbValueString == '-inf' || dbValueString == 'inf') {
+          dbValue = -120.0; // Treat silence as very low dB
+        } else {
+          dbValue = double.tryParse(dbValueString) ?? -120.0;
+        }
+
+        // Convert dBFS to linear amplitude (0.0 to 1.0)
+        double clampedDb = dbValue.clamp(-60.0, 0.0);
+        double linearValue = pow(10, clampedDb / 20).toDouble();
+
+        waveformData.add(linearValue);
+      }
+      // --- End of loop body ---
+    }
+
+    print('[Data Isolate $trackId] Parsed ${waveformData.length} data points.');
+
+    // Clean up the temporary text data file *inside the isolate*
+    try {
+      await file.delete();
+      print('[Data Isolate $trackId] Deleted astats data file: $dataFilePath');
+    } catch (e) {
+      print(
+        '[Data Isolate $trackId] Warning: Failed to delete astats data file $dataFilePath: $e',
+      );
+    }
+
+    if (waveformData.isNotEmpty) {
+      print('[Data Isolate $trackId] Parsing successful. Sending data back.');
+      sendPort.send({
+        'status': 'success',
+        'trackId': trackId,
+        'waveformData': waveformData,
+      });
+    } else {
+      print(
+        '[Data Isolate $trackId] Processing failed (no data points parsed). Sending error back.',
+      );
+      sendPort.send({
+        'status': 'error',
+        'trackId': trackId,
+        'error':
+            'Waveform data processing failed (no points parsed from FFmpeg output).',
+      });
+    }
+  } catch (e, stackTrace) {
+    print(
+      '[Data Isolate $trackId] Unexpected error during astats data processing: $e\n$stackTrace',
+    );
+    // Attempt cleanup even on unexpected error
+    try {
+      final file = File(dataFilePath);
+      if (await file.exists()) {
+        await file.delete();
+        print(
+          '[Data Isolate $trackId] Deleted astats data file after error: $dataFilePath',
+        );
+      }
+    } catch (_) {}
+
+    sendPort.send({
+      'status': 'error',
+      'trackId': trackId,
+      'error': 'Isolate data processing error: ${e.toString()}',
+    });
+  }
 }
-
-// --- Isolate Entry Point ---
-
-// Future<void> _calculateWaveformIsolateEntry(
-//   Map<String, dynamic> message,
-// ) async {
-//   final SendPort sendPort = message['sendPort'] as SendPort;
-//   final String trackId = message['trackId'] as String;
-//   final String filePath = message['filePath'] as String;
-//   final String tempPath =
-//       message['tempPath'] as String; // <<< RECEIVE temp path string
-//   // <<< RECEIVE token
-
-//   // <<< INITIALIZE BackgroundIsolateBinaryMessenger >>>
-//   // BackgroundIsolateBinaryMessenger.ensureInitialized(rootToken);
-//   // print('[Isolate $trackId] BackgroundIsolateBinaryMessenger initialized.');
-//   // <<< END INITIALIZATION >>>
-
-//   // Ensure necessary plugins are initialized for the isolate if needed
-//   // WidgetsFlutterBinding.ensureInitialized(); // Usually not needed/allowed in isolates
-//   // Might need specific initialization for plugins like ffmpeg if they require it per-isolate
-
-//   try {
-//     print(
-//       '[Isolate $trackId] Calling AudioService.extractAndProcessWaveform for $filePath...',
-//     );
-//     // final tempDir = await getTemporaryDirectory();
-//     // This call should now succeed because path_provider can communicate
-//     final List<double>? waveformData =
-//         await AudioService.extractAndProcessWaveform(filePath, tempPath);
-
-//     if (waveformData != null) {
-//       print('[Isolate $trackId] Calculation successful. Sending data back.');
-//       sendPort.send({
-//         'status': 'success',
-//         'trackId': trackId,
-//         'waveformData': waveformData,
-//       });
-//     } else {
-//       print(
-//         '[Isolate $trackId] Calculation failed (returned null). Sending error back.',
-//       );
-//       sendPort.send({
-//         'status': 'error',
-//         'trackId': trackId,
-//         'error': 'Waveform extraction failed or produced no data.',
-//       });
-//     }
-//   } catch (e, stackTrace) {
-//     print(
-//       '[Isolate $trackId] Unexpected error during waveform calculation call: $e\n$stackTrace',
-//     );
-//     sendPort.send({
-//       'status': 'error',
-//       'trackId': trackId,
-//       'error': 'Isolate unexpected error: ${e.toString()}',
-//     });
-//   }
-// }

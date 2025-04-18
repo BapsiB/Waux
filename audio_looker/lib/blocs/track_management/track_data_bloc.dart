@@ -343,21 +343,26 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
                 .toList();
 
         if (trackDataForService.isNotEmpty) {
-          // 2. Add tracks to the processing queue
+          // Add tracks to the service queue
           _waveformProcessingService.addTracksToQueue(trackDataForService);
-
-          // 3. Notify the WaveformProcessingBloc that a batch has started
-          // final List<String> trackIds =
-          //     trackDataForService.map((data) => data['id']!).toList();
-          // _waveformProcessingBloc.add(
-          //   WaveformProcessingBatchStarted(
-          //     trackIds: trackIds,
-          //     totalTracks: trackDataForService.length,
-          //   ),
-          // );
           print(
             '[TrackDataBloc] Added ${trackDataForService.length} tracks to waveform queue.',
           );
+
+          // *** Emit the state to signal processing is needed ***
+          // Capture current loaded data to include in the new state
+          final currentTracks = _getTracksFromState();
+          final currentRoots = _getRootFoldersFromState();
+          emit(
+            TrackDataProcessingNeeded(
+              addedTracks: addedOrFoundTracks,
+              tracks: currentTracks, // Keep UI populated
+              rootFolders: currentRoots, // Keep UI populated
+              searchQuery: _lastSearchQuery,
+              minimumRating: _lastMinimumRating,
+            ),
+          );
+          print('[TrackDataBloc] Emitted TrackDataProcessingNeeded.');
         } else {
           print(
             '[TrackDataBloc] No valid tracks found needing waveform processing after add operation.',

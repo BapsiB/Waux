@@ -93,8 +93,8 @@ class TrackDataLoaded extends TrackDataState {
 }
 
 class TrackDataProcessingNeeded extends TrackDataState {
-  final List<Track> addedTracks;
-  // Include other fields from TrackDataLoaded for consistent UI
+  final List<Track> addedTracks; // Tracks needing waveform processing
+  // Include fields from TrackDataLoaded to maintain UI state
   final List<Track> tracks;
   final List<String> rootFolders;
   final String? searchQuery;

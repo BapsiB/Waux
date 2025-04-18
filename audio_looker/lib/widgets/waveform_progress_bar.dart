@@ -17,50 +17,56 @@ class WaveformProgressBar extends StatelessWidget {
       builder: (context, state) {
         // Only show the progress bar when processing is in progress
         if (state is WaveformProcessingInProgress) {
-          // Calculate percentage for display
           final percentage = (state.progress * 100).toStringAsFixed(0);
-
-          return Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16.0,
-              vertical: 8.0,
-            ),
-            color: Colors.blueGrey[700], // Example background color
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Processing waveforms... (${state.processedTracks}/${state.totalTracks})',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
+          // Add this BoxConstraints print
+          return SizedBox(
+            height: 50.0, // Or desired height for the progress bar area
+            child: Container(
+              // Your existing container
+              // No need for LayoutBuilder anymore if we set fixed height
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 8.0,
+              ),
+              color: Colors.blueGrey[700],
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment:
+                          MainAxisAlignment.center, // Center vertically
+                      children: [
+                        Text(
+                          'Processing waveforms... (${state.processedTracks}/${state.totalTracks})',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      LinearProgressIndicator(
-                        value: state.progress, // Value between 0.0 and 1.0
-                        backgroundColor: Colors.blueGrey[500],
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                          Colors.lightBlueAccent,
+                        const SizedBox(height: 4),
+                        LinearProgressIndicator(
+                          value: state.progress,
+                          backgroundColor: Colors.blueGrey[500],
+                          valueColor: const AlwaysStoppedAnimation<Color>(
+                            Colors.lightBlueAccent,
+                          ),
+                          minHeight: 6,
                         ),
-                        minHeight: 6, // Make it a bit thicker
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  '$percentage%',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+                  const SizedBox(width: 10),
+                  Text(
+                    '$percentage%',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         } else if (state is WaveformProcessingComplete) {
