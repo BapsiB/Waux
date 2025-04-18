@@ -44,6 +44,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     on<ReloadDataPreservingFilters>(_onReloadDataPreservingFilters);
     on<DeleteFolder>(_onDeleteFolder);
     on<ConfirmDeleteFolderFiles>(_onConfirmDeleteFolderFiles);
+    on<UpdateTrackWaveform>(_onUpdateTrackWaveform);
   }
 
   // --- Event Handlers ---
@@ -303,6 +304,38 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       print('TrackDataBloc ERROR: Exception in _onAddTracks: $e\n$stackTrace');
       emit(TrackDataError("Failed to add tracks: ${e.toString()}"));
     }
+  }
+
+  Future<void> _onUpdateTrackWaveform(
+    UpdateTrackWaveform event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    if (state is TrackDataLoaded) {
+      final currentState = state as TrackDataLoaded;
+      final List<Track> updatedTracks = List.from(currentState.tracks);
+      final trackIndex = updatedTracks.indexWhere((t) => t.id == event.trackId);
+
+      if (trackIndex != -1) {
+        // Create a new Track object with updated waveform data
+        // Assuming Track model has a `copyWith` method or similar constructor
+        final originalTrack = updatedTracks[trackIndex];
+        updatedTracks[trackIndex] = originalTrack.copyWith(
+          waveformData: event.waveformData,
+          // Potentially update a flag indicating waveform presence/absence if needed
+        );
+
+        // Emit the new state with the updated track list
+        emit(currentState.copyWith(tracks: updatedTracks));
+
+        // Optional: Persist the change if waveform data should be saved immediately
+        // await _collectionService.updateTrackWaveform(event.trackId, event.waveformData);
+        // Consider if persistence happens here or after the whole batch
+      } else {
+        // Handle case where track ID is not found (log warning, etc.)
+        print('Warning: Track ${event.trackId} not found for waveform update.');
+      }
+    }
+    // If state is not TrackDataLoaded, maybe log or ignore
   }
 
   Future<void> _onAddTrackUrl(

@@ -22,6 +22,19 @@ class SearchTracks extends TrackDataEvent {
   List<Object?> get props => [query];
 }
 
+class UpdateTrackWaveform extends TrackDataEvent {
+  final String trackId;
+  final List<double>? waveformData; // Use List<double>? or appropriate type
+
+  const UpdateTrackWaveform({
+    required this.trackId,
+    required this.waveformData,
+  });
+
+  @override
+  List<Object?> get props => [trackId, waveformData];
+}
+
 /// Event to set the minimum rating filter.
 class SetRatingFilter extends TrackDataEvent {
   final int? rating; // Nullable to represent "All"

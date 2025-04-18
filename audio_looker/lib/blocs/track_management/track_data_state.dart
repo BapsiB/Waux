@@ -56,6 +56,38 @@ class TrackDataLoaded extends TrackDataState {
     this.minimumRating,
   });
 
+  /// Creates a new instance of TrackDataLoaded with updated fields.
+  ///
+  /// Provide values for the fields you want to change. Fields left as null
+  /// will retain their current values from this instance.
+  TrackDataLoaded copyWith({
+    List<Track>? tracks,
+    List<String>? rootFolders,
+    String? searchQuery,
+    int? minimumRating,
+    bool?
+    forceSearchQueryToNull, // Helper to explicitly set searchQuery to null
+    bool?
+    forceMinimumRatingToNull, // Helper to explicitly set minimumRating to null
+  }) {
+    // Handle explicit null setting for nullable fields
+    final effectiveSearchQuery =
+        forceSearchQueryToNull ?? false
+            ? null
+            : (searchQuery ?? this.searchQuery);
+    final effectiveMinimumRating =
+        forceMinimumRatingToNull ?? false
+            ? null
+            : (minimumRating ?? this.minimumRating);
+
+    return TrackDataLoaded(
+      tracks: tracks ?? this.tracks,
+      rootFolders: rootFolders ?? this.rootFolders,
+      searchQuery: effectiveSearchQuery,
+      minimumRating: effectiveMinimumRating,
+    );
+  }
+
   @override
   List<Object?> get props => [tracks, rootFolders, searchQuery, minimumRating];
 }

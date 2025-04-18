@@ -367,195 +367,360 @@ class AudioService {
 
   // Add this instrumentation to your _extractWaveformFromFile method
 
-  Future<void> _extractWaveformFromFile(String filePath) async {
-    PerformanceProfiler.start('extractWaveform:total');
+  // static Future<List<double>?> extractWaveformFromFile(String filePath) async {
+  //   PerformanceProfiler.start('extractWaveform:total');
 
-    print('🔍 AudioService: Starting waveform extraction from file: $filePath');
+  //   print('🔍 AudioService: Starting waveform extraction from file: $filePath');
 
-    PerformanceProfiler.start('extractWaveform:getTemp');
-    final tempDir = await getTemporaryDirectory();
-    final outputFile = '${tempDir.path}/waveform_data.txt';
-    PerformanceProfiler.end('extractWaveform:getTemp');
+  //   PerformanceProfiler.start('extractWaveform:getTemp');
+  //   final tempDir = await getTemporaryDirectory();
+  //   final outputFile = '${tempDir.path}/waveform_data.txt';
+  //   PerformanceProfiler.end('extractWaveform:getTemp');
 
-    print('🔍 AudioService: Output file path: $outputFile');
+  //   print('🔍 AudioService: Output file path: $outputFile');
 
-    // Use FFmpeg Kit to extract audio data for waveform
-    print('🔍 AudioService: Running FFmpeg command');
+  //   // Use FFmpeg Kit to extract audio data for waveform
+  //   print('🔍 AudioService: Running FFmpeg command');
 
-    // Modify the FFmpeg command to add -y flag which forces overwrite
-    PerformanceProfiler.start('extractWaveform:ffmpeg');
-    final session = await FFmpegKit.execute(
-      '-y -i "$filePath" -ac 1 -filter:a aresample=8000 -map 0:a -c:a pcm_s16le -f data "$outputFile"',
-    );
-    PerformanceProfiler.end('extractWaveform:ffmpeg');
+  //   // Modify the FFmpeg command to add -y flag which forces overwrite
+  //   PerformanceProfiler.start('extractWaveform:ffmpeg');
+  //   final session = await FFmpegKit.execute(
+  //     '-y -i "$filePath" -ac 1 -filter:a aresample=8000 -map 0:a -c:a pcm_s16le -f data "$outputFile"',
+  //   );
+  //   PerformanceProfiler.end('extractWaveform:ffmpeg');
 
-    final returnCode = await session.getReturnCode();
-    print(
-      '🔍 AudioService: FFmpeg return code: ${returnCode?.getValue() ?? "unknown"}',
-    );
+  //   final returnCode = await session.getReturnCode();
+  //   print(
+  //     '🔍 AudioService: FFmpeg return code: ${returnCode?.getValue() ?? "unknown"}',
+  //   );
 
-    if (ReturnCode.isSuccess(returnCode)) {
-      print('✅ AudioService: FFmpeg succeeded, processing waveform data');
-      PerformanceProfiler.start('extractWaveform:process');
-      await _processWaveformData(outputFile);
-      PerformanceProfiler.end('extractWaveform:process');
-      print('✅ AudioService: Completed processing waveform data');
-    } else {
+  //   if (ReturnCode.isSuccess(returnCode)) {
+  //     print('✅ AudioService: FFmpeg succeeded, processing waveform data');
+  //     PerformanceProfiler.start('extractWaveform:process');
+  //     await _processWaveformData(outputFile);
+  //     PerformanceProfiler.end('extractWaveform:process');
+  //     print('✅ AudioService: Completed processing waveform data');
+  //   } else {
+  //     print(
+  //       '❌ AudioService: FFmpeg failed with return code: ${returnCode?.getValue() ?? "unknown"}',
+  //     );
+
+  //     // Get logs for debugging
+  //     PerformanceProfiler.start('extractWaveform:getLogs');
+  //     final logs = await session.getLogs();
+  //     for (final log in logs) {
+  //       print('❌ AudioService FFmpeg log: ${log.getMessage()}');
+  //     }
+  //     PerformanceProfiler.end('extractWaveform:getLogs');
+
+  //     // Use fallback method
+  //     print('🔍 AudioService: Using random waveform fallback');
+  //     PerformanceProfiler.start('extractWaveform:fallback');
+  //     _generateRandomWaveform();
+  //     if (_waveformData != null) {
+  //       print('🔍 AudioService: Adding random waveform data to stream');
+  //       _waveformController.add(_waveformData!);
+  //       print('✅ AudioService: Successfully added random waveform to stream');
+  //     }
+  //     PerformanceProfiler.end('extractWaveform:fallback');
+  //   }
+
+  //   final totalTime = PerformanceProfiler.end('extractWaveform:total');
+  //   print(
+  //     '⏱️ AudioService: Waveform extraction took ${totalTime.inMilliseconds}ms',
+  //   );
+  // }
+
+  static Future<List<double>?> _processWaveformBytes(
+    String dataFilePath,
+  ) async {
+    print('[Isolate] Processing waveform bytes from: $dataFilePath');
+    try {
+      final file = File(dataFilePath);
+      if (!await file.exists()) {
+        print(
+          '[Isolate] Error: Waveform data file not found at: $dataFilePath',
+        );
+        return null;
+      }
+
+      final bytes = await file.readAsBytes();
+      print('[Isolate] Read ${bytes.length} bytes.');
+
+      if (bytes.isEmpty) {
+        print('[Isolate] Warning: Waveform data file is empty.');
+        return null;
+      }
+
+      // Convert bytes to audio samples (16-bit PCM, little-endian)
+      List<double> samples = [];
+      for (int i = 0; i < bytes.length; i += 2) {
+        if (i + 1 < bytes.length) {
+          // Combine bytes (assuming little-endian)
+          int byte1 = bytes[i];
+          int byte2 = bytes[i + 1];
+          int sampleInt = (byte2 << 8) | byte1;
+          // Convert to signed value if necessary (adjust based on PCM format)
+          if (sampleInt > 32767) sampleInt -= 65536;
+          // Normalize to -1.0 to 1.0
+          samples.add(sampleInt / 32768.0);
+        }
+      }
+      print('[Isolate] Converted to ${samples.length} samples.');
+
+      if (samples.isEmpty) {
+        print('[Isolate] Warning: No samples generated after byte conversion.');
+        return null;
+      }
+
+      // Downsample for display (reduce to ~1000-1500 points)
+      const int targetLength = 1500; // Or adjust as needed
+      List<double> processedSamples;
+      if (samples.length > targetLength) {
+        final skipFactor =
+            (samples.length / targetLength)
+                .floor(); // Use floor for integer skip
+        if (skipFactor <= 0) {
+          print(
+            '[Isolate] Warning: Calculated skipFactor <= 0. Using absolute values directly.',
+          );
+          processedSamples = samples.map((s) => s.abs()).toList();
+        } else {
+          List<double> downsampled = [];
+          for (int i = 0; i < samples.length; i += skipFactor) {
+            double maxAmp = 0;
+            // Calculate end index, ensuring it doesn't exceed bounds
+            int end =
+                (i + skipFactor < samples.length)
+                    ? i + skipFactor
+                    : samples.length;
+            for (int j = i; j < end; j++) {
+              final amp = samples[j].abs();
+              if (amp > maxAmp) maxAmp = amp;
+            }
+            downsampled.add(maxAmp);
+          }
+          processedSamples = downsampled;
+        }
+      } else {
+        // If fewer samples than target, just use their absolute values
+        processedSamples = samples.map((s) => s.abs()).toList();
+      }
       print(
-        '❌ AudioService: FFmpeg failed with return code: ${returnCode?.getValue() ?? "unknown"}',
+        '[Isolate] Final processed waveform has ${processedSamples.length} points.',
       );
 
-      // Get logs for debugging
-      PerformanceProfiler.start('extractWaveform:getLogs');
-      final logs = await session.getLogs();
-      for (final log in logs) {
-        print('❌ AudioService FFmpeg log: ${log.getMessage()}');
-      }
-      PerformanceProfiler.end('extractWaveform:getLogs');
+      return processedSamples.isNotEmpty ? processedSamples : null;
+    } catch (e, stackTrace) {
+      print('[Isolate] Error processing waveform bytes: $e\n$stackTrace');
+      return null;
+    }
+  }
 
-      // Use fallback method
-      print('🔍 AudioService: Using random waveform fallback');
-      PerformanceProfiler.start('extractWaveform:fallback');
+  static Future<List<double>?> extractAndProcessWaveform(
+    String filePath,
+  ) async {
+    // ... (Implementation from previous response - runs FFmpeg, calls _processWaveformBytesFromFile) ...
+    print('[Static] Starting waveform extraction for: $filePath');
+    Directory? tempDir;
+    String? outputFile;
+
+    try {
+      // 1. Get Temporary Directory
+      try {
+        tempDir = await getTemporaryDirectory();
+        outputFile =
+            '${tempDir.path}/waveform_data_${DateTime.now().millisecondsSinceEpoch}.txt';
+        print('[Static] Temp output file: $outputFile');
+      } catch (e) {
+        print('[Static] Error getting temporary directory: $e');
+        return null;
+      }
+
+      // 2. Run FFmpeg
+      print('[Static] Running FFmpeg...');
+      final session = await FFmpegKit.execute(
+        '-y -i "$filePath" -ac 1 -filter:a aresample=8000 -map 0:a -c:a pcm_s16le -f data "$outputFile"',
+      );
+      final returnCode = await session.getReturnCode();
+      print(
+        '[Static] FFmpeg completed. Return code: ${returnCode?.getValue()}',
+      );
+
+      // 3. Check FFmpeg Result and Process Data
+      List<double>? waveformData = null;
+      if (ReturnCode.isSuccess(returnCode)) {
+        print('[Static] FFmpeg success. Processing data from $outputFile...');
+        waveformData = await _processWaveformBytesFromFile(outputFile);
+      } else {
+        print('[Static] FFmpeg failed.');
+        // Handle failure, maybe log session.getLogsAsString()
+      }
+
+      // 4. Clean up temp file (always attempt)
+      try {
+        final file = File(outputFile);
+        if (await file.exists()) {
+          await file.delete();
+          print('[Static] Deleted temp file: $outputFile');
+        }
+      } catch (e) {
+        print('[Static] Warning: Failed to delete temp file $outputFile: $e');
+      }
+
+      // 5. Return result (null if FFmpeg failed or processing failed)
+      return waveformData;
+    } catch (e, stackTrace) {
+      print(
+        '[Static] Unexpected error during waveform extraction: $e\n$stackTrace',
+      );
+      // Ensure cleanup on unexpected error
+      if (outputFile != null) {
+        try {
+          final file = File(outputFile);
+          if (await file.exists()) await file.delete();
+        } catch (_) {} // Ignore cleanup error
+      }
+      return null;
+    }
+  }
+
+  static Future<List<double>?> _processWaveformBytesFromFile(
+    String dataFilePath,
+  ) async {
+    // ... (Implementation from previous response - reads file, converts bytes, downsamples) ...
+    print('[Static Helper] Processing waveform bytes from: $dataFilePath');
+    try {
+      final file = File(dataFilePath);
+      if (!await file.exists()) {
+        print(
+          '[Static Helper] Error: Waveform data file not found at: $dataFilePath',
+        );
+        return null;
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return null; // Handle empty file
+
+      // Convert bytes to samples
+      List<double> samples = [];
+      // ... (byte conversion logic) ...
+      for (int i = 0; i < bytes.length; i += 2) {
+        if (i + 1 < bytes.length) {
+          int byte1 = bytes[i];
+          int byte2 = bytes[i + 1];
+          int sampleInt = (byte2 << 8) | byte1;
+          if (sampleInt > 32767) sampleInt -= 65536;
+          samples.add(sampleInt / 32768.0);
+        }
+      }
+      if (samples.isEmpty) return null; // Handle no samples
+
+      // Downsample
+      const int targetLength = 1500;
+      List<double> processedSamples;
+      // ... (downsampling logic) ...
+      if (samples.length > targetLength) {
+        final skipFactor = (samples.length / targetLength).floor();
+        if (skipFactor <= 0) {
+          processedSamples = samples.map((s) => s.abs()).toList();
+        } else {
+          List<double> downsampled = [];
+          for (int i = 0; i < samples.length; i += skipFactor) {
+            double maxAmp = 0;
+            int end =
+                (i + skipFactor < samples.length)
+                    ? i + skipFactor
+                    : samples.length;
+            for (int j = i; j < end; j++) {
+              final amp = samples[j].abs();
+              if (amp > maxAmp) maxAmp = amp;
+            }
+            downsampled.add(maxAmp);
+          }
+          processedSamples = downsampled;
+        }
+      } else {
+        processedSamples = samples.map((s) => s.abs()).toList();
+      }
+
+      return processedSamples.isNotEmpty ? processedSamples : null;
+    } catch (e, stackTrace) {
+      print('[Static Helper] Error processing waveform bytes: $e\n$stackTrace');
+      return null;
+    }
+  }
+
+  Future<void> _extractWaveformFromFile(String filePath) async {
+    PerformanceProfiler.start('extractWaveformInstance:total');
+    print(
+      '🔍 AudioService (Instance): Requesting waveform extraction for $filePath',
+    );
+
+    // Call the static method to do the actual work
+    final List<double>? extractedData =
+        await AudioService.extractAndProcessWaveform(filePath);
+
+    if (extractedData != null) {
+      print(
+        '✅ AudioService (Instance): Static extraction succeeded. Updating instance state.',
+      );
+      _waveformData = extractedData; // Update instance variable
+      _waveformController.add(_waveformData!); // Notify listeners
+    } else {
+      print(
+        '❌ AudioService (Instance): Static extraction failed. Using fallback.',
+      );
+      // Use fallback method (updates instance state)
       _generateRandomWaveform();
       if (_waveformData != null) {
-        print('🔍 AudioService: Adding random waveform data to stream');
         _waveformController.add(_waveformData!);
-        print('✅ AudioService: Successfully added random waveform to stream');
       }
-      PerformanceProfiler.end('extractWaveform:fallback');
     }
-
-    final totalTime = PerformanceProfiler.end('extractWaveform:total');
-    print(
-      '⏱️ AudioService: Waveform extraction took ${totalTime.inMilliseconds}ms',
-    );
+    PerformanceProfiler.end('extractWaveformInstance:total');
   }
 
   Future<void> _extractWaveformFromUrl(String url) async {
+    // This method might not be needed if loadAudio handles URL setting directly.
+    // If kept, it should likely also call the instance _extractWaveformFromFile
+    // after downloading, similar to how loadAudio works.
+    print(
+      '🔍 AudioService (Instance): Requesting waveform extraction for URL $url',
+    );
+    File? tempFile;
     try {
       // Download the file
       final response = await http.get(Uri.parse(url));
       final tempDir = await getTemporaryDirectory();
-      final tempFile = File('${tempDir.path}/temp_audio');
+      tempFile = File(
+        '${tempDir.path}/temp_audio_url_${DateTime.now().millisecondsSinceEpoch}',
+      );
       await tempFile.writeAsBytes(response.bodyBytes);
 
-      // Now extract waveform from the downloaded file
+      // Now extract waveform from the downloaded file using the instance method
       await _extractWaveformFromFile(tempFile.path);
     } catch (e) {
-      print('Error extracting waveform from URL: $e');
-
+      print(
+        '❌ AudioService (Instance): Error extracting waveform from URL: $e',
+      );
       // Use fallback method
       _generateRandomWaveform();
       if (_waveformData != null) {
         _waveformController.add(_waveformData!);
       }
-    }
-  }
-
-  // Add this instrumentation to your _processWaveformData method
-
-  Future<void> _processWaveformData(String dataFilePath) async {
-    PerformanceProfiler.start('processWaveform:total');
-
-    try {
-      print(
-        '🔍 AudioService: Starting to process waveform data from: $dataFilePath',
-      );
-
-      PerformanceProfiler.start('processWaveform:readFile');
-      final file = File(dataFilePath);
-      if (!await file.exists()) {
-        print('❌ AudioService: Waveform data file not found at: $dataFilePath');
-        throw Exception('Waveform data file not found');
-      }
-
-      final bytes = await file.readAsBytes();
-      PerformanceProfiler.end('processWaveform:readFile');
-
-      print(
-        '🔍 AudioService: Read ${bytes.length} bytes from waveform data file',
-      );
-
-      // Convert bytes to audio samples (16-bit PCM)
-      PerformanceProfiler.start('processWaveform:convert');
-      List<double> samples = [];
-      for (int i = 0; i < bytes.length; i += 2) {
-        if (i + 1 < bytes.length) {
-          // Combine bytes to form 16-bit sample
-          int sample = bytes[i] + (bytes[i + 1] << 8);
-          // Convert to signed value
-          if (sample > 32767) sample -= 65536;
-          // Normalize to -1.0 to 1.0
-          samples.add(sample / 32768.0);
-        }
-      }
-      PerformanceProfiler.end('processWaveform:convert');
-
-      print('Converted to ${samples.length} audio samples');
-
-      // Downsample for display (reduce to ~1000-2000 points for efficiency)
-      PerformanceProfiler.start('processWaveform:downsample');
-      const int targetLength = 1500;
-      if (samples.length > targetLength) {
-        final skipFactor = samples.length ~/ targetLength;
-        List<double> downsampled = [];
-
-        for (int i = 0; i < samples.length; i += skipFactor) {
-          // Find peak in this segment
-          double maxAmp = 0;
-          for (int j = i; j < i + skipFactor && j < samples.length; j++) {
-            final amp = samples[j].abs();
-            if (amp > maxAmp) maxAmp = amp;
-          }
-          downsampled.add(maxAmp);
-        }
-
-        _waveformData = downsampled;
-      } else {
-        // Convert to amplitude
-        _waveformData = samples.map((s) => s.abs()).toList();
-      }
-      PerformanceProfiler.end('processWaveform:downsample');
-
-      print('Final waveform has ${_waveformData?.length ?? 0} data points');
-
-      // Generate random waveform if data is empty or invalid
-      if (_waveformData == null || _waveformData!.isEmpty) {
-        print('Generated data was empty, using random fallback');
-        _generateRandomWaveform();
-      }
-
-      // Notify listeners
-      PerformanceProfiler.start('processWaveform:notify');
-      _waveformController.add(_waveformData!);
-      // Notify listeners
-      print('🔍 AudioService: Adding processed waveform data to stream');
-      _waveformController.add(_waveformData!);
-      PerformanceProfiler.end('processWaveform:notify');
-
-      print('✅ AudioService: Successfully added waveform data to stream');
-    } catch (e) {
-      print('❌ AudioService: Error processing waveform data: $e');
-
-      // Fallback to a random waveform on error
-      print(
-        '🔍 AudioService: Using random waveform fallback after processing error',
-      );
-      PerformanceProfiler.start('processWaveform:fallback');
-      _generateRandomWaveform();
-
-      // Notify listeners even on error
-      if (_waveformData != null) {
-        print('🔍 AudioService: Adding fallback waveform data to stream');
-        _waveformController.add(_waveformData!);
-        print('✅ AudioService: Successfully added fallback waveform to stream');
-      }
-      PerformanceProfiler.end('processWaveform:fallback');
     } finally {
-      final totalTime = PerformanceProfiler.end('processWaveform:total');
-      print(
-        '⏱️ AudioService: Processing waveform took ${totalTime.inMilliseconds}ms',
-      );
+      // Clean up downloaded file
+      try {
+        if (tempFile != null && await tempFile.exists()) {
+          await tempFile.delete();
+          print(
+            '🔍 AudioService (Instance): Deleted temp URL file: ${tempFile.path}',
+          );
+        }
+      } catch (e) {
+        print(
+          '⚠️ AudioService (Instance): Failed to delete temp URL file: ${tempFile?.path} - $e',
+        );
+      }
     }
   }
 
