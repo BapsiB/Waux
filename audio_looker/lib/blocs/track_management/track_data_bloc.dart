@@ -380,32 +380,73 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     UpdateTrackWaveform event,
     Emitter<TrackDataState> emit,
   ) async {
-    if (state is TrackDataLoaded) {
-      final currentState = state as TrackDataLoaded;
-      final List<Track> updatedTracks = List.from(currentState.tracks);
-      final trackIndex = updatedTracks.indexWhere((t) => t.id == event.trackId);
+    // Convert incoming trackId string to int for comparison
+    final int? targetTrackId = int.tryParse(event.trackId);
+    if (targetTrackId == null) {
+      print(
+        'Error: Invalid trackId received for waveform update: ${event.trackId}',
+      );
+      return; // Skip if ID is not a valid integer
+    }
+
+    final currentState = state; // Capture current state
+
+    // Log the state type and the ID we are looking for
+    print(
+      '[TrackDataBloc._onUpdateTrackWaveform] Received update for track ID: $targetTrackId. Current state: ${currentState.runtimeType}',
+    );
+
+    if (currentState is TrackDataLoaded) {
+      final List<Track> currentTracks = currentState.tracks;
+      // Log the IDs currently in the state
+      final currentTrackIds = currentTracks.map((t) => t.id).toList();
+      print(
+        '[TrackDataBloc._onUpdateTrackWaveform] Looking for ID $targetTrackId in IDs: $currentTrackIds',
+      );
+
+      final trackIndex = currentTracks.indexWhere((t) => t.id == targetTrackId);
 
       if (trackIndex != -1) {
-        // Create a new Track object with updated waveform data
-        // Assuming Track model has a `copyWith` method or similar constructor
+        print(
+          '[TrackDataBloc._onUpdateTrackWaveform] Track $targetTrackId FOUND at index $trackIndex.',
+        );
+        final List<Track> updatedTracks = List.from(
+          currentTracks,
+        ); // Create mutable copy
         final originalTrack = updatedTracks[trackIndex];
         updatedTracks[trackIndex] = originalTrack.copyWith(
           waveformData: event.waveformData,
-          // Potentially update a flag indicating waveform presence/absence if needed
         );
 
-        // Emit the new state with the updated track list
-        emit(currentState.copyWith(tracks: updatedTracks));
+        emit(
+          currentState.copyWith(tracks: updatedTracks),
+        ); // Emit the updated state
+        print(
+          '[TrackDataBloc._onUpdateTrackWaveform] Emitted updated state for track $targetTrackId.',
+        );
 
-        // Optional: Persist the change if waveform data should be saved immediately
-        // await _collectionService.updateTrackWaveform(event.trackId, event.waveformData);
-        // Consider if persistence happens here or after the whole batch
+        try {
+          await _collectionService.updateTrack(updatedTracks[trackIndex]);
+          print(
+            '[TrackDataBloc._onUpdateTrackWaveform] Persisted waveform for track $targetTrackId to DB.',
+          );
+        } catch (e) {
+          print(
+            '[TrackDataBloc._onUpdateTrackWaveform] Error persisting waveform for track $targetTrackId: $e',
+          );
+        }
       } else {
         // Handle case where track ID is not found (log warning, etc.)
-        print('Warning: Track ${event.trackId} not found for waveform update.');
+        print(
+          'Warning: Track $targetTrackId not found for waveform update in TrackDataLoaded state.',
+        );
       }
+    } else {
+      print(
+        'Warning: Received waveform update while state is not TrackDataLoaded (${currentState.runtimeType}). Ignoring update for now.',
+      );
+      // Optionally, you could store pending updates and apply them when TrackDataLoaded is reached.
     }
-    // If state is not TrackDataLoaded, maybe log or ignore
   }
 
   Future<void> _onAddTrackUrl(
