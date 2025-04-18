@@ -1072,6 +1072,9 @@ class _HomeScreenState extends State<HomeScreen> {
           BlocBuilder<TrackDataBloc, TrackDataState>(
             // Listen to TrackDataBloc
             builder: (context, state) {
+              print(
+                "HomeScreen BlocBuilder rebuilding. State: ${state.runtimeType}",
+              ); //
               // --- Extract Data ---
               List<Track> allTracksForTree =
                   []; // All tracks for tree view structure
@@ -1223,8 +1226,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                 _folderTreeViewKeysNotifier, // <<< PASS IT HERE
 
                             key: ValueKey(
-                              'folder-tree-${rootFolders.join('-')}-${allTracksForTree.length}',
+                              // Depend only on things that define the core structure, like root folders
+                              'folder-tree-${rootFolders.join('-')}',
+                              // Optionally add other stable identifiers if needed, but NOT track count
                             ),
+
                             tracks:
                                 allTracksForTree, // Pass tracks for tree structure
                             rootFolders: rootFolders, // Pass root folders

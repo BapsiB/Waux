@@ -5,7 +5,9 @@ import 'package:path/path.dart' as pathLib;
 import 'package:collection/collection.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:audio_looker/services/collection_service.dart';
+import 'package:audio_looker/blocs/track_management/track_data_bloc.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
 typedef FolderDeleteCallback =
     void Function(String folderPath, String folderName);
@@ -597,14 +599,14 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                     _anchorNodeKey = null;
                   });
 
+                  final trackDataBloc = context.read<TrackDataBloc>();
+
                   for (final nodeKey in keysToDelete) {
                     if (nodeKey.startsWith('track_')) {
                       Track? track = _findTrackByKey(nodeKey);
                       if (track?.id != null) {
                         print("Dispatching RemoveTrack for ${track!.id}");
-                        widget.onTrackDeleted(
-                          track.id!,
-                        ); // Use existing callback
+                        trackDataBloc.add(RemoveTrack(track.id!));
                       }
                     } else {
                       // It's a folder path key

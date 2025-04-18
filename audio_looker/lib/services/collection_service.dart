@@ -786,13 +786,31 @@ class CollectionService {
   }
 
   Future<int> deleteTrack(int id) async {
-    if (_database == null || !_database!.isOpen)
+    if (_database == null || !_database!.isOpen) {
+      print(
+        "CollectionService.deleteTrack: ERROR - Database not open for track $id",
+      ); // <<< Added Log
       throw Exception("Database not open");
-    return await _database!.delete(
-      tableMusic,
-      where: '$columnId = ?',
-      whereArgs: [id],
-    );
+    }
+    print(
+      "CollectionService.deleteTrack: Attempting to delete track with ID: $id",
+    ); // <<< Added Log
+    try {
+      final int count = await _database!.delete(
+        tableMusic,
+        where: '$columnId = ?',
+        whereArgs: [id],
+      );
+      print(
+        "CollectionService.deleteTrack: Database delete result for ID $id. Rows affected: $count",
+      ); // <<< Added Log
+      return count;
+    } catch (e) {
+      print(
+        "CollectionService.deleteTrack: Database ERROR deleting track $id: $e",
+      ); // <<< Added Log
+      rethrow; // Re-throw the database exception
+    }
   }
 
   Future<Track?> getTrack(int id) async {

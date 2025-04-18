@@ -333,19 +333,32 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     }
   }
 
+  // In TrackDataBloc class:
+
   Future<void> _onRemoveTrack(
     RemoveTrack event,
     Emitter<TrackDataState> emit,
   ) async {
     final activeDef = _collectionService.getActiveCollection();
-    if (activeDef == null) return;
+    if (activeDef == null) {
+      print(
+        "TrackDataBloc._onRemoveTrack: No active collection, skipping delete for track ${event.trackId}",
+      );
+      return; // No active collection
+    }
+
+    print(
+      "TrackDataBloc._onRemoveTrack: Received event for track ${event.trackId}",
+    ); // <<< Added Log
 
     final tracksBeforeDelete = _getTracksFromState();
-
-    // Optimistic UI update
     List<Track> optimisticTracks =
         tracksBeforeDelete.where((t) => t.id != event.trackId).toList();
 
+    print(
+      "TrackDataBloc._onRemoveTrack: Emitting optimistic state with ${optimisticTracks.length} tracks.",
+    ); // <<< Added Log
+    // Optimistic UI update
     emit(
       TrackDataLoaded(
         tracks: optimisticTracks,
@@ -356,13 +369,30 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     );
 
     try {
-      await _collectionService.deleteTrack(event.trackId);
-      print("TrackDataBloc: Deleted track ${event.trackId} from service.");
-      // Optimistic update is likely sufficient, no reload needed unless error occurs.
+      print(
+        "TrackDataBloc._onRemoveTrack: Calling collectionService.deleteTrack(${event.trackId}).",
+      ); // <<< Added Log
+      // --- Call the service ---
+      final int deletedCount = await _collectionService.deleteTrack(
+        event.trackId,
+      );
+      // --- End Call ---
+      print(
+        "TrackDataBloc._onRemoveTrack: Service deleteTrack completed. Rows affected: $deletedCount",
+      ); // <<< Added Log
+
+      if (deletedCount == 0) {
+        print(
+          "TrackDataBloc._onRemoveTrack: Warning - Service reported 0 rows deleted for track ${event.trackId}. Data might be inconsistent.",
+        );
+        // Consider reloading data if deletion reported failure
+        add(ReloadDataPreservingFilters());
+      }
+      // If successful, optimistic state is correct. No need to emit again unless error.
     } catch (e, stackTrace) {
       print(
-        "TrackDataBloc ERROR removing track ${event.trackId}: $e\n$stackTrace",
-      );
+        "TrackDataBloc._onRemoveTrack: ERROR removing track ${event.trackId} from service: $e\n$stackTrace",
+      ); // <<< Added Log
       // Revert optimistic update by reloading
       add(ReloadDataPreservingFilters());
       emit(TrackDataError("Failed to remove track: ${e.toString()}"));
