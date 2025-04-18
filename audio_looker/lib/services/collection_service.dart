@@ -1202,7 +1202,7 @@ class CollectionService {
 
   // --- Methods needing review/implementation ---
   // (Methods: addLocalFile, addUrl, importFromFile, exportToFile)
-  Future<Track> addLocalFile(String filePath) async {
+  Future<Track?> addLocalFile(String filePath) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
     if (_activeCollectionDefinition == null)
@@ -1222,7 +1222,7 @@ class CollectionService {
           from: _activeCollectionDefinition!.rootPath!,
         );
       } catch (e) {
-        /* Keep absolute if error */
+        return null;
       }
     }
 

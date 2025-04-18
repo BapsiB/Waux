@@ -92,6 +92,32 @@ class TrackDataLoaded extends TrackDataState {
   List<Object?> get props => [tracks, rootFolders, searchQuery, minimumRating];
 }
 
+class TrackDataProcessingNeeded extends TrackDataState {
+  final List<Track> addedTracks;
+  // Include other fields from TrackDataLoaded for consistent UI
+  final List<Track> tracks;
+  final List<String> rootFolders;
+  final String? searchQuery;
+  final int? minimumRating;
+
+  const TrackDataProcessingNeeded({
+    required this.addedTracks,
+    required this.tracks,
+    required this.rootFolders,
+    this.searchQuery,
+    this.minimumRating,
+  });
+
+  @override
+  List<Object?> get props => [
+    addedTracks,
+    tracks,
+    rootFolders,
+    searchQuery,
+    minimumRating,
+  ];
+}
+
 /// State representing an error during track/folder loading or operations.
 class TrackDataError extends TrackDataState {
   final String message;

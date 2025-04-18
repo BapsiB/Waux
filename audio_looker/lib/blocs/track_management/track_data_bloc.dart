@@ -9,6 +9,9 @@ import 'package:path/path.dart' as pathLib; // Use alias
 
 // Import Services and Models
 import '../../services/collection_service.dart'; // For Track, CollectionService, CollectionDefinition, CollectionType
+import '../../services/waveform_processing_service.dart';
+import '../waveform_processing/waveform_processing_bloc.dart';
+import '../waveform_processing/waveform_processing_event.dart';
 
 part 'track_data_event.dart';
 part 'track_data_state.dart';
@@ -17,6 +20,8 @@ part 'track_data_state.dart';
 /// the list of tracks and root folders for the active collection.
 class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
   final CollectionService _collectionService;
+  final WaveformProcessingService _waveformProcessingService;
+  // final WaveformProcessingBloc _waveformProcessingBloc;
   // Define supported extensions (consider making this configurable later)
   final List<String> _supportedExtensions = [
     'mp3',
@@ -31,7 +36,16 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
   String _lastSearchQuery = '';
   int? _lastMinimumRating;
 
-  TrackDataBloc(this._collectionService) : super(TrackDataInitial()) {
+  TrackDataBloc({
+    required CollectionService collectionService,
+    // Add waveform dependencies
+    required WaveformProcessingService waveformProcessingService,
+    // required WaveformProcessingBloc waveformProcessingBloc,
+  }) : _collectionService = collectionService,
+       // Store waveform dependencies
+       _waveformProcessingService = waveformProcessingService,
+       //  _waveformProcessingBloc = waveformProcessingBloc,
+       super(TrackDataInitial()) {
     on<LoadTracks>(_onLoadTracks);
     on<SearchTracks>(_onSearchTracks);
     on<SyncFolders>(_onSyncFolders);
@@ -266,12 +280,15 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
   ) async {
     final activeDef = _collectionService.getActiveCollection();
     if (activeDef == null) {
-      emit(TrackDataError("Cannot add tracks: No active collection."));
+      emit(const TrackDataError("Cannot add tracks: No active collection."));
       return;
     }
     print(
-      "TrackDataBloc: Adding ${event.filePaths.length} tracks to ${activeDef.name}",
+      "[TrackDataBloc] Adding ${event.filePaths.length} tracks to ${activeDef.name}",
     );
+
+    // Keep track of tracks successfully added/found to trigger waveform processing
+    final List<Track> addedOrFoundTracks = [];
 
     // Emit Loading state while adding
     emit(
@@ -286,23 +303,76 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     try {
       for (final filePath in event.filePaths) {
         try {
-          // Service handles adding/finding existing and path normalization
-          await _collectionService.addLocalFile(filePath);
+          // *** ASSUMPTION: _collectionService.addLocalFile returns Track? ***
+          final Track? addedTrack = await _collectionService.addLocalFile(
+            filePath,
+          );
+          if (addedTrack != null) {
+            addedOrFoundTracks.add(
+              addedTrack,
+            ); // Collect successfully added/found tracks
+          }
         } catch (e) {
           print('TrackDataBloc ERROR: Failed to add file $filePath: $e');
           // Optionally collect errors to show user
         }
       }
       print(
-        "TrackDataBloc: Finished adding/checking ${event.filePaths.length} tracks in service.",
+        "[TrackDataBloc] Finished adding/checking ${event.filePaths.length} tracks in service. ${addedOrFoundTracks.length} added/found.",
       );
+
+      // --- Trigger Waveform Processing ---
+      if (addedOrFoundTracks.isNotEmpty) {
+        print(
+          '[TrackDataBloc] Triggering waveform processing for ${addedOrFoundTracks.length} tracks...',
+        );
+        // 1. Prepare data for the service (only local files with paths and IDs)
+        final List<Map<String, String>> trackDataForService =
+            addedOrFoundTracks
+                .where(
+                  (track) =>
+                      !track.isUrl &&
+                      track.path != null &&
+                      track.path!.isNotEmpty &&
+                      track.id != null,
+                ) // Ensure ID is present
+                // *** FIX: Convert track.id to String ***
+                .map(
+                  (track) => {'id': track.id!.toString(), 'path': track.path!},
+                )
+                .toList();
+
+        if (trackDataForService.isNotEmpty) {
+          // 2. Add tracks to the processing queue
+          _waveformProcessingService.addTracksToQueue(trackDataForService);
+
+          // 3. Notify the WaveformProcessingBloc that a batch has started
+          // final List<String> trackIds =
+          //     trackDataForService.map((data) => data['id']!).toList();
+          // _waveformProcessingBloc.add(
+          //   WaveformProcessingBatchStarted(
+          //     trackIds: trackIds,
+          //     totalTracks: trackDataForService.length,
+          //   ),
+          // );
+          print(
+            '[TrackDataBloc] Added ${trackDataForService.length} tracks to waveform queue.',
+          );
+        } else {
+          print(
+            '[TrackDataBloc] No valid tracks found needing waveform processing after add operation.',
+          );
+        }
+      }
+      // --- End Trigger Waveform Processing ---
 
       // Reload data to reflect additions, preserving filters
       add(ReloadDataPreservingFilters());
-      // Note: Waveform processing should be handled separately, perhaps triggered by CollectionService or another BLoC.
     } catch (e, stackTrace) {
       print('TrackDataBloc ERROR: Exception in _onAddTracks: $e\n$stackTrace');
       emit(TrackDataError("Failed to add tracks: ${e.toString()}"));
+      // Consider reloading even on error?
+      add(ReloadDataPreservingFilters());
     }
   }
 

@@ -24,6 +24,7 @@ import '../widgets/folder_tree_view.dart';
 import '../widgets/track_table_widget.dart';
 import '../widgets/combined_audio_player_widget.dart';
 import '../widgets/rating_filter_widget.dart';
+import '../widgets/waveform_progress_bar.dart';
 
 // Import Handlers (already adapted in previous steps)
 import '../handlers/track_selection_handler.dart';
@@ -596,6 +597,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        bottomNavigationBar: const WaveformProgressBar(),
         floatingActionButton: FloatingActionButton.small(
           // Use small for discretion
           onPressed: _showAddMenu, // Call the existing menu function

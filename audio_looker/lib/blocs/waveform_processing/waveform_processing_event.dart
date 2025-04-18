@@ -1,3 +1,5 @@
+// lib/blocs/waveform_processing/waveform_processing_event.dart
+
 import 'package:equatable/equatable.dart';
 
 abstract class WaveformProcessingEvent extends Equatable {
@@ -26,14 +28,15 @@ class WaveformProcessingBatchStarted extends WaveformProcessingEvent {
 /// Dispatched when the current batch processing is complete.
 class WaveformProcessingBatchFinished extends WaveformProcessingEvent {}
 
-// --- Internal Events (used by the Bloc listening to the Service) ---
+// --- Internal Events (Now Public for BLoC usage) ---
 
-/// Internal event to update overall progress.
-class _WaveformProcessingProgressUpdated extends WaveformProcessingEvent {
+/// Event to update overall progress (still typically added internally by BLoC).
+class WaveformProcessingProgressUpdated extends WaveformProcessingEvent {
+  // Renamed
   final int processedTracks;
   final int totalTracks;
 
-  const _WaveformProcessingProgressUpdated(
+  const WaveformProcessingProgressUpdated(
     this.processedTracks,
     this.totalTracks,
   );
@@ -42,23 +45,25 @@ class _WaveformProcessingProgressUpdated extends WaveformProcessingEvent {
   List<Object> get props => [processedTracks, totalTracks];
 }
 
-/// Internal event when a single track's waveform is successfully processed.
-class _WaveformProcessingTrackCompleted extends WaveformProcessingEvent {
+/// Event when a single track's waveform is successfully processed (added internally by BLoC).
+class WaveformProcessingTrackCompleted extends WaveformProcessingEvent {
+  // Renamed
   final String trackId;
   final List<double> waveformData; // Use List<double> or appropriate type
 
-  const _WaveformProcessingTrackCompleted(this.trackId, this.waveformData);
+  const WaveformProcessingTrackCompleted(this.trackId, this.waveformData);
 
   @override
   List<Object> get props => [trackId, waveformData];
 }
 
-/// Internal event when processing fails for a single track.
-class _WaveformProcessingTrackFailed extends WaveformProcessingEvent {
+/// Event when processing fails for a single track (added internally by BLoC).
+class WaveformProcessingTrackFailed extends WaveformProcessingEvent {
+  // Renamed
   final String trackId;
   final String error;
 
-  const _WaveformProcessingTrackFailed(this.trackId, this.error);
+  const WaveformProcessingTrackFailed(this.trackId, this.error);
 
   @override
   List<Object> get props => [trackId, error];
