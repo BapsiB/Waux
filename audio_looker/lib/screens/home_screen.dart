@@ -71,6 +71,9 @@ class _HomeScreenState extends State<HomeScreen> {
   final double _playlistPanelOpenWidth = 250.0;
   final double _playlistPanelClosedWidth = 50.0;
 
+  final ValueNotifier<Set<LogicalKeyboardKey>> _folderTreeViewKeysNotifier =
+      ValueNotifier({});
+
   // Handlers (will be initialized in didChangeDependencies)
   late TrackSelectionHandler _trackSelectionHandler;
   late ContextMenuHandler _contextMenuHandler;
@@ -1206,40 +1209,53 @@ class _HomeScreenState extends State<HomeScreen> {
                           onEditMetadata:
                               _selectAndOpenPlayer, // Pass method reference
                         )
-                        : FolderTreeView(
-                          key: ValueKey(
-                            'folder-tree-${rootFolders.join('-')}-${allTracksForTree.length}',
+                        : KeyboardListener(
+                          focusNode: FocusNode(), // Needs a focus node
+                          onKeyEvent: (KeyEvent event) {
+                            // Update the notifier passed down to FolderTreeView
+                            // folderTreeViewKey.currentState?._pressedKeys.value = RawKeyboard.instance.keysPressed; // If using GlobalKey
+                            // Or pass the notifier down directly via constructor
+                            _folderTreeViewKeysNotifier.value =
+                                HardwareKeyboard.instance.logicalKeysPressed;
+                          },
+                          child: FolderTreeView(
+                            pressedKeysNotifier:
+                                _folderTreeViewKeysNotifier, // <<< PASS IT HERE
+
+                            key: ValueKey(
+                              'folder-tree-${rootFolders.join('-')}-${allTracksForTree.length}',
+                            ),
+                            tracks:
+                                allTracksForTree, // Pass tracks for tree structure
+                            rootFolders: rootFolders, // Pass root folders
+                            selectedTrack:
+                                _selectedTrackForPlayer, // Highlight selected track
+                            currentlyLoadedPath:
+                                _currentlyLoadedPathInPlayer, // Highlight playing track
+                            onTrackSelected: (track) {
+                              // Select track in state and load for player (no auto-play)
+                              _handleSelectionChanged(
+                                track.id!,
+                                true,
+                              ); // Update selection state
+                              _selectTrackForPlayer(
+                                track,
+                              ); // Load track into player UI part
+                            },
+                            onTrackDeleted: (trackId) {
+                              // Use context menu handler's delete confirmation
+                              _contextMenuHandler.confirmAndDeleteSelected();
+                            },
+                            onFolderDeleted: (folderPath, folderName) {
+                              print(
+                                "Folder delete requested from TreeView: $folderName ($folderPath)",
+                              );
+                              // Dispatch the event to the BLoC
+                              context.read<TrackDataBloc>().add(
+                                DeleteFolder(folderPath),
+                              );
+                            },
                           ),
-                          tracks:
-                              allTracksForTree, // Pass tracks for tree structure
-                          rootFolders: rootFolders, // Pass root folders
-                          selectedTrack:
-                              _selectedTrackForPlayer, // Highlight selected track
-                          currentlyLoadedPath:
-                              _currentlyLoadedPathInPlayer, // Highlight playing track
-                          onTrackSelected: (track) {
-                            // Select track in state and load for player (no auto-play)
-                            _handleSelectionChanged(
-                              track.id!,
-                              true,
-                            ); // Update selection state
-                            _selectTrackForPlayer(
-                              track,
-                            ); // Load track into player UI part
-                          },
-                          onTrackDeleted: (trackId) {
-                            // Use context menu handler's delete confirmation
-                            _contextMenuHandler.confirmAndDeleteSelected();
-                          },
-                          onFolderDeleted: (folderPath, folderName) {
-                            print(
-                              "Folder delete requested from TreeView: $folderName ($folderPath)",
-                            );
-                            // Dispatch the event to the BLoC
-                            context.read<TrackDataBloc>().add(
-                              DeleteFolder(folderPath),
-                            );
-                          },
                         ),
               );
             },

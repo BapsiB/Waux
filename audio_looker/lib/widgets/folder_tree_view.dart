@@ -5,6 +5,7 @@ import 'package:path/path.dart' as pathLib;
 import 'package:collection/collection.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:audio_looker/services/collection_service.dart';
+import 'package:flutter/services.dart';
 
 typedef FolderDeleteCallback =
     void Function(String folderPath, String folderName);
@@ -17,6 +18,7 @@ class FolderTreeView extends StatefulWidget {
   final Function(Track) onTrackSelected;
   final Function(int) onTrackDeleted;
   final FolderDeleteCallback onFolderDeleted;
+  final ValueNotifier<Set<LogicalKeyboardKey>> pressedKeysNotifier;
 
   const FolderTreeView({
     Key? key,
@@ -27,6 +29,7 @@ class FolderTreeView extends StatefulWidget {
     required this.onTrackSelected,
     required this.onTrackDeleted,
     required this.onFolderDeleted,
+    required this.pressedKeysNotifier,
   }) : super(key: key);
 
   @override
@@ -39,11 +42,33 @@ class _FolderTreeViewState extends State<FolderTreeView> {
   final Set<String> _hoveredItems = {};
   Offset _tapPosition = Offset.zero;
 
+  final Set<String> _selectedNodeKeys = {};
+  // Store the key of the last item clicked without Shift (anchor for range selection)
+  String? _anchorNodeKey;
+  // Keep track of the last known keyboard modifiers
+  final ValueNotifier<Set<LogicalKeyboardKey>> _pressedKeys =
+      ValueNotifier<Set<LogicalKeyboardKey>>({});
+
+  Set<LogicalKeyboardKey> get _currentPressedKeys =>
+      widget.pressedKeysNotifier.value;
+
+  // Helper to generate a unique key for a track
+  String _getTrackNodeKey(Track track) {
+    // Ensure a unique prefix to avoid clashes with folder paths
+    return 'track_${track.id ?? track.path}';
+  }
+
   @override
   void initState() {
     super.initState();
     _buildFolderStructure();
     _expandFoldersForPath(widget.currentlyLoadedPath);
+  }
+
+  @override
+  void dispose() {
+    _pressedKeys.dispose(); // Dispose the notifier
+    super.dispose();
   }
 
   @override
@@ -74,6 +99,183 @@ class _FolderTreeViewState extends State<FolderTreeView> {
         });
       }
     }
+  }
+
+  void _handleItemTap(String tappedNodeKey, {required bool isFolder}) {
+    // Use the getter to access the current keys from the widget's notifier
+    final Set<LogicalKeyboardKey> keysPressed =
+        HardwareKeyboard.instance.logicalKeysPressed;
+    final bool isShiftPressed =
+        keysPressed.contains(LogicalKeyboardKey.shiftLeft) ||
+        keysPressed.contains(LogicalKeyboardKey.shiftRight);
+    final bool isCtrlPressed =
+        keysPressed.contains(LogicalKeyboardKey.controlLeft) ||
+        keysPressed.contains(LogicalKeyboardKey.controlRight) ||
+        keysPressed.contains(
+          LogicalKeyboardKey.metaLeft,
+        ) || // For macOS Command key
+        keysPressed.contains(LogicalKeyboardKey.metaRight);
+
+    print(
+      "Tapped: $tappedNodeKey, Shift: $isShiftPressed, Ctrl: $isCtrlPressed",
+    ); // Debugging
+
+    setState(() {
+      if (isCtrlPressed) {
+        // Toggle selection for the clicked item
+        if (_selectedNodeKeys.contains(tappedNodeKey)) {
+          _selectedNodeKeys.remove(tappedNodeKey);
+          // Adjust anchor if the removed item was the anchor
+          if (_anchorNodeKey == tappedNodeKey) {
+            _anchorNodeKey =
+                _selectedNodeKeys.isNotEmpty ? _selectedNodeKeys.last : null;
+          }
+        } else {
+          _selectedNodeKeys.add(tappedNodeKey);
+          _anchorNodeKey = tappedNodeKey; // Set anchor on Ctrl+add
+        }
+      } else if (isShiftPressed && _anchorNodeKey != null) {
+        // Range selection
+        final List<String> visibleNodeKeys =
+            _getVisibleNodeKeys(); // Needs implementation
+        final int anchorIndex = visibleNodeKeys.indexOf(_anchorNodeKey!);
+        final int clickedIndex = visibleNodeKeys.indexOf(tappedNodeKey);
+
+        if (anchorIndex != -1 && clickedIndex != -1) {
+          final int start =
+              anchorIndex < clickedIndex ? anchorIndex : clickedIndex;
+          final int end =
+              anchorIndex > clickedIndex ? anchorIndex : clickedIndex;
+
+          // Clear previous selection ONLY if Ctrl is NOT pressed
+          if (!isCtrlPressed) {
+            _selectedNodeKeys.clear();
+          }
+
+          // Select the range
+          for (int i = start; i <= end; i++) {
+            if (i >= 0 && i < visibleNodeKeys.length) {
+              _selectedNodeKeys.add(visibleNodeKeys[i]);
+            }
+          }
+          // Anchor remains the same for shift-range selection
+        } else {
+          // If anchor or clicked item not found in visible list, just select the clicked one
+          _selectedNodeKeys.clear();
+          _selectedNodeKeys.add(tappedNodeKey);
+          _anchorNodeKey = tappedNodeKey;
+        }
+      } else {
+        // Simple click: Select only the clicked item
+        _selectedNodeKeys.clear();
+        _selectedNodeKeys.add(tappedNodeKey);
+        _anchorNodeKey = tappedNodeKey;
+      }
+
+      // --- Single Selection Behavior (Original Logic) ---
+      // If it's a track, call the original callback for player interaction
+      // if (!isFolder) {
+      //   // Find the track corresponding to the key
+      //   // This requires iterating through the built structure or having a map
+      //   Track? tappedTrack = _findTrackByKey(tappedNodeKey);
+      //   if (tappedTrack != null) {
+      //     widget.onTrackSelected(tappedTrack);
+      //   }
+      // }
+      // --- End Single Selection Behavior ---
+    });
+  }
+
+  List<String> _getVisibleNodeKeys() {
+    List<String> keys = [];
+    // Recursive helper function to traverse the structure
+    void traverse(
+      Map<String, dynamic> structure,
+      List<String> currentPathSegments,
+    ) {
+      final sortedFolderKeys =
+          structure.entries
+              .where(
+                (entry) =>
+                    entry.key != "tracks" &&
+                    entry.key != "rootPath" &&
+                    entry.key != "isRoot" &&
+                    entry.key != "folderAbsolutePath",
+              )
+              .map((e) => e.key)
+              .toList()
+            ..sort((a, b) {
+              // Add your sorting logic from _buildTreeView here if needed
+              if (a == "Web Links") return -1;
+              if (b == "Web Links") return 1;
+              if (a == "Imported Files") return -1;
+              if (b == "Imported Files") return 1;
+              return a.toLowerCase().compareTo(b.toLowerCase());
+            });
+
+      for (final key in sortedFolderKeys) {
+        final newPathSegments = List<String>.from(currentPathSegments)
+          ..add(key);
+        final folderPathKey = newPathSegments.join('/');
+        keys.add(folderPathKey); // Add folder key
+
+        final isExpanded = _expandedFolders.contains(folderPathKey);
+        if (isExpanded && structure[key] is Map<String, dynamic>) {
+          traverse(
+            structure[key] as Map<String, dynamic>,
+            newPathSegments,
+          ); // Recurse if expanded
+        }
+      }
+
+      // Add tracks at this level
+      if (structure.containsKey("tracks") && structure["tracks"] is List) {
+        final tracks = (structure["tracks"] as List).cast<Track>().toList();
+        tracks.sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        ); // Sort tracks
+        for (final track in tracks) {
+          keys.add(_getTrackNodeKey(track)); // Add track key
+        }
+      }
+    }
+
+    traverse(_folderStructure, []); // Start traversal from root
+    // print("Visible Keys: $keys"); // Debugging
+    return keys;
+  }
+
+  Track? _findTrackByKey(String nodeKey) {
+    if (!nodeKey.startsWith('track_')) return null;
+
+    Track? foundTrack;
+    void search(Map<String, dynamic> structure) {
+      if (foundTrack != null) return; // Stop if found
+
+      if (structure.containsKey("tracks") && structure["tracks"] is List) {
+        final tracks = (structure["tracks"] as List).cast<Track>();
+        for (final track in tracks) {
+          if (_getTrackNodeKey(track) == nodeKey) {
+            foundTrack = track;
+            return;
+          }
+        }
+      }
+
+      // Recurse into subfolders
+      structure.forEach((key, value) {
+        if (value is Map<String, dynamic> &&
+            key != "tracks" &&
+            key != "rootPath" &&
+            key != "isRoot" &&
+            key != "folderAbsolutePath") {
+          search(value);
+        }
+      });
+    }
+
+    search(_folderStructure);
+    return foundTrack;
   }
 
   // --- Build Folder Structure Methods (Keep previous versions) ---
@@ -261,34 +463,198 @@ class _FolderTreeViewState extends State<FolderTreeView> {
     _tapPosition = details.globalPosition;
   }
 
-  void _showTrackContextMenu(BuildContext context, Track track) {
+  void _showItemContextMenu(
+    BuildContext context,
+    String nodeKey,
+    bool isFolder,
+  ) {
     final RenderBox overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
+    final bool isMultiSelect = _selectedNodeKeys.length > 1;
+    final bool isClickedItemSelected = _selectedNodeKeys.contains(nodeKey);
+
+    List<PopupMenuEntry<dynamic>> items = [];
+
+    // --- Add Play/Reveal based on single item type ---
+    if (!isMultiSelect && isClickedItemSelected) {
+      // Only show these for single selected item
+      if (isFolder) {
+        final folderData = _findNodeData(nodeKey); // Helper needed
+        if (folderData != null) {
+          final folderName = nodeKey.split('/').last;
+          final folderAbsolutePath =
+              folderData["folderAbsolutePath"] as String? ??
+              folderData["rootPath"] as String? ??
+              nodeKey; // Get path
+          items.add(
+            PopupMenuItem(
+              value: {'action': 'reveal_folder', 'path': folderAbsolutePath},
+              child: const ListTile(
+                leading: Icon(Icons.folder_open),
+                title: Text('Reveal Folder'),
+              ),
+            ),
+          );
+        }
+      } else {
+        // It's a track
+        Track? track = _findTrackByKey(nodeKey);
+        if (track != null) {
+          if (!track.isUrl) {
+            items.add(
+              PopupMenuItem(
+                value: {'action': 'reveal_track_location', 'path': track.path},
+                child: const ListTile(
+                  leading: Icon(Icons.folder_open_outlined),
+                  title: Text('Open Enclosing Folder'),
+                ),
+              ),
+            );
+          }
+          // Add other single-track actions if needed (Play, Add to Playlist...)
+        }
+      }
+    }
+
+    // --- Add Delete Action ---
+    if (isClickedItemSelected || isMultiSelect) {
+      // Show delete if clicking a selected item OR if multiple items selected
+      items.add(const PopupMenuDivider());
+      items.add(
+        PopupMenuItem(
+          value: {'action': 'delete_selection'}, // Use a map for clarity
+          child: ListTile(
+            leading: const Icon(Icons.delete_outline, color: Colors.red),
+            title: Text(
+              isMultiSelect
+                  ? 'Delete ${_selectedNodeKeys.length} Selected Items'
+                  : 'Delete Item',
+              style: const TextStyle(color: Colors.red),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (items.isEmpty) return; // Don't show empty menu
 
     showMenu(
       context: context,
       position: RelativeRect.fromRect(
         _tapPosition & const Size(40, 40), // Small rectangle at tap pos
-        Offset.zero & overlay.size, // Bigger rectangle of the overlay
+        Offset.zero & overlay.size,
       ),
-      items: <PopupMenuEntry>[
-        PopupMenuItem(
-          value: 'reveal_enclosing', // Unique value for this action
-          child: ListTile(
-            leading: Icon(Icons.folder_open_outlined),
-            title: Text('Open Enclosing Folder'),
-          ),
-        ),
-        // Add other track-specific options here if needed (e.g., Play, Add to Playlist)
-        // You might want to reuse logic from ContextMenuHandler if you add more options.
-      ],
+      items: items,
     ).then((value) {
-      // Handle menu selection
-      if (value == 'reveal_enclosing') {
-        // Use the existing _revealFolderLocation, passing the file's *parent* directory
-        _revealEnclosingFolder(track.path);
+      if (value is Map<String, dynamic>) {
+        _handleContextMenuSelection(value);
       }
     });
+  }
+
+  // --- NEW: Handle Context Menu Selection ---
+  void _handleContextMenuSelection(Map<String, dynamic> value) {
+    final action = value['action'];
+
+    if (action == 'delete_selection') {
+      _deleteSelectedItems();
+    } else if (action == 'reveal_folder') {
+      _revealFolderLocation(value['path'] as String);
+    } else if (action == 'reveal_track_location') {
+      _revealEnclosingFolder(value['path'] as String);
+    }
+    // Handle other actions...
+  }
+
+  // --- NEW: Delete Selected Items Logic ---
+  void _deleteSelectedItems() {
+    if (_selectedNodeKeys.isEmpty) return;
+
+    // Optional: Show confirmation dialog
+    showDialog(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: Text('Confirm Delete'),
+            content: Text(
+              'Are you sure you want to delete ${_selectedNodeKeys.length} selected item(s)? Folders will be removed recursively.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text('Cancel'),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  // Proceed with deletion
+                  final keysToDelete = Set<String>.from(
+                    _selectedNodeKeys,
+                  ); // Copy the set
+                  setState(() {
+                    _selectedNodeKeys.clear(); // Clear selection in UI
+                    _anchorNodeKey = null;
+                  });
+
+                  for (final nodeKey in keysToDelete) {
+                    if (nodeKey.startsWith('track_')) {
+                      Track? track = _findTrackByKey(nodeKey);
+                      if (track?.id != null) {
+                        print("Dispatching RemoveTrack for ${track!.id}");
+                        widget.onTrackDeleted(
+                          track.id!,
+                        ); // Use existing callback
+                      }
+                    } else {
+                      // It's a folder path key
+                      final folderData = _findNodeData(
+                        nodeKey,
+                      ); // Helper needed
+                      if (folderData != null) {
+                        final folderName = nodeKey.split('/').last;
+                        // Determine the correct absolute path to delete
+                        final folderAbsolutePath =
+                            folderData["folderAbsolutePath"] as String? ??
+                            folderData["rootPath"] as String? ??
+                            nodeKey; // Get path reliably
+                        print(
+                          "Dispatching DeleteFolder for $folderName ($folderAbsolutePath)",
+                        );
+                        widget.onFolderDeleted(
+                          folderAbsolutePath,
+                          folderName,
+                        ); // Use existing callback
+                      }
+                    }
+                  }
+                },
+                child: Text('Delete'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  // --- NEW: Helper to find node data (folder path needed) ---
+  Map<String, dynamic>? _findNodeData(String nodeKey) {
+    List<String> segments = nodeKey.split('/');
+    Map<String, dynamic>? currentLevel = _folderStructure;
+    for (int i = 0; i < segments.length; i++) {
+      final segment = segments[i];
+      if (currentLevel != null &&
+          currentLevel.containsKey(segment) &&
+          currentLevel[segment] is Map<String, dynamic>) {
+        currentLevel = currentLevel[segment] as Map<String, dynamic>;
+        // If this is the last segment, return the data for this node
+        if (i == segments.length - 1) {
+          return currentLevel;
+        }
+      } else {
+        return null; // Path not found or structure mismatch
+      }
+    }
+    return null; // Should not happen if segments is not empty
   }
 
   Future<void> _revealEnclosingFolder(String filePath) async {
@@ -457,6 +823,8 @@ class _FolderTreeViewState extends State<FolderTreeView> {
       final isRootFolder = folderData["isRoot"] == true;
       final trackCount = _countTracksInFolder(folderData);
 
+      final bool isSelected = _selectedNodeKeys.contains(folderPathKey);
+
       // *** Determine the correct absolute path for THIS folder ***
       String currentFolderAbsolutePath;
       if (isRootFolder) {
@@ -489,14 +857,7 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                   (details) =>
                       _storePosition(details), // Store position for menu
               onSecondaryTap: () {
-                // Only show context menu for non-special folders
-                if (!isSpecialFolder) {
-                  _showFolderContextMenu(
-                    context,
-                    entry.key,
-                    currentFolderAbsolutePath,
-                  );
-                }
+                _showItemContextMenu(context, folderPathKey, true);
               },
               child: MouseRegion(
                 // Wrap only the interactive row
@@ -505,13 +866,18 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                 onExit:
                     (_) => setState(() => _hoveredItems.remove(folderPathKey)),
                 child: InkWell(
-                  onTap:
-                      () => setState(() {
-                        if (isExpanded)
-                          _expandedFolders.remove(folderPathKey);
-                        else
-                          _expandedFolders.add(folderPathKey);
-                      }),
+                  onTap: () {
+                    // --- MODIFIED Call ---
+                    _handleItemTap(folderPathKey, isFolder: true);
+                    // Original expansion logic:
+                    setState(() {
+                      if (isExpanded)
+                        _expandedFolders.remove(folderPathKey);
+                      else
+                        _expandedFolders.add(folderPathKey);
+                    });
+                    // --- END MODIFIED ---
+                  },
                   child: Container(
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(4),
@@ -647,8 +1013,12 @@ class _FolderTreeViewState extends State<FolderTreeView> {
       ); // Sort tracks
 
       for (final track in tracks) {
-        final isCurrentlyPlaying = widget.currentlyLoadedPath == track.path;
-        final isSelected = widget.selectedTrack?.id == track.id;
+        final trackNodeKey = _getTrackNodeKey(track); // <<< NEW Track Key
+        final bool isSelected = _selectedNodeKeys.contains(
+          trackNodeKey,
+        ); // <<< NEW Check selection
+        final isCurrentlyPlaying =
+            widget.currentlyLoadedPath == track.path; // Keep this
         final trackHoverKey =
             'track_${track.id ?? track.path}'; // Use path as fallback key
 
@@ -661,10 +1031,7 @@ class _FolderTreeViewState extends State<FolderTreeView> {
               onTapDown: _storePosition, // Store position for menu
               onSecondaryTapDown: _storePosition, // Store position for menu
               onSecondaryTap: () {
-                // Only show context menu for local files, not URLs
-                if (!track.isUrl) {
-                  _showTrackContextMenu(context, track);
-                }
+                _showItemContextMenu(context, trackNodeKey, false);
               },
               child: MouseRegion(
                 onEnter:
@@ -672,16 +1039,33 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                 onExit:
                     (_) => setState(() => _hoveredItems.remove(trackHoverKey)),
                 child: InkWell(
-                  onTap: () => widget.onTrackSelected(track),
+                  onTap: () => _handleItemTap(trackNodeKey, isFolder: false),
+
                   child: Container(
-                    color:
-                        isSelected || isCurrentlyPlaying
-                            ? Theme.of(
-                              context,
-                            ).colorScheme.primary.withOpacity(0.1)
-                            : (_hoveredItems.contains(trackHoverKey)
-                                ? Theme.of(context).hoverColor
-                                : null),
+                    decoration:
+                        isSelected
+                            ? BoxDecoration(
+                              color:
+                                  isSelected // Prioritize selection color
+                                      ? Theme.of(
+                                        context,
+                                      ).colorScheme.primary.withOpacity(0.2)
+                                      : isCurrentlyPlaying // Then playing color
+                                      ? Theme.of(
+                                        context,
+                                      ).colorScheme.primary.withOpacity(0.1)
+                                      : (_hoveredItems.contains(
+                                            trackHoverKey,
+                                          ) // Then hover
+                                          ? Theme.of(context).hoverColor
+                                          : null),
+                              border: Border.all(
+                                color: Theme.of(context).colorScheme.primary,
+                                width: 0.8,
+                              ),
+                            )
+                            : null,
+
                     padding: const EdgeInsets.only(
                       left: 16 + 4,
                       top: 6.0,
