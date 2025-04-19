@@ -96,9 +96,9 @@ class FileHandler {
     if (filesToAdd.isNotEmpty) {
       // <<< CHANGED: Use AddTracks event >>>
       trackDataBloc.add(AddTracks(filesToAdd));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Adding ${filesToAdd.length} dropped files...")),
-      );
+      // ScaffoldMessenger.of(context).showSnackBar(
+      //   SnackBar(content: Text("Adding ${filesToAdd.length} dropped files...")),
+      // );
     }
 
     // Process tracks within dropped folders for the active collection
