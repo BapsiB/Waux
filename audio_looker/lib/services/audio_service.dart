@@ -200,7 +200,6 @@ class AudioService {
   // Update your AudioService.loadAudio method with timing measurements
 
   Future<void> loadAudio(Track track) async {
-    // Start overall timing
     PerformanceProfiler.start('loadAudio:total');
     String? effectiveSource = track.path;
     bool isUrl = track.isUrl;
@@ -211,6 +210,7 @@ class AudioService {
         '🔍 AudioService: Starting to load audio from: $effectiveSource, isUrl: $isUrl',
       );
 
+      // --- YouTube Stream Extraction (remains the same) ---
       if (isUrl &&
           (effectiveSource.contains('youtube.com') ||
               effectiveSource.contains('youtu.be'))) {
@@ -218,151 +218,113 @@ class AudioService {
         print('🔍 AudioService: Detected YouTube URL. Extracting stream...');
         PerformanceProfiler.start('loadAudio:youtubeExtract');
         try {
-          var videoId = VideoId.parseVideoId(
-            effectiveSource,
-          ); // Extract video ID
-          if (videoId == null) {
+          // ... (YouTube extraction logic remains the same) ...
+          var videoId = VideoId.parseVideoId(effectiveSource);
+          if (videoId == null)
             throw Exception('Could not parse YouTube Video ID');
-          }
           var manifest = await _yt.videos.streamsClient.getManifest(videoId);
-          print(
-            "Available audio streams: ${manifest.audioOnly}",
-          ); // Log available streams
-
-          // Try to find the MP4 stream (specifically tag 140 if possible, or best MP4)
           var streamInfo =
-              manifest.audioOnly.where((s) => s.tag == 140).firstOrNull;
-
-          if (streamInfo == null) {
-            print("Stream 140 not found, searching for best audio/mp4...");
-            var audioOnly = manifest.audioOnly;
-            var mp4Streams = audioOnly.where(
-              (s) => s.codec.mimeType == 'audio/mp4',
-            );
-            var sorted = mp4Streams.sortByBitrate();
-            var count = sorted.length;
-            if (count > 0) {
-              streamInfo = sorted.last;
-            }
-          }
-
-          // Fallback to the highest bitrate overall if no suitable MP4 found
-          if (streamInfo == null) {
-            print(
-              "No suitable MP4 stream found, falling back to highest bitrate overall (might be WebM/Opus).",
-            );
-            streamInfo = manifest.audioOnly.withHighestBitrate();
-          }
-
+              manifest.audioOnly.where((s) => s.tag == 140).firstOrNull ??
+              manifest.audioOnly
+                  .where((s) => s.codec.mimeType == 'audio/mp4')
+                  .sortByBitrate()
+                  .lastOrNull ??
+              manifest.audioOnly.withHighestBitrate();
           effectiveSource = streamInfo.url.toString();
+          print('🔍 AudioService: Using YouTube stream URL: $effectiveSource');
         } catch (ytError) {
           print('❌ AudioService: Error extracting YouTube stream: $ytError');
-          // Rethrow the error to be caught by the outer catch block
-          // This allows AudioPlayerBloc to receive a specific error
           throw Exception('Failed to get YouTube audio stream: $ytError');
         } finally {
           PerformanceProfiler.end('loadAudio:youtubeExtract');
         }
       }
+      // --- End YouTube Stream Extraction ---
 
+      // --- Load Markers (remains the same) ---
       _markersBySource[effectiveSource] = List<TimeMarker>.from(
         track.timeMarkers,
       );
       print(
         "AudioService: Loaded ${track.timeMarkers.length} markers into memory for $effectiveSource",
       );
+      // --- End Load Markers ---
 
-      // Step 1: Try to set up the audio player
+      // --- Set Player Source (remains the same) ---
       PerformanceProfiler.start('loadAudio:setPlayer');
       if (isUrl) {
-        try {
-          print('🔍 AudioService: Setting URL in player');
-          await _audioPlayer.setUrl(effectiveSource);
-        } catch (e) {
-          print('❌ AudioService: Error setting URL: $e');
-        }
+        print('🔍 AudioService: Setting URL in player: $effectiveSource');
+        await _audioPlayer.setUrl(effectiveSource);
       } else {
-        try {
-          print(
-            '🔍 AudioService: Setting file path in player: $effectiveSource',
-          );
-          await _audioPlayer.setFilePath(effectiveSource);
-          print('✅ AudioService: Successfully set file path in player');
-        } catch (e) {
-          print('❌ AudioService: Error setting file path: $e');
-        }
+        print('🔍 AudioService: Setting file path in player: $effectiveSource');
+        await _audioPlayer.setFilePath(effectiveSource);
       }
+      print('✅ AudioService: Successfully set source in player');
       PerformanceProfiler.end('loadAudio:setPlayer');
-      if (!isYouTube) {
-        print('🔍 AudioService: Checking for cached waveform data');
-        PerformanceProfiler.start('loadAudio:checkCache');
-        final cachedWaveform = await loadWaveformFromCache(effectiveSource);
-        PerformanceProfiler.end('loadAudio:checkCache');
+      // --- End Set Player Source ---
 
-        if (cachedWaveform != null) {
-          // Use cached waveform
-          PerformanceProfiler.start('loadAudio:useCache');
-          _waveformData = cachedWaveform;
+      // --- Use Waveform Data from Track Object ---
+      // Instead of checking cache or extracting, directly use the data from the Track object.
+      PerformanceProfiler.start('loadAudio:useTrackWaveform');
+      if (track.waveformData != null && track.waveformData!.isNotEmpty) {
+        _waveformData = track.waveformData; // Update internal state
+        _waveformController.add(_waveformData!); // Emit the data
+        print(
+          '✅ AudioService: Using waveform data (${_waveformData!.length} points) from Track object.',
+        );
+      } else if (isYouTube) {
+        // Generate placeholder for YouTube if track data is missing/empty
+        print(
+          '🔍 AudioService: Generating random fallback waveform for YouTube URL (data missing in Track).',
+        );
+        _generateRandomWaveform();
+        if (_waveformData != null) {
           _waveformController.add(_waveformData!);
-          print('✅ AudioService: Using cached waveform data');
-          PerformanceProfiler.end('loadAudio:useCache');
         } else {
-          // No cached data, need to extract
-          print(
-            '🔍 AudioService: No cached waveform found, extracting new waveform',
-          );
-          // PerformanceProfiler.start('loadAudio:extractWaveform');
-          // Use original source type (isUrl) to decide extraction method
-          // if (isUrl) {
-          //   await _extractWaveformFromUrl(effectiveSource);
-          // } else {
-          //   await _extractWaveformFromFile(effectiveSource);
-          // }
-          // PerformanceProfiler.end('loadAudio:extractWaveform');
-
-          // Save the newly extracted waveform to cache
-          if (_waveformData != null && _waveformData!.isNotEmpty) {
-            PerformanceProfiler.start('loadAudio:saveToCache');
-            await _saveWaveformToCache(effectiveSource, _waveformData!);
-            PerformanceProfiler.end('loadAudio:saveToCache');
-          }
+          _waveformController.add([]); // Emit empty list as fallback
         }
       } else {
-        // For YouTube, generate and use the random fallback waveform
+        // For local/other URL files with missing data in Track object
         print(
-          '🔍 AudioService: Generating random fallback waveform for YouTube URL.',
+          '⚠️ AudioService: Waveform data missing or empty in Track object for non-YouTube source: ${track.path}. Emitting empty waveform.',
         );
-        _generateRandomWaveform(); // Generate the random data
-        if (_waveformData != null) {
-          _waveformController.add(_waveformData!); // Emit the random data
-          print('✅ AudioService: Emitted random waveform for YouTube URL.');
-        } else {
-          print(
-            '⚠️ AudioService: Fallback waveform generation failed for YouTube URL.',
-          );
-          _waveformController.add([]); // Emit empty list as a last resort
-        }
+        _waveformData = null; // Clear internal state
+        _waveformController.add([]); // Emit empty list
+        // NOTE: The background processing should eventually update the DB,
+        // and a subsequent load (triggered by TrackDataBloc update) will get the correct data.
       }
+      PerformanceProfiler.end('loadAudio:useTrackWaveform');
+      // --- End Use Waveform Data ---
+
+      // --- REMOVED: Cache Check and Extraction Logic ---
+      // REMOVED: final cachedWaveform = await loadWaveformFromCache(effectiveSource);
+      // REMOVED: if (cachedWaveform != null) { ... } else { ... extraction logic ... }
+      // REMOVED: _saveWaveformToCache(...)
 
       print('✅ AudioService: Successfully completed loadAudio');
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ AudioService: Error in loadAudio: $e');
+      print(stackTrace); // Log stack trace for debugging
 
-      // Generate a random waveform as fallback
-      print('🔍 AudioService: Generating random waveform as fallback');
+      // Generate a random waveform as fallback ONLY IF it's a critical error
+      // If the error was just YT extraction, loadAudio might have thrown earlier.
+      // It's often better to let the BLoC handle the error state display.
+      print(
+        '🔍 AudioService: Generating random waveform as fallback due to error.',
+      );
       _generateRandomWaveform();
       if (_waveformData != null) {
-        print('🔍 AudioService: Adding random waveform data to stream');
         _waveformController.add(_waveformData!);
-        print('✅ AudioService: Successfully added random waveform to stream');
+      } else {
+        _waveformController.add([]);
       }
+      // Re-throw the exception so the BLoC can catch it and emit an Error state
+      rethrow;
     } finally {
-      // End overall timing
       final totalTime = PerformanceProfiler.end('loadAudio:total');
       print('⏱️ AudioService: Total load time: ${totalTime.inMilliseconds}ms');
-
-      // Log detailed breakdown
       PerformanceProfiler.logAllMeasurements();
+      PerformanceProfiler.reset(); // Reset profiler for next load
     }
   }
 
@@ -432,65 +394,52 @@ class AudioService {
   //   );
   // }
 
-  static Future<List<double>?> _processWaveformBytes(
+  static Future<List<double>?> _processWaveformBytesFromFile(
     String dataFilePath,
   ) async {
-    print('[Isolate] Processing waveform bytes from: $dataFilePath');
+    // ... implementation remains the same ...
+    print('[Static Helper] Processing waveform bytes from: $dataFilePath');
     try {
       final file = File(dataFilePath);
       if (!await file.exists()) {
         print(
-          '[Isolate] Error: Waveform data file not found at: $dataFilePath',
+          '[Static Helper] Error: Waveform data file not found at: $dataFilePath',
+        );
+        return null;
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        print('[Static Helper] Warning: Waveform data file is empty.');
+        return null; // Handle empty file
+      }
+
+      List<double> samples = [];
+      for (int i = 0; i < bytes.length; i += 2) {
+        if (i + 1 < bytes.length) {
+          int byte1 = bytes[i];
+          int byte2 = bytes[i + 1];
+          int sampleInt = (byte2 << 8) | byte1;
+          if (sampleInt > 32767) sampleInt -= 65536;
+          samples.add(sampleInt / 32768.0);
+        }
+      }
+      if (samples.isEmpty) {
+        print(
+          '[Static Helper] Warning: No samples generated after byte conversion.',
         );
         return null;
       }
 
-      final bytes = await file.readAsBytes();
-      print('[Isolate] Read ${bytes.length} bytes.');
-
-      if (bytes.isEmpty) {
-        print('[Isolate] Warning: Waveform data file is empty.');
-        return null;
-      }
-
-      // Convert bytes to audio samples (16-bit PCM, little-endian)
-      List<double> samples = [];
-      for (int i = 0; i < bytes.length; i += 2) {
-        if (i + 1 < bytes.length) {
-          // Combine bytes (assuming little-endian)
-          int byte1 = bytes[i];
-          int byte2 = bytes[i + 1];
-          int sampleInt = (byte2 << 8) | byte1;
-          // Convert to signed value if necessary (adjust based on PCM format)
-          if (sampleInt > 32767) sampleInt -= 65536;
-          // Normalize to -1.0 to 1.0
-          samples.add(sampleInt / 32768.0);
-        }
-      }
-      print('[Isolate] Converted to ${samples.length} samples.');
-
-      if (samples.isEmpty) {
-        print('[Isolate] Warning: No samples generated after byte conversion.');
-        return null;
-      }
-
-      // Downsample for display (reduce to ~1000-1500 points)
-      const int targetLength = 1500; // Or adjust as needed
+      const int targetLength = 1500;
       List<double> processedSamples;
       if (samples.length > targetLength) {
-        final skipFactor =
-            (samples.length / targetLength)
-                .floor(); // Use floor for integer skip
+        final skipFactor = (samples.length / targetLength).floor();
         if (skipFactor <= 0) {
-          print(
-            '[Isolate] Warning: Calculated skipFactor <= 0. Using absolute values directly.',
-          );
           processedSamples = samples.map((s) => s.abs()).toList();
         } else {
           List<double> downsampled = [];
           for (int i = 0; i < samples.length; i += skipFactor) {
             double maxAmp = 0;
-            // Calculate end index, ensuring it doesn't exceed bounds
             int end =
                 (i + skipFactor < samples.length)
                     ? i + skipFactor
@@ -504,16 +453,15 @@ class AudioService {
           processedSamples = downsampled;
         }
       } else {
-        // If fewer samples than target, just use their absolute values
         processedSamples = samples.map((s) => s.abs()).toList();
       }
       print(
-        '[Isolate] Final processed waveform has ${processedSamples.length} points.',
+        '[Static Helper] Final processed waveform has ${processedSamples.length} points.',
       );
 
       return processedSamples.isNotEmpty ? processedSamples : null;
     } catch (e, stackTrace) {
-      print('[Isolate] Error processing waveform bytes: $e\n$stackTrace');
+      print('[Static Helper] Error processing waveform bytes: $e\n$stackTrace');
       return null;
     }
   }
