@@ -209,8 +209,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               1.0,
             )
             : 0.0;
-    final bool canInteract =
-        duration > Duration.zero; // Enable buttons only if duration is known
+    final bool canInteract = true; // Enable buttons only if duration is known
 
     return Container(
       height: _minimizedPlayerHeight, // Ensure container has the correct height
@@ -450,7 +449,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     final position = playerState.position;
     final waveformData = playerState.waveformData;
     final timeMarkers = playerState.markers;
-    final bool canInteract = duration > Duration.zero;
+    final bool canInteract = true;
+    // duration > Duration.zero;
 
     return BlocBuilder<TrackDataBloc, TrackDataState>(
       builder: (context, trackDataState) {

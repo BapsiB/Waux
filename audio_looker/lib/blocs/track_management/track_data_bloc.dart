@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:io'; // Required for Directory operations
+import 'dart:math'; // Required for Random waveform generation
 
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
@@ -61,6 +62,17 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     on<UpdateTrackWaveform>(_onUpdateTrackWaveform);
   }
 
+  // --- Helper to generate placeholder waveform (Updated) ---
+  List<double> _generatePlaceholderWaveform() {
+    // Use the same logic as the original AudioService._generateRandomWaveform
+    print('Generating placeholder waveform (AudioService logic)');
+    return List.generate(
+      100, // Generate 100 points
+      (index) => (0.3 + 0.7 * (index % 10) / 10), // Specific formula
+    );
+  }
+  // --- End Helper ---
+
   // --- Modified _onLoadTracks ---
   Future<void> _onLoadTracks(
     LoadTracks event,
@@ -90,37 +102,50 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     );
 
     try {
-      final allTracks = await _collectionService.getAllTracks();
+      List<Track> allTracks = await _collectionService.getAllTracks();
       final rootFolders = _collectionService.getRootFolders();
       print(
         "TrackDataBloc: Loaded ${allTracks.length} tracks and ${rootFolders.length} roots for '${activeDefinition.name}'.",
       );
 
-      // Apply existing filters before checking for waveforms or emitting
+      // --- START: Process Placeholders & Check for Missing Waveforms ---
+      List<Track> tracksForState = [];
+      List<Track> tracksNeedingProcessing = [];
+
+      for (var track in allTracks) {
+        bool waveformMissing =
+            track.waveformData == null || track.waveformData!.isEmpty;
+
+        if (track.sourceType == TrackSource.youtube && waveformMissing) {
+          // Generate placeholder for YouTube tracks lacking data using the updated helper
+          tracksForState.add(
+            track.copyWith(waveformData: _generatePlaceholderWaveform()),
+          );
+        } else if (!track.isUrl && waveformMissing) {
+          // Mark non-URL tracks with missing data for processing
+          tracksNeedingProcessing.add(track);
+          tracksForState.add(track); // Add original track to state for now
+        } else {
+          // Track is URL (non-YT) or has waveform data
+          tracksForState.add(track);
+        }
+      }
+      // --- END: Process Placeholders & Check for Missing Waveforms ---
+
+      // Apply existing filters *after* potential placeholder generation
       final filteredTracksForState = _applyFilters(
-        allTracks,
+        tracksForState, // Filter the list potentially containing placeholders
         _lastSearchQuery,
         _lastMinimumRating,
       );
 
-      // --- START: Check for missing waveforms ---
-      final List<Track> tracksNeedingWaveform =
-          allTracks
-              .where(
-                (track) =>
-                    (track.waveformData == null ||
-                        track.waveformData!.isEmpty) &&
-                    !track.isUrl, // Check local files only
-              )
-              .toList();
-
-      if (tracksNeedingWaveform.isNotEmpty) {
+      // --- Queue tracks that need actual processing ---
+      if (tracksNeedingProcessing.isNotEmpty) {
         print(
-          '[TrackDataBloc._onLoadTracks] Found ${tracksNeedingWaveform.length} tracks needing waveform processing.',
+          '[TrackDataBloc._onLoadTracks] Found ${tracksNeedingProcessing.length} tracks needing actual waveform processing.',
         );
-        // Prepare data for service (ensure absolute paths)
         final List<Map<String, String>> trackDataForService =
-            tracksNeedingWaveform
+            tracksNeedingProcessing
                 .where((track) => track.id != null && track.path.isNotEmpty)
                 .map(
                   (track) => {
@@ -143,8 +168,9 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
           emit(
             TrackDataProcessingNeeded(
               addedTracks:
-                  tracksNeedingWaveform, // Signal which tracks need processing
-              tracks: filteredTracksForState, // Base tracks for UI
+                  tracksNeedingProcessing, // Signal which tracks need processing
+              tracks:
+                  filteredTracksForState, // Base tracks for UI (includes placeholders)
               rootFolders: rootFolders, // Base roots for UI
               searchQuery: _lastSearchQuery,
               minimumRating: _lastMinimumRating,
@@ -173,7 +199,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       } else {
         // No tracks need waveform processing, emit loaded state directly
         print(
-          '[TrackDataBloc._onLoadTracks] No tracks need waveform processing, emitting normal loaded state.',
+          '[TrackDataBloc._onLoadTracks] No tracks need actual waveform processing, emitting normal loaded state.',
         );
         emit(
           TrackDataLoaded(
@@ -184,7 +210,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
           ),
         );
       }
-      // --- END: Check for missing waveforms ---
+      // --- END: Queue tracks ---
     } catch (e, stackTrace) {
       print("TrackDataBloc: ERROR loading tracks: $e\n$stackTrace");
       emit(TrackDataError("Failed to load tracks: ${e.toString()}"));
@@ -192,6 +218,174 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
   }
   // --- End Modified _onLoadTracks ---
 
+  // --- Modified _onAddTracks ---
+  Future<void> _onAddTracks(
+    AddTracks event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    final activeDef = _collectionService.getActiveCollection();
+    if (activeDef == null) {
+      emit(const TrackDataError("Cannot add tracks: No active collection."));
+      return;
+    }
+    print(
+      "[TrackDataBloc] Adding ${event.filePaths.length} tracks to ${activeDef.name}",
+    );
+
+    final List<Track> addedOrFoundTracks = [];
+    final List<Track> tracksNeedingProcessing = [];
+    // Removed tracksWithPlaceholders as placeholder logic is now applied later
+
+    // Emit Loading state while adding
+    emit(
+      TrackDataLoading(
+        previousTracks: _getTracksFromState(),
+        previousRootFolders: _getRootFoldersFromState(),
+        searchQuery: _lastSearchQuery,
+        minimumRating: _lastMinimumRating,
+      ),
+    );
+
+    try {
+      for (final filePath in event.filePaths) {
+        try {
+          final Track? addedOrFoundTrack = await _collectionService
+              .addLocalFile(filePath);
+          if (addedOrFoundTrack != null) {
+            addedOrFoundTracks.add(addedOrFoundTrack);
+            // Check if this newly added/found track needs processing
+            bool waveformMissing =
+                addedOrFoundTrack.waveformData == null ||
+                addedOrFoundTrack.waveformData!.isEmpty;
+            // Only queue local files for actual processing
+            if (!addedOrFoundTrack.isUrl && waveformMissing) {
+              tracksNeedingProcessing.add(addedOrFoundTrack);
+            }
+          }
+        } catch (e) {
+          print('TrackDataBloc ERROR: Failed to add file $filePath: $e');
+        }
+      }
+      print(
+        "[TrackDataBloc] Finished adding/checking ${event.filePaths.length} tracks in service. ${addedOrFoundTracks.length} added/found.",
+      );
+
+      // --- Trigger Waveform Processing for newly added local files ---
+      if (tracksNeedingProcessing.isNotEmpty) {
+        print(
+          '[TrackDataBloc._onAddTracks] Triggering waveform processing for ${tracksNeedingProcessing.length} newly added/found local tracks...',
+        );
+        final List<Map<String, String>> trackDataForService =
+            tracksNeedingProcessing
+                .where((track) => track.id != null && track.path.isNotEmpty)
+                .map(
+                  (track) => {
+                    'id': track.id!.toString(),
+                    'path': _resolveAbsolutePath(track), // Resolve path here
+                  },
+                )
+                .toList();
+
+        if (trackDataForService.isNotEmpty) {
+          _waveformProcessingService.addTracksToQueue(trackDataForService);
+          print(
+            '[TrackDataBloc._onAddTracks] Added ${trackDataForService.length} tracks to waveform queue.',
+          );
+
+          // Emit the ProcessingNeeded state, including ALL tracks currently loaded
+          final allTracksAfterAdd = await _collectionService.getAllTracks();
+          // --- Add placeholders for any YT tracks in the full list ---
+          final allTracksWithPlaceholders =
+              allTracksAfterAdd.map((track) {
+                bool waveformMissing =
+                    track.waveformData == null || track.waveformData!.isEmpty;
+                if (track.sourceType == TrackSource.youtube &&
+                    waveformMissing) {
+                  // Use the updated helper method
+                  return track.copyWith(
+                    waveformData: _generatePlaceholderWaveform(),
+                  );
+                }
+                return track;
+              }).toList();
+          // --- Apply filters to the list with placeholders ---
+          final filteredTracks = _applyFilters(
+            allTracksWithPlaceholders,
+            _lastSearchQuery,
+            _lastMinimumRating,
+          );
+
+          emit(
+            TrackDataProcessingNeeded(
+              addedTracks:
+                  tracksNeedingProcessing, // Tracks *actually* sent for processing
+              tracks:
+                  filteredTracks, // Show the *updated* filtered list (with placeholders)
+              rootFolders: _getRootFoldersFromState(),
+              searchQuery: _lastSearchQuery,
+              minimumRating: _lastMinimumRating,
+            ),
+          );
+          print(
+            '[TrackDataBloc._onAddTracks] Emitted TrackDataProcessingNeeded.',
+          );
+        } else {
+          print(
+            '[TrackDataBloc._onAddTracks] No valid tracks to queue. Reloading...',
+          );
+          add(ReloadDataPreservingFilters()); // Fallback reload
+        }
+      } else {
+        // No tracks needed processing, just reload to show added tracks
+        print(
+          '[TrackDataBloc._onAddTracks] No new tracks need processing. Reloading...',
+        );
+        add(ReloadDataPreservingFilters());
+      }
+      // --- End Trigger Waveform Processing ---
+    } catch (e, stackTrace) {
+      print('TrackDataBloc ERROR: Exception in _onAddTracks: $e\n$stackTrace');
+      emit(TrackDataError("Failed to add tracks: ${e.toString()}"));
+      add(ReloadDataPreservingFilters());
+    }
+  }
+  // --- End Modified _onAddTracks ---
+
+  Future<void> _onAddTrackUrl(
+    AddTrackUrl event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    final activeDef = _collectionService.getActiveCollection();
+    if (activeDef == null) {
+      emit(const TrackDataError("Cannot add URL: No active collection."));
+      return;
+    }
+
+    emit(
+      TrackDataLoading(
+        previousTracks: _getTracksFromState(),
+        previousRootFolders: _getRootFoldersFromState(),
+        searchQuery: _lastSearchQuery,
+        minimumRating: _lastMinimumRating,
+      ),
+    );
+
+    try {
+      // addUrl now returns the track, check if it's YouTube
+      final Track? addedTrack = await _collectionService.addUrl(event.url);
+
+      // --- Reload data AFTER adding the URL ---
+      // The _onLoadTracks handler will now generate the placeholder if needed.
+      add(ReloadDataPreservingFilters());
+    } catch (e, stackTrace) {
+      print("TrackDataBloc ERROR adding track from URL: $e\n$stackTrace");
+      emit(TrackDataError("Failed to add URL: ${e.toString()}"));
+      // Reload even on error to potentially clear loading state
+      add(ReloadDataPreservingFilters());
+    }
+  }
+
+  // --- Other event handlers ---
   Future<void> _onSearchTracks(
     SearchTracks event,
     Emitter<TrackDataState> emit,
@@ -201,8 +395,6 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     final activeDefinition = _collectionService.getActiveCollection();
     if (activeDefinition == null) return; // Should have data if loaded
 
-    // Get the base list of tracks (all tracks from service)
-    // Avoid searching within an already filtered list
     List<Track> allTracks = [];
     try {
       allTracks = await _collectionService.getAllTracks();
@@ -212,14 +404,24 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       return;
     }
 
-    // Apply filters (search and rating)
+    // --- Add placeholders before filtering ---
+    final allTracksWithPlaceholders =
+        allTracks.map((track) {
+          bool waveformMissing =
+              track.waveformData == null || track.waveformData!.isEmpty;
+          if (track.sourceType == TrackSource.youtube && waveformMissing) {
+            return track.copyWith(waveformData: _generatePlaceholderWaveform());
+          }
+          return track;
+        }).toList();
+    // --- End Add placeholders ---
+
     final filteredTracks = _applyFilters(
-      allTracks,
+      allTracksWithPlaceholders, // <<< Filter list with placeholders
       _lastSearchQuery,
       _lastMinimumRating,
     );
 
-    // Emit the loaded state with the filtered results
     emit(
       TrackDataLoaded(
         tracks: filteredTracks,
@@ -239,7 +441,6 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     final activeDefinition = _collectionService.getActiveCollection();
     if (activeDefinition == null) return;
 
-    // Get the base list of tracks
     List<Track> allTracks = [];
     try {
       allTracks = await _collectionService.getAllTracks();
@@ -249,14 +450,24 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       return;
     }
 
-    // Apply filters (search and rating)
+    // --- Add placeholders before filtering ---
+    final allTracksWithPlaceholders =
+        allTracks.map((track) {
+          bool waveformMissing =
+              track.waveformData == null || track.waveformData!.isEmpty;
+          if (track.sourceType == TrackSource.youtube && waveformMissing) {
+            return track.copyWith(waveformData: _generatePlaceholderWaveform());
+          }
+          return track;
+        }).toList();
+    // --- End Add placeholders ---
+
     final filteredTracks = _applyFilters(
-      allTracks,
+      allTracksWithPlaceholders, // <<< Filter list with placeholders
       _lastSearchQuery,
       _lastMinimumRating,
     );
 
-    // Emit the loaded state with the filtered results
     emit(
       TrackDataLoaded(
         tracks: filteredTracks,
@@ -280,15 +491,11 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     print(
       "TrackDataBloc: Starting folder sync for '${activeDefinition.name}'.",
     );
-    // Optionally emit a specific "Syncing" state if needed
-    // emit(TrackDataSyncing(...));
 
     try {
       final rootFolders = _collectionService.getRootFolders();
       if (rootFolders.isEmpty) {
         print("TrackDataBloc: No root folders defined for sync.");
-        // If syncing state exists, emit loaded state
-        // if (state is TrackDataSyncing) add(ReloadDataPreservingFilters());
         return;
       }
 
@@ -331,12 +538,9 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
         print(
           "TrackDataBloc: Sync found ${filesToAdd.length} new files to add.",
         );
-        // Dispatch AddTracks event. This will handle adding and then reloading.
         add(AddTracks(filesToAdd));
       } else {
         print("TrackDataBloc: Sync complete. No new files found.");
-        // If syncing state exists, emit loaded state
-        // if (state is TrackDataSyncing) add(ReloadDataPreservingFilters());
       }
     } catch (e, stackTrace) {
       print("TrackDataBloc: ERROR during folder sync: $e\n$stackTrace");
@@ -344,160 +548,25 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     }
   }
 
-  Future<void> _onAddTracks(
-    AddTracks event,
-    Emitter<TrackDataState> emit,
-  ) async {
-    final activeDef = _collectionService.getActiveCollection();
-    if (activeDef == null) {
-      emit(const TrackDataError("Cannot add tracks: No active collection."));
-      return;
-    }
-    print(
-      "[TrackDataBloc] Adding ${event.filePaths.length} tracks to ${activeDef.name}",
-    );
-
-    // Keep track of tracks successfully added/found to trigger waveform processing
-    final List<Track> addedOrFoundTracks = [];
-
-    // Emit Loading state while adding
-    emit(
-      TrackDataLoading(
-        previousTracks: _getTracksFromState(),
-        previousRootFolders: _getRootFoldersFromState(),
-        searchQuery: _lastSearchQuery,
-        minimumRating: _lastMinimumRating,
-      ),
-    );
-
-    try {
-      for (final filePath in event.filePaths) {
-        try {
-          // *** ASSUMPTION: _collectionService.addLocalFile returns Track? ***
-          final Track? addedTrack = await _collectionService.addLocalFile(
-            filePath,
-          );
-          if (addedTrack != null) {
-            addedOrFoundTracks.add(
-              addedTrack,
-            ); // Collect successfully added/found tracks
-          }
-        } catch (e) {
-          print('TrackDataBloc ERROR: Failed to add file $filePath: $e');
-          // Optionally collect errors to show user
-        }
-      }
-      print(
-        "[TrackDataBloc] Finished adding/checking ${event.filePaths.length} tracks in service. ${addedOrFoundTracks.length} added/found.",
-      );
-
-      // --- Trigger Waveform Processing ---
-      if (addedOrFoundTracks.isNotEmpty) {
-        print(
-          '[TrackDataBloc] Triggering waveform processing for ${addedOrFoundTracks.length} tracks...',
-        );
-        // 1. Prepare data for the service (only local files with paths and IDs)
-        final List<Map<String, String>> trackDataForService =
-            addedOrFoundTracks
-                .where(
-                  (track) =>
-                      !track.isUrl &&
-                      track.path != null &&
-                      track.path!.isNotEmpty &&
-                      track.id != null,
-                ) // Ensure ID is present
-                // *** FIX: Convert track.id to String ***
-                .map(
-                  (track) => {
-                    'id': track.id!.toString(),
-                    'path': _resolveAbsolutePath(track),
-                  }, // Resolve path here
-                )
-                .toList();
-
-        if (trackDataForService.isNotEmpty) {
-          // Add tracks to the service queue
-          _waveformProcessingService.addTracksToQueue(trackDataForService);
-          print(
-            '[TrackDataBloc] Added ${trackDataForService.length} tracks to waveform queue.',
-          );
-
-          // *** Emit the state to signal processing is needed ***
-          // Capture current loaded data to include in the new state
-          final currentTracks =
-              _getTracksFromState(); // Get potentially older tracks
-          final currentRoots = _getRootFoldersFromState();
-          // We need the *full* list after adding, before filtering, to show UI
-          final allTracksAfterAdd = await _collectionService.getAllTracks();
-          final filteredTracksAfterAdd = _applyFilters(
-            allTracksAfterAdd,
-            _lastSearchQuery,
-            _lastMinimumRating,
-          );
-
-          emit(
-            TrackDataProcessingNeeded(
-              addedTracks:
-                  addedOrFoundTracks, // Signal which tracks were added/need processing
-              tracks:
-                  filteredTracksAfterAdd, // Show the *updated* filtered list
-              rootFolders: currentRoots, // Keep current roots
-              searchQuery: _lastSearchQuery,
-              minimumRating: _lastMinimumRating,
-            ),
-          );
-          print('[TrackDataBloc] Emitted TrackDataProcessingNeeded.');
-        } else {
-          print(
-            '[TrackDataBloc] No valid tracks found needing waveform processing after add operation. Reloading...',
-          );
-          // No processing needed, just reload
-          add(ReloadDataPreservingFilters());
-        }
-      } else {
-        // No tracks were added/found, just reload
-        print('[TrackDataBloc] No tracks were added/found. Reloading...');
-        add(ReloadDataPreservingFilters());
-      }
-      // --- End Trigger Waveform Processing ---
-
-      // --- Reload data removed from here - now handled by WaveformProcessingBloc listener or above ---
-      // add(ReloadDataPreservingFilters());
-    } catch (e, stackTrace) {
-      print('TrackDataBloc ERROR: Exception in _onAddTracks: $e\n$stackTrace');
-      emit(TrackDataError("Failed to add tracks: ${e.toString()}"));
-      // Consider reloading even on error?
-      add(ReloadDataPreservingFilters());
-    }
-  }
-
   Future<void> _onUpdateTrackWaveform(
     UpdateTrackWaveform event,
     Emitter<TrackDataState> emit,
   ) async {
-    // Convert incoming trackId string to int for comparison
     final int? targetTrackId = int.tryParse(event.trackId);
     if (targetTrackId == null) {
       print(
         'Error: Invalid trackId received for waveform update: ${event.trackId}',
       );
-      return; // Skip if ID is not a valid integer
+      return;
     }
 
-    final currentState = state; // Capture current state
-
-    // Log the state type and the ID we are looking for
-    // print( // Reduce noise
-    //   '[TrackDataBloc._onUpdateTrackWaveform] Received update for track ID: $targetTrackId. Current state: ${currentState.runtimeType}',
-    // );
-
+    final currentState = state;
     List<Track>? trackListToUpdate;
     List<String>? rootFoldersToKeep;
     String? currentSearchQuery;
     int? currentMinimumRating;
     bool wasProcessingNeeded = false;
 
-    // Determine the list to update based on the current state
     if (currentState is TrackDataLoaded) {
       trackListToUpdate = currentState.tracks;
       rootFoldersToKeep = currentState.rootFolders;
@@ -508,15 +577,12 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       rootFoldersToKeep = currentState.rootFolders;
       currentSearchQuery = currentState.searchQuery;
       currentMinimumRating = currentState.minimumRating;
-      wasProcessingNeeded = true; // Flag that we were in this state
+      wasProcessingNeeded = true;
     } else if (currentState is TrackDataLoading) {
-      // If loading, update the previous tracks if available
       trackListToUpdate = currentState.previousTracks;
-      // Don't emit a new state if just loading, wait for load to finish
       print(
         'Warning: Received waveform update while loading. Update will be applied on next load.',
       );
-      // Persist the change directly to DB, it will be picked up by the load
       try {
         final track = await _collectionService.getTrack(targetTrackId);
         if (track != null) {
@@ -532,12 +598,11 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
           '[TrackDataBloc._onUpdateTrackWaveform] Error persisting waveform while loading for track $targetTrackId: $e',
         );
       }
-      return; // Don't emit while loading
+      return;
     } else {
       print(
         'Warning: Received waveform update while state is ${currentState.runtimeType}. Ignoring UI update.',
       );
-      // Still try to persist the change directly to DB
       try {
         final track = await _collectionService.getTrack(targetTrackId);
         if (track != null) {
@@ -553,39 +618,26 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
           '[TrackDataBloc._onUpdateTrackWaveform] Error persisting waveform during other state for track $targetTrackId: $e',
         );
       }
-      return; // Don't emit from other states
+      return;
     }
 
-    // If we have a list to update
     if (trackListToUpdate != null) {
       final trackIndex = trackListToUpdate.indexWhere(
         (t) => t.id == targetTrackId,
       );
 
       if (trackIndex != -1) {
-        // print( // Reduce noise
-        //   '[TrackDataBloc._onUpdateTrackWaveform] Track $targetTrackId FOUND.',
-        // );
-        final List<Track> updatedTracks = List.from(
-          trackListToUpdate,
-        ); // Create mutable copy
+        final List<Track> updatedTracks = List.from(trackListToUpdate);
         final originalTrack = updatedTracks[trackIndex];
-
-        // Only update if waveform data is actually different (optional optimization)
-        // if (!listEquals(originalTrack.waveformData, event.waveformData)) {
         updatedTracks[trackIndex] = originalTrack.copyWith(
           waveformData: event.waveformData,
         );
 
-        // Emit the appropriate state with updated tracks
         if (wasProcessingNeeded) {
-          // If we were in ProcessingNeeded, stay in it but with updated tracks
-          // We might need to update the 'addedTracks' list if this was the last one,
-          // but WaveformProcessingBloc handles the final completion state.
           final processingState = currentState as TrackDataProcessingNeeded;
           emit(
             TrackDataProcessingNeeded(
-              addedTracks: processingState.addedTracks, // Keep original list
+              addedTracks: processingState.addedTracks,
               tracks: updatedTracks,
               rootFolders: rootFoldersToKeep ?? [],
               searchQuery: currentSearchQuery,
@@ -593,7 +645,6 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
             ),
           );
         } else {
-          // If we were in Loaded, emit Loaded with updated tracks
           emit(
             TrackDataLoaded(
               tracks: updatedTracks,
@@ -603,65 +654,21 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
             ),
           );
         }
-        // print( // Reduce noise
-        //   '[TrackDataBloc._onUpdateTrackWaveform] Emitted updated state for track $targetTrackId.',
-        // );
 
-        // Persist the change to the database
         try {
           await _collectionService.updateTrack(updatedTracks[trackIndex]);
-          // print( // Reduce noise
-          //   '[TrackDataBloc._onUpdateTrackWaveform] Persisted waveform for track $targetTrackId to DB.',
-          // );
         } catch (e) {
           print(
             '[TrackDataBloc._onUpdateTrackWaveform] Error persisting waveform for track $targetTrackId: $e',
           );
-          // Optionally emit an error state or revert
         }
-        // } else {
-        // print(
-        //   '[TrackDataBloc._onUpdateTrackWaveform] Waveform data for track $targetTrackId is unchanged. Skipping emit/persist.',
-        // );
-        // }
       } else {
-        // Handle case where track ID is not found
         print(
           'Warning: Track $targetTrackId not found for waveform update in state ${currentState.runtimeType}.',
         );
       }
     }
   }
-
-  Future<void> _onAddTrackUrl(
-    AddTrackUrl event,
-    Emitter<TrackDataState> emit,
-  ) async {
-    final activeDef = _collectionService.getActiveCollection();
-    if (activeDef == null) {
-      emit(const TrackDataError("Cannot add URL: No active collection."));
-      return;
-    }
-
-    emit(
-      TrackDataLoading(
-        previousTracks: _getTracksFromState(),
-        previousRootFolders: _getRootFoldersFromState(),
-        searchQuery: _lastSearchQuery,
-        minimumRating: _lastMinimumRating,
-      ),
-    );
-
-    try {
-      await _collectionService.addUrl(event.url);
-      add(ReloadDataPreservingFilters()); // Reload data
-    } catch (e, stackTrace) {
-      print("TrackDataBloc ERROR adding track from URL: $e\n$stackTrace");
-      emit(TrackDataError("Failed to add URL: ${e.toString()}"));
-    }
-  }
-
-  // In TrackDataBloc class:
 
   Future<void> _onRemoveTrack(
     RemoveTrack event,
@@ -672,12 +679,12 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       print(
         "TrackDataBloc._onRemoveTrack: No active collection, skipping delete for track ${event.trackId}",
       );
-      return; // No active collection
+      return;
     }
 
     print(
       "TrackDataBloc._onRemoveTrack: Received event for track ${event.trackId}",
-    ); // <<< Added Log
+    );
 
     final tracksBeforeDelete = _getTracksFromState();
     List<Track> optimisticTracks =
@@ -685,8 +692,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
 
     print(
       "TrackDataBloc._onRemoveTrack: Emitting optimistic state with ${optimisticTracks.length} tracks.",
-    ); // <<< Added Log
-    // Optimistic UI update
+    );
     emit(
       TrackDataLoaded(
         tracks: optimisticTracks,
@@ -699,29 +705,24 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     try {
       print(
         "TrackDataBloc._onRemoveTrack: Calling collectionService.deleteTrack(${event.trackId}).",
-      ); // <<< Added Log
-      // --- Call the service ---
+      );
       final int deletedCount = await _collectionService.deleteTrack(
         event.trackId,
       );
-      // --- End Call ---
       print(
         "TrackDataBloc._onRemoveTrack: Service deleteTrack completed. Rows affected: $deletedCount",
-      ); // <<< Added Log
+      );
 
       if (deletedCount == 0) {
         print(
           "TrackDataBloc._onRemoveTrack: Warning - Service reported 0 rows deleted for track ${event.trackId}. Data might be inconsistent.",
         );
-        // Consider reloading data if deletion reported failure
         add(ReloadDataPreservingFilters());
       }
-      // If successful, optimistic state is correct. No need to emit again unless error.
     } catch (e, stackTrace) {
       print(
         "TrackDataBloc._onRemoveTrack: ERROR removing track ${event.trackId} from service: $e\n$stackTrace",
-      ); // <<< Added Log
-      // Revert optimistic update by reloading
+      );
       add(ReloadDataPreservingFilters());
       emit(TrackDataError("Failed to remove track: ${e.toString()}"));
     }
@@ -741,9 +742,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
 
     try {
       await _collectionService.addRootFolder(event.folderPath);
-      // Reload data to show new root folder and potentially trigger sync/scan later
       add(ReloadDataPreservingFilters());
-      // Optionally trigger sync immediately: add(SyncFolders());
     } catch (e) {
       print('TrackDataBloc: Error adding root folder: $e');
       emit(TrackDataError('Failed to add root folder: ${e.toString()}'));
@@ -764,10 +763,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
 
     try {
       await _collectionService.removeRootFolder(event.folderPath);
-      // Reload data to update root folder list
       add(ReloadDataPreservingFilters());
-      // Note: Tracks from the removed root are NOT automatically deleted from the DB.
-      // A separate "clean-up" mechanism might be needed if desired.
     } catch (e) {
       print('TrackDataBloc: Error removing root folder: $e');
       emit(TrackDataError('Failed to remove root folder: ${e.toString()}'));
@@ -778,12 +774,110 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     ReloadDataPreservingFilters event,
     Emitter<TrackDataState> emit,
   ) async {
-    // This is essentially the same as _onLoadTracks but ensures
-    // filters (_lastSearchQuery, _lastMinimumRating) are reapplied.
     add(LoadTracks()); // Trigger the standard load process
   }
 
-  // --- Helper Methods ---
+  Future<void> _onDeleteFolder(
+    DeleteFolder event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    final activeDef = _collectionService.getActiveCollection();
+    if (activeDef == null) return;
+
+    print("TrackDataBloc: Received DeleteFolder event for ${event.folderPath}");
+
+    try {
+      final tracksToDelete = await _collectionService.getTracksInFolder(
+        event.folderPath,
+      );
+      final trackIdsToDelete =
+          tracksToDelete.map((t) => t.id).whereNotNull().toList();
+      print(
+        "Found ${trackIdsToDelete.length} tracks to delete within ${event.folderPath}",
+      );
+
+      for (final trackId in trackIdsToDelete) {
+        try {
+          await _collectionService.deleteTrack(trackId);
+        } catch (e) {
+          print("Error deleting track $trackId during folder delete: $e");
+        }
+      }
+      print("Finished removing ${trackIdsToDelete.length} tracks from DB.");
+
+      if (activeDef.type == CollectionType.local) {
+        final rootFolders = _collectionService.getRootFolders();
+        final normalizedPath = pathLib.normalize(event.folderPath);
+        if (rootFolders.any(
+          (root) => pathLib.equals(pathLib.normalize(root), normalizedPath),
+        )) {
+          try {
+            await _collectionService.removeRootFolder(event.folderPath);
+            print("Removed root folder entry: ${event.folderPath}");
+          } catch (e) {
+            print("Error removing root folder ${event.folderPath} from DB: $e");
+          }
+        }
+      }
+
+      if (event.folderPath != "Web Links" &&
+          event.folderPath != "Imported Files" &&
+          tracksToDelete.isNotEmpty &&
+          activeDef.type == CollectionType.local) {
+        emit(
+          FolderDeletionConfirmationNeeded(
+            folderPath: event.folderPath,
+            folderName: pathLib.basename(event.folderPath),
+            trackCount: tracksToDelete.length,
+          ),
+        );
+        print(
+          "Emitting FolderDeletionConfirmationNeeded for ${event.folderPath}",
+        );
+      } else {
+        print("No confirmation needed or folder empty/shared. Reloading data.");
+        add(ReloadDataPreservingFilters());
+      }
+    } catch (e, stackTrace) {
+      print("TrackDataBloc ERROR during folder deletion: $e\n$stackTrace");
+      emit(TrackDataError("Failed to delete folder: ${e.toString()}"));
+      add(ReloadDataPreservingFilters());
+    }
+  }
+
+  Future<void> _onConfirmDeleteFolderFiles(
+    ConfirmDeleteFolderFiles event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    print(
+      "TrackDataBloc: Received ConfirmDeleteFolderFiles for ${event.folderPath}. Delete from disk: ${event.deleteFilesFromDisk}",
+    );
+
+    if (event.deleteFilesFromDisk) {
+      emit(
+        TrackDataDeletingFolder(
+          previousTracks: _getTracksFromState(),
+          previousRootFolders: _getRootFoldersFromState(),
+          searchQuery: _lastSearchQuery,
+          minimumRating: _lastMinimumRating,
+        ),
+      );
+      try {
+        await _collectionService.deleteFolderFromDisk(event.folderPath);
+        print("Deletion from disk requested for ${event.folderPath}");
+      } catch (e) {
+        print("Error during disk deletion call for ${event.folderPath}: $e");
+        emit(
+          TrackDataError("Failed to delete folder from disk: ${e.toString()}"),
+        );
+      }
+    } else {
+      print("Skipping deletion from disk for ${event.folderPath}");
+    }
+
+    print("Reloading data after folder deletion process.");
+    add(ReloadDataPreservingFilters());
+  }
 
   List<Track> _getTracksFromState() {
     final currentState = state;
@@ -815,7 +909,6 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     return [];
   }
 
-  /// Applies search and rating filters to a list of tracks.
   List<Track> _applyFilters(
     List<Track> allTracks,
     String searchQuery,
@@ -823,7 +916,6 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
   ) {
     List<Track> filtered = allTracks;
 
-    // Apply search query
     if (searchQuery.isNotEmpty) {
       final lowerCaseQuery = searchQuery.toLowerCase();
       filtered =
@@ -835,12 +927,10 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
                 track.generalTags.any(
                   (tag) => tag.toLowerCase().contains(lowerCaseQuery),
                 ) ||
-                // Consider if searching path is desired
                 track.path.toLowerCase().contains(lowerCaseQuery);
           }).toList();
     }
 
-    // Apply rating filter
     if (minRating != null && minRating > 0) {
       filtered = filtered.where((track) => track.rating >= minRating).toList();
     }
@@ -848,7 +938,6 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     return filtered;
   }
 
-  /// Recursively finds audio files in a directory.
   Future<void> _findAudioFilesRecursively(
     Directory dir,
     List<String> audioFilePaths,
@@ -892,9 +981,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     if (activeDefinition?.type == CollectionType.shared &&
         activeDefinition?.rootPath != null &&
         !pathLib.isAbsolute(track.path)) {
-      // Check if path is not already absolute
       try {
-        // Join the root path with the relative track path
         return pathLib.normalize(
           pathLib.join(activeDefinition!.rootPath!, track.path),
         );
@@ -902,133 +989,10 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
         print(
           "Error resolving relative path ${track.path} with root ${activeDefinition!.rootPath}: $e",
         );
-        return track.path; // Return original path on error
+        return track.path;
       }
     }
-    // If local collection or path is already absolute, return normalized
     return pathLib.normalize(track.path);
-  }
-
-  Future<void> _onDeleteFolder(
-    DeleteFolder event,
-    Emitter<TrackDataState> emit,
-  ) async {
-    final activeDef = _collectionService.getActiveCollection();
-    if (activeDef == null) return; // No active collection
-
-    print("TrackDataBloc: Received DeleteFolder event for ${event.folderPath}");
-
-    // Optionally emit a loading/deleting state
-    // emit(TrackDataDeletingFolder(...));
-
-    try {
-      // 1. Find all tracks within the folder (recursively) using the service
-      final tracksToDelete = await _collectionService.getTracksInFolder(
-        event.folderPath,
-      );
-      final trackIdsToDelete =
-          tracksToDelete.map((t) => t.id).whereNotNull().toList();
-      print(
-        "Found ${trackIdsToDelete.length} tracks to delete within ${event.folderPath}",
-      );
-
-      // 2. Remove tracks from the database first
-      for (final trackId in trackIdsToDelete) {
-        try {
-          await _collectionService.deleteTrack(trackId);
-        } catch (e) {
-          print("Error deleting track $trackId during folder delete: $e");
-          // Optionally collect errors to report
-        }
-      }
-      print("Finished removing ${trackIdsToDelete.length} tracks from DB.");
-
-      // 3. Check if the deleted folder is a root folder (for local collections)
-      if (activeDef.type == CollectionType.local) {
-        final rootFolders = _collectionService.getRootFolders();
-        final normalizedPath = pathLib.normalize(
-          event.folderPath,
-        ); // Normalize before check
-        if (rootFolders.any(
-          (root) => pathLib.equals(pathLib.normalize(root), normalizedPath),
-        )) {
-          try {
-            await _collectionService.removeRootFolder(event.folderPath);
-            print("Removed root folder entry: ${event.folderPath}");
-          } catch (e) {
-            print("Error removing root folder ${event.folderPath} from DB: $e");
-          }
-        }
-      }
-
-      // 4. Emit confirmation state to ask the user about deleting files from disk
-      // Only ask if the folder is not special (e.g., web links) and tracks were found
-      // And only if it's a LOCAL collection (don't delete files from shared folders)
-      if (event.folderPath != "Web Links" &&
-          event.folderPath != "Imported Files" &&
-          tracksToDelete.isNotEmpty &&
-          activeDef.type == CollectionType.local) {
-        // <<< Check type
-        emit(
-          FolderDeletionConfirmationNeeded(
-            folderPath: event.folderPath,
-            folderName: pathLib.basename(
-              event.folderPath,
-            ), // Use basename for display
-            trackCount: tracksToDelete.length,
-          ),
-        );
-        print(
-          "Emitting FolderDeletionConfirmationNeeded for ${event.folderPath}",
-        );
-      } else {
-        // If no confirmation needed (e.g., special folder, empty, or shared collection), just reload
-        print("No confirmation needed or folder empty/shared. Reloading data.");
-        add(ReloadDataPreservingFilters());
-      }
-    } catch (e, stackTrace) {
-      print("TrackDataBloc ERROR during folder deletion: $e\n$stackTrace");
-      emit(TrackDataError("Failed to delete folder: ${e.toString()}"));
-      // Reload data even on error to reflect DB changes
-      add(ReloadDataPreservingFilters());
-    }
-  }
-
-  Future<void> _onConfirmDeleteFolderFiles(
-    ConfirmDeleteFolderFiles event,
-    Emitter<TrackDataState> emit,
-  ) async {
-    print(
-      "TrackDataBloc: Received ConfirmDeleteFolderFiles for ${event.folderPath}. Delete from disk: ${event.deleteFilesFromDisk}",
-    );
-
-    if (event.deleteFilesFromDisk) {
-      // Optionally emit deleting state
-      emit(
-        TrackDataDeletingFolder(
-          previousTracks: _getTracksFromState(),
-          previousRootFolders: _getRootFoldersFromState(),
-          searchQuery: _lastSearchQuery,
-          minimumRating: _lastMinimumRating,
-        ),
-      );
-      try {
-        await _collectionService.deleteFolderFromDisk(event.folderPath);
-        print("Deletion from disk requested for ${event.folderPath}");
-      } catch (e) {
-        print("Error during disk deletion call for ${event.folderPath}: $e");
-        // Emit an error state or show a snackbar via UI listener
-        emit(
-          TrackDataError("Failed to delete folder from disk: ${e.toString()}"),
-        );
-      }
-    } else {
-      print("Skipping deletion from disk for ${event.folderPath}");
-    }
-
-    // Always reload data after handling confirmation (or skipping)
-    print("Reloading data after folder deletion process.");
-    add(ReloadDataPreservingFilters());
   }
 }
 
