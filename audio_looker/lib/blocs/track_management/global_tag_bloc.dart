@@ -42,10 +42,10 @@ class GlobalTagBloc extends Bloc<GlobalTagEvent, GlobalTagState> {
     Emitter<GlobalTagState> emit,
   ) async {
     final currentState = state;
-    List<Tag> currentTags = [];
-    if (currentState is GlobalTagLoaded) {
-      currentTags = currentState.allTags;
-    }
+    // List<Tag> currentTags = [];
+    // if (currentState is GlobalTagLoaded) {
+    //   currentTags = currentState.allTags;
+    // }
 
     try {
       // Service handles checking for duplicates

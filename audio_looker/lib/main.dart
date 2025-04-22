@@ -125,16 +125,13 @@ class MyApp extends StatelessWidget {
           ),
           // --- BLoCs that might depend on others ---
           BlocProvider<AudioPlayerBloc>(
-            // <<< Create AudioPlayerBloc
             create:
                 (context) => AudioPlayerBloc(
                   context.read<AudioService>(),
                   context.read<TrackMetadataBloc>(),
-                  context.read<CollectionService>(),
                 ),
           ),
           BlocProvider<PlaylistBloc>(
-            // <<< Create PlaylistBloc
             create:
                 (context) => PlaylistBloc(
                   playlistService: context.read<PlaylistService>(),
@@ -143,7 +140,7 @@ class MyApp extends StatelessWidget {
           ),
         ],
         child: MaterialApp(
-          title: 'Audio Looker', // Updated App Name
+          title: 'WAUX', // Updated App Name
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
             useMaterial3: true,

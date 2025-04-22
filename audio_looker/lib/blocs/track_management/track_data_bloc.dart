@@ -2,7 +2,7 @@
 
 import 'dart:async';
 import 'dart:io'; // Required for Directory operations
-import 'dart:math'; // Required for Random waveform generation
+// import 'dart:math'; // Required for Random waveform generation
 
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
@@ -11,8 +11,8 @@ import 'package:path/path.dart' as pathLib; // Use alias
 // Import Services and Models
 import '../../services/collection_service.dart'; // For Track, CollectionService, CollectionDefinition, CollectionType
 import '../../services/waveform_processing_service.dart';
-import '../waveform_processing/waveform_processing_bloc.dart';
-import '../waveform_processing/waveform_processing_event.dart';
+// import '../waveform_processing/waveform_processing_bloc.dart';
+// import '../waveform_processing/waveform_processing_event.dart';
 
 part 'track_data_event.dart';
 part 'track_data_state.dart';
@@ -372,7 +372,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
 
     try {
       // addUrl now returns the track, check if it's YouTube
-      final Track? addedTrack = await _collectionService.addUrl(event.url);
+      // final Track? addedTrack = await _collectionService.addUrl(event.url);
 
       // --- Reload data AFTER adding the URL ---
       // The _onLoadTracks handler will now generate the placeholder if needed.
@@ -621,53 +621,53 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       return;
     }
 
-    if (trackListToUpdate != null) {
-      final trackIndex = trackListToUpdate.indexWhere(
-        (t) => t.id == targetTrackId,
+    // if (trackListToUpdate != null) {
+    final trackIndex = trackListToUpdate.indexWhere(
+      (t) => t.id == targetTrackId,
+    );
+
+    if (trackIndex != -1) {
+      final List<Track> updatedTracks = List.from(trackListToUpdate);
+      final originalTrack = updatedTracks[trackIndex];
+      updatedTracks[trackIndex] = originalTrack.copyWith(
+        waveformData: event.waveformData,
       );
 
-      if (trackIndex != -1) {
-        final List<Track> updatedTracks = List.from(trackListToUpdate);
-        final originalTrack = updatedTracks[trackIndex];
-        updatedTracks[trackIndex] = originalTrack.copyWith(
-          waveformData: event.waveformData,
+      if (wasProcessingNeeded) {
+        final processingState = currentState as TrackDataProcessingNeeded;
+        emit(
+          TrackDataProcessingNeeded(
+            addedTracks: processingState.addedTracks,
+            tracks: updatedTracks,
+            rootFolders: rootFoldersToKeep ?? [],
+            searchQuery: currentSearchQuery,
+            minimumRating: currentMinimumRating,
+          ),
         );
-
-        if (wasProcessingNeeded) {
-          final processingState = currentState as TrackDataProcessingNeeded;
-          emit(
-            TrackDataProcessingNeeded(
-              addedTracks: processingState.addedTracks,
-              tracks: updatedTracks,
-              rootFolders: rootFoldersToKeep ?? [],
-              searchQuery: currentSearchQuery,
-              minimumRating: currentMinimumRating,
-            ),
-          );
-        } else {
-          emit(
-            TrackDataLoaded(
-              tracks: updatedTracks,
-              rootFolders: rootFoldersToKeep ?? [],
-              searchQuery: currentSearchQuery,
-              minimumRating: currentMinimumRating,
-            ),
-          );
-        }
-
-        try {
-          await _collectionService.updateTrack(updatedTracks[trackIndex]);
-        } catch (e) {
-          print(
-            '[TrackDataBloc._onUpdateTrackWaveform] Error persisting waveform for track $targetTrackId: $e',
-          );
-        }
       } else {
-        print(
-          'Warning: Track $targetTrackId not found for waveform update in state ${currentState.runtimeType}.',
+        emit(
+          TrackDataLoaded(
+            tracks: updatedTracks,
+            rootFolders: rootFoldersToKeep ?? [],
+            searchQuery: currentSearchQuery,
+            minimumRating: currentMinimumRating,
+          ),
         );
       }
+
+      try {
+        await _collectionService.updateTrack(updatedTracks[trackIndex]);
+      } catch (e) {
+        print(
+          '[TrackDataBloc._onUpdateTrackWaveform] Error persisting waveform for track $targetTrackId: $e',
+        );
+      }
+    } else {
+      print(
+        'Warning: Track $targetTrackId not found for waveform update in state ${currentState.runtimeType}.',
+      );
     }
+    // }
   }
 
   Future<void> _onRemoveTrack(

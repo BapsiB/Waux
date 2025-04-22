@@ -47,6 +47,10 @@ class AudioService {
     // Note: initialize() method still needs to be called externally if
     // it contains async operations or needs to be controlled timing-wise.
     print("AudioService Singleton instance created.");
+    _audioPlayer.volumeStream.listen((volume) {
+      _currentVolume = volume;
+      _volumeController.add(volume);
+    });
   }
 
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -56,6 +60,11 @@ class AudioService {
   Stream<Duration?> get durationStream => _audioPlayer.durationStream;
   Stream<just_audio.PlayerState> get playerStateStream =>
       _audioPlayer.playerStateStream;
+
+  final _volumeController = StreamController<double>.broadcast();
+  Stream<double> get volumeStream => _volumeController.stream;
+  double _currentVolume = 1.0; // Initialize default volume
+  double get currentVolume => _currentVolume;
 
   // Waveform data
   List<double>? _waveformData;
@@ -189,13 +198,30 @@ class AudioService {
 
   Future<void> initialize() async {
     try {
-      // Initialize audio player with any default settings
-      await _audioPlayer.setVolume(1.0);
+      // Get the initial volume from the player (it might have been persisted)
+      _currentVolume = _audioPlayer.volume;
+      _volumeController.add(_currentVolume);
+      print('AudioService Initialized. Initial volume: $_currentVolume');
     } catch (e) {
       print('Error initializing audio player: $e');
-      // Continue even if there's an error, as some methods might still work
+      await _audioPlayer.setVolume(1.0); // Set default on error
+      _currentVolume = 1.0;
+      _volumeController.add(_currentVolume);
     }
   }
+
+  Future<void> setVolume(double volume) async {
+    try {
+      // Clamp volume between 0.0 and 1.0
+      final clampedVolume = volume.clamp(0.0, 1.0);
+      await _audioPlayer.setVolume(clampedVolume);
+      // No need to update _currentVolume here, the listener will handle it
+      print('🔊 AudioService: Volume set to $clampedVolume');
+    } catch (e) {
+      print('❌ AudioService: Error setting volume: $e');
+    }
+  }
+  // ---
 
   // Update your AudioService.loadAudio method with timing measurements
 
@@ -834,5 +860,6 @@ class AudioService {
   Future<void> dispose() async {
     await _audioPlayer.dispose();
     await _waveformController.close();
+    await _volumeController.close(); // Close the volume stream
   }
 }

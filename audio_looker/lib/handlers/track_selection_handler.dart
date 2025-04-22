@@ -37,25 +37,28 @@ class TrackSelectionHandler {
   /// Gets the list of tracks currently displayed, applying playlist and rating filters, and sorting.
   /// Reads data from TrackDataBloc.
   List<Track> getCurrentDisplayedTracks() {
-    // <<< CHANGED: Read state from TrackDataBloc >>>
     final trackDataState = context.read<TrackDataBloc>().state;
     List<Track> sourceTracks = [];
-    int? minimumRating; // Variable to hold the filter value
+    int? minimumRating;
 
-    // Get tracks and minimumRating from the current TrackDataBloc state
+    // Get the list from the appropriate state (already sorted by the BLoC)
     if (trackDataState is TrackDataLoaded) {
       sourceTracks = trackDataState.tracks;
       minimumRating = trackDataState.minimumRating;
     } else if (trackDataState is TrackDataLoading &&
         trackDataState.previousTracks != null) {
-      // Use previous tracks if loading
       sourceTracks = trackDataState.previousTracks!;
-      minimumRating =
-          trackDataState.minimumRating; // Use filter from loading state
+      minimumRating = trackDataState.minimumRating;
+    } else if (trackDataState is TrackDataProcessingNeeded) {
+      sourceTracks = trackDataState.tracks;
+      minimumRating = trackDataState.minimumRating;
+    } else if (trackDataState is TrackDataDeletingFolder) {
+      sourceTracks = trackDataState.previousTracks ?? [];
+      minimumRating = trackDataState.minimumRating;
     }
-    // Note: TrackDataError state doesn't hold tracks in the new design
+    // Add other relevant states if they hold track data
 
-    // Apply playlist filter first (if a playlist is selected)
+    // Apply playlist filter
     List<Track> playlistFilteredTracks;
     if (currentlySelectedPlaylist != null) {
       final playlistTrackPaths = Set<String>.from(
@@ -66,73 +69,70 @@ class TrackSelectionHandler {
               .where((track) => playlistTrackPaths.contains(track.path))
               .toList();
     } else {
-      // If no playlist selected, use all tracks from the state
       playlistFilteredTracks = sourceTracks;
     }
 
-    // Apply rating filter AFTER playlist filter
+    // Apply rating filter
     List<Track> ratingFilteredTracks;
     if (minimumRating != null && minimumRating > 0) {
-      // Filter the PLAYLIST-FILTERED tracks
       ratingFilteredTracks =
           playlistFilteredTracks
               .where((track) => track.rating >= minimumRating!)
               .toList();
-      // print(
-      //   "Applying rating filter: >= $minimumRating stars. Found ${ratingFilteredTracks.length} tracks.",
-      // );
     } else {
-      ratingFilteredTracks = playlistFilteredTracks; // No rating filter
-      // print("No rating filter applied (minimumRating is $minimumRating).");
+      ratingFilteredTracks = playlistFilteredTracks;
     }
 
-    // Sort the final filtered list
-    return getSortedTracks(ratingFilteredTracks);
+    // *** RETURN THE FILTERED LIST DIRECTLY - NO SORTING HERE ***
+    return ratingFilteredTracks; //
   }
 
   /// Sorts a given list of tracks based on current sort column and direction.
   /// (This method remains the same internally)
-  List<Track> getSortedTracks(List<Track> tracks) {
-    List<Track> sortedTracks = List.from(tracks);
-    sortedTracks.sort((a, b) {
-      int comparison = 0;
-      switch (sortColumnName) {
-        case 'title':
-          comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
-          break;
-        case 'artist':
-          comparison = a.artist.toLowerCase().compareTo(b.artist.toLowerCase());
-          break;
-        case 'album':
-          comparison = a.album.toLowerCase().compareTo(b.album.toLowerCase());
-          break;
-        case 'rating':
-          comparison = a.rating.compareTo(b.rating);
-          break;
-        case 'tags':
-          // Handle potential empty tags for sorting
-          String aTag =
-              a.generalTags.isNotEmpty
-                  ? a.generalTags.join(',').toLowerCase()
-                  : '\uffff'; // Place empty tags last
-          String bTag =
-              b.generalTags.isNotEmpty
-                  ? b.generalTags.join(',').toLowerCase()
-                  : '\uffff';
-          comparison = aTag.compareTo(bTag);
-          break;
-        // Add cases for other sortable columns if needed
-      }
-      // Secondary sort by title if primary columns are equal
-      if (comparison == 0 && sortColumnName != 'title') {
-        comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
-      }
-      return sortDirectionSf == DataGridSortDirection.ascending
-          ? comparison
-          : -comparison;
-    });
-    return sortedTracks;
-  }
+  // List<Track> getSortedTracks(List<Track> tracks) {
+  //   List<Track> sortedTracks = List.from(tracks);
+  //   sortedTracks.sort((a, b) {
+  //     int comparison = 0;
+  //     switch (sortColumnName) {
+  //       case 'title':
+  //         comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
+  //         break;
+  //       case 'artist':
+  //         comparison = a.artist.toLowerCase().compareTo(b.artist.toLowerCase());
+  //         break;
+  //       case 'album':
+  //         comparison = a.album.toLowerCase().compareTo(b.album.toLowerCase());
+  //         break;
+  //       case 'rating':
+  //         comparison = a.rating.compareTo(b.rating);
+  //         break;
+  //       case 'tags':
+  //         // Handle potential empty tags for sorting
+  //         String aTag =
+  //             a.generalTags.isNotEmpty
+  //                 ? a.generalTags.join(',').toLowerCase()
+  //                 : '\uffff'; // Place empty tags last
+  //         String bTag =
+  //             b.generalTags.isNotEmpty
+  //                 ? b.generalTags.join(',').toLowerCase()
+  //                 : '\uffff';
+  //         comparison = aTag.compareTo(bTag);
+  //         break;
+  //       // Add cases for other sortable columns if needed
+  //       case 'duration': // <<< ADDED Duration Sort Case
+  //         comparison = a.duration.compareTo(b.duration);
+  //         break;
+  //     }
+  //     // Secondary sort by title if primary columns are equal
+  //     if (comparison == 0 && sortColumnName != 'title') {
+  //       comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
+  //     }
+  //     return sortDirectionSf == DataGridSortDirection.ascending
+  //         ? comparison
+  //         : -comparison;
+  //   });
+  //   return sortedTracks;
+  // }
 
   /// Handles track selection changes in the UI (e.g., DataGrid).
   /// Calculates the new selection state based on modifiers (Shift, Ctrl/Meta).
@@ -155,6 +155,28 @@ class TrackSelectionHandler {
     // Use the current *displayed* tracks for shift-selection logic
     final List<Track> currentDisplayedTracks = getCurrentDisplayedTracks();
 
+    // --- LOGGING START ---
+    print("--- Selection Change ---");
+    print(
+      "Incoming: trackId=$trackId, isSelected=$isSelected, shift=$isShiftPressed, ctrl=$isCtrlPressed",
+    );
+    print(
+      "Current State: anchorId=$anchorTrackId, selectedIds=$selectedTrackIds",
+    );
+    print("Displayed Tracks (Count: ${currentDisplayedTracks.length}):");
+    // Log IDs and Titles for context, truncated if too long
+    int logCount = 0;
+    for (var track in currentDisplayedTracks) {
+      print("  - ID: ${track.id}, Title: ${track.title}");
+      logCount++;
+      if (logCount > 20) {
+        // Limit log output
+        print("  ... (list truncated)");
+        break;
+      }
+    }
+    // --- LOGGING END ---
+
     if (isSelected) {
       if (isCtrlPressed) {
         // Add/remove single item without affecting others
@@ -169,9 +191,16 @@ class TrackSelectionHandler {
           (t) => t.id == trackId,
         );
 
+        print(
+          "Shift Selection: Anchor ID=$newAnchorId (Index: $anchorIndex), Clicked ID=$trackId (Index: $clickedIndex)",
+        ); // Log indices
+
         if (anchorIndex != -1 && clickedIndex != -1) {
           final start = anchorIndex < clickedIndex ? anchorIndex : clickedIndex;
           final end = anchorIndex > clickedIndex ? anchorIndex : clickedIndex;
+          print(
+            "Shift Selection: Calculated Range [$start - $end]",
+          ); // Log range
           // Add the range to the *existing* selection if Ctrl/Meta is also held
           // Otherwise, clear the selection first. For simplicity, let's assume Shift clears first.
           // TODO: Refine this based on standard platform behavior if needed (Shift+Ctrl)
@@ -186,6 +215,9 @@ class TrackSelectionHandler {
           // Anchor remains the same for subsequent shift clicks
         } else {
           // Anchor not found or clicked item not found in current view
+          print(
+            "Shift Selection: Anchor or Clicked item not found in displayed list. Selecting only clicked.",
+          );
           newSelectedIds.clear();
           newSelectedIds.add(trackId);
           newAnchorId = trackId;
@@ -233,6 +265,13 @@ class TrackSelectionHandler {
         );
       }
     }
+
+    // --- LOGGING START ---
+    print(
+      "Resulting State: newAnchorId=$newAnchorId, newSelectedIds=$newSelectedIds",
+    );
+    print("--- End Selection Change ---");
+    // --- LOGGING END ---
 
     // Call the callback provided by HomeScreen to update its state
     onSelectionStateChanged(

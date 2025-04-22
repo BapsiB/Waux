@@ -21,20 +21,17 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
   StreamSubscription? _durationSubscription;
   StreamSubscription? _waveformSubscription;
   final TrackMetadataBloc _trackMetadataBloc;
-  final CollectionService _collectionService;
-  // String? _currentSource; // Can be removed now, managed in state
+  StreamSubscription? _volumeSubscription;
   Timer? _loadingTimeout;
 
-  AudioPlayerBloc(
-    this._audioService,
-    this._trackMetadataBloc,
-    this._collectionService,
-  ) : super(AudioPlayerInitial()) {
+  AudioPlayerBloc(this._audioService, this._trackMetadataBloc)
+    : super(AudioPlayerInitial()) {
     on<LoadAudio>(_onLoadAudio);
     on<PlayAudio>(_onPlayAudio);
     on<PauseAudio>(_onPauseAudio);
     on<StopAudio>(_onStopAudio);
-    on<SeekAudio>(_onSeekAudio); // Make sure this is registered
+    on<SeekAudio>(_onSeekAudio);
+    on<SetVolume>(_onSetVolume);
     on<AddTimeMarker>(_onAddTimeMarker);
     on<UpdatePlaybackState>(_onUpdatePlaybackState);
     on<UpdatePlaybackPosition>(_onUpdatePlaybackPosition);
@@ -42,6 +39,7 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     on<LoadShufflePreference>(_onLoadShufflePreference); // Register handler
     on<ToggleShuffle>(_onToggleShuffle); // Register handler
     on<_UpdateShuffleState>(_onUpdateShuffleState); // Register handler
+    on<_UpdateVolume>(_onUpdateVolume);
   }
 
   Future<void> _onLoadShufflePreference(
@@ -120,23 +118,12 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
       final initialWaveform = _audioService.waveformData;
       final initialMarkers = _audioService.getTimeMarkersForAudio(track.path);
 
-      // // --- Emit loaded state with the duration we have from the DB ---
-      // final loadedState = AudioPlayerLoaded(
-      //   currentSource: track.path,
-      //   isPlaying: false,
-      //   position: Duration.zero,
-      //   duration: Duration(
-      //     milliseconds: initialDurationMs,
-      //   ), // <<< Use DB duration
-      //   waveformData: initialWaveform,
-      //   markers: List<TimeMarker>.from(initialMarkers),
-      // );
-
       final currentShuffleState =
           state is AudioPlayerLoaded
               ? (state as AudioPlayerLoaded).isShuffleActive
-              : await _audioService
-                  .loadShufflePreference(); // Load if not already in state
+              : await _audioService.loadShufflePreference();
+
+      final currentVolume = _audioService.currentVolume;
 
       final loadedState = AudioPlayerLoaded(
         currentSource: track.path,
@@ -145,7 +132,8 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
         duration: Duration(milliseconds: initialDurationMs),
         waveformData: initialWaveform,
         markers: List<TimeMarker>.from(initialMarkers),
-        isShuffleActive: currentShuffleState, // <<< ADD THIS
+        isShuffleActive: currentShuffleState,
+        volume: currentVolume,
       );
       emit(loadedState);
 
@@ -261,6 +249,10 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
         }
       },
     );
+
+    _volumeSubscription = _audioService.volumeStream.listen((volume) {
+      add(_UpdateVolume(volume)); // Dispatch internal event
+    }, onError: (error) => print('❌ Bloc: Error in volume stream: $error'));
   }
 
   void _onPlayAudio(PlayAudio event, Emitter<AudioPlayerState> emit) {
@@ -315,6 +307,12 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
       // This makes the UI reflect the seek target instantly.
       emit(currentState.copyWith(position: validPosition));
     }
+  }
+
+  void _onSetVolume(SetVolume event, Emitter<AudioPlayerState> emit) {
+    final clampedVolume = event.volume.clamp(0.0, 1.0);
+    _audioService.setVolume(clampedVolume);
+    // State update will come from the volumeStream listener via _onUpdateVolume
   }
 
   Future<int> _fetchDurationInBackground(String path, bool isUrl) async {
@@ -386,6 +384,16 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     }
   }
 
+  void _onUpdateVolume(_UpdateVolume event, Emitter<AudioPlayerState> emit) {
+    if (state is AudioPlayerLoaded) {
+      final currentState = state as AudioPlayerLoaded;
+      // Only emit if volume changed
+      if (currentState.volume != event.volume) {
+        emit(currentState.copyWith(volume: event.volume));
+      }
+    }
+  }
+
   void _onUpdatePlaybackState(
     UpdatePlaybackState event,
     Emitter<AudioPlayerState> emit,
@@ -453,6 +461,8 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
     _durationSubscription = null;
     await _waveformSubscription?.cancel();
     _waveformSubscription = null;
+    await _volumeSubscription?.cancel(); // <<< Cancel volume subscription
+    _volumeSubscription = null;
     print("Bloc: Subscriptions cancelled");
   }
 

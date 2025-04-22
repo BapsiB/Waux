@@ -34,6 +34,7 @@ import '../handlers/player_control_handler.dart';
 
 // Import Other Screens
 import 'collection_manager_screen.dart';
+import 'package:flutter/widgets.dart';
 
 // Define view mode enum
 enum ViewMode { list, tree }
@@ -445,6 +446,12 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- Build Method ---
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final appBarHeight = kToolbarHeight; // Default AppBar height
+    final otherElementsHeight = 64.0; // Example placeholder
+    final availableHeight = screenHeight - appBarHeight - otherElementsHeight;
+    final maxPlayerHeight = 500.0;
+
     // Use MultiBlocListener to react to events from multiple BLoCs
     return MultiBlocListener(
       listeners: [
@@ -543,71 +550,237 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
       ],
-      child: Scaffold(
-        appBar: _buildAppBar(),
-        body: Focus(
-          // Keep Focus for keyboard shortcuts
-          focusNode: _focusNode,
-          autofocus: true,
-          onKeyEvent: _handleKeyEvent,
-          child: Row(
-            children: [
-              // Container(
-              //   width: 48, // Width for the button column
-              //   color: Theme.of(context).canvasColor, // Match panel background
-              //   child: Column(
-              //     children: [
-              //       IconButton(
-              //         icon: Icon(
-              //           _isPlaylistPanelVisible ? Icons.menu_open : Icons.menu,
-              //           color: Theme.of(context).colorScheme.onSurfaceVariant,
-              //         ),
-              //         tooltip: 'Toggle Playlists Panel',
-              //         onPressed: _togglePlaylistPanel,
-              //       ),
-              //       const Divider(height: 1), // Optional separator
-              //     ],
-              //   ),
-              // ),
-              _buildPlaylistPanel(), // Playlist Panel (Left)
-              Expanded(
-                // Main Content Area (Right)
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildFilterBar(), // Search and Rating Filter
-                    if (_currentlySelectedPlaylist != null)
-                      _buildPlaylistHeader(), // Header shown when playlist is selected
-                    Expanded(child: _buildContentArea()), // Table or Tree View
-                    // Player (Bottom) - shows only if a track is selected for the player
-                    if (_selectedTrackForPlayer != null)
-                      CombinedAudioPlayerWidget(
-                        key: ValueKey(
-                          _selectedTrackForPlayer!.id,
-                        ), // Ensure widget rebuilds when track changes
-                        track: _selectedTrackForPlayer!,
-                        isMinimized: _isMinimized,
-                        onToggle: _handlePlayerToggle,
-                        onPreviousPressed: _playPreviousTrack,
-                        onNextPressed: _playNextTrack,
-                      ),
-                  ],
-                ),
+      // Wrap Scaffold with PlatformMenuBar
+      child: PlatformMenuBar(
+        menus: <PlatformMenuItem>[
+          // --- Application Menu (for macOS) ---
+          PlatformMenu(
+            label: 'Audio Looker', // Label might be ignored on macOS
+            menus: <PlatformMenuItem>[
+              const PlatformProvidedMenuItem(
+                type: PlatformProvidedMenuItemType.about,
+              ),
+              const PlatformProvidedMenuItem(
+                type: PlatformProvidedMenuItemType.servicesSubmenu,
+              ),
+              // Use standard PlatformMenuItem for separator
+              const PlatformMenuItem(label: '-'),
+              const PlatformProvidedMenuItem(
+                type: PlatformProvidedMenuItemType.hide,
+              ),
+              const PlatformProvidedMenuItem(
+                type: PlatformProvidedMenuItemType.hideOtherApplications,
+              ),
+              const PlatformProvidedMenuItem(
+                type: PlatformProvidedMenuItemType.showAllApplications,
+              ),
+              // Use standard PlatformMenuItem for separator
+              const PlatformMenuItem(label: '-'),
+              const PlatformProvidedMenuItem(
+                type: PlatformProvidedMenuItemType.quit,
               ),
             ],
           ),
-        ),
-        bottomNavigationBar: const WaveformProgressBar(),
-        floatingActionButton: FloatingActionButton.small(
-          // Use small for discretion
-          onPressed: _showAddMenu, // Call the existing menu function
-          tooltip: 'Add...',
-          child: const Icon(Icons.add),
+          // --- File Menu ---
+          PlatformMenu(
+            label: 'File',
+            menus: <PlatformMenuItem>[
+              PlatformMenuItem(
+                label: 'Add Files...',
+                shortcut: const SingleActivator(
+                  LogicalKeyboardKey.keyO,
+                  meta: true, // Command on macOS, Ctrl elsewhere
+                ),
+                onSelected: () {
+                  _fileHandler.pickAndAddAudioFile();
+                },
+              ),
+              // TODO: Add 'Add Folder...' menu item here if needed
+              // PlatformMenuItem(
+              //   label: 'Add Folder...',
+              //   onSelected: () {
+              //     _fileHandler.pickAndAddFolder();
+              //   },
+              // ),
+              // Use standard PlatformMenuItem for separator
+              // const PlatformMenuItem(label: '-'),
+              // PlatformMenuItem(
+              //   label: 'Close Collection', // Example
+              //   onSelected: () {
+              //     // Dispatch event to close collection
+              //     context.read<CollectionManagementBloc>().add(
+              //       SwitchCollection(''),
+              //     ); // Or a dedicated Close event
+              //   },
+              // ),
+            ],
+          ),
+          // --- Edit Menu ---
+          PlatformMenu(
+            label: 'Edit',
+            menus: <PlatformMenuItem>[
+              PlatformMenuItemGroup(
+                members: <PlatformMenuItem>[
+                  // Use standard PlatformMenuItem for Undo/Redo
+                  PlatformMenuItem(
+                    label: 'Undo',
+                    shortcut: const SingleActivator(
+                      LogicalKeyboardKey.keyZ,
+                      meta: true,
+                    ),
+                    onSelected: () => print("Undo action - Implement me"),
+                  ),
+                  PlatformMenuItem(
+                    label: 'Redo',
+                    shortcut: const SingleActivator(
+                      LogicalKeyboardKey.keyZ,
+                      meta: true,
+                      shift: true,
+                    ),
+                    onSelected: () => print("Redo action - Implement me"),
+                  ),
+                ],
+              ),
+              // Use standard PlatformMenuItem for separator
+              const PlatformMenuItem(label: '-'),
+              PlatformMenuItemGroup(
+                members: <PlatformMenuItem>[
+                  // Use standard PlatformMenuItem for Cut/Copy/Paste/Select All
+                  PlatformMenuItem(
+                    label: 'Cut',
+                    shortcut: const SingleActivator(
+                      LogicalKeyboardKey.keyX,
+                      meta: true,
+                    ),
+                    onSelected: () => print("Cut action - Implement me"),
+                  ),
+                  PlatformMenuItem(
+                    label: 'Copy',
+                    shortcut: const SingleActivator(
+                      LogicalKeyboardKey.keyC,
+                      meta: true,
+                    ),
+                    onSelected: () => print("Copy action - Implement me"),
+                  ),
+                  PlatformMenuItem(
+                    label: 'Paste',
+                    shortcut: const SingleActivator(
+                      LogicalKeyboardKey.keyV,
+                      meta: true,
+                    ),
+                    onSelected: () => print("Paste action - Implement me"),
+                  ),
+                  PlatformMenuItem(
+                    label: 'Select All',
+                    shortcut: const SingleActivator(
+                      LogicalKeyboardKey.keyA,
+                      meta: true,
+                    ),
+                    onSelected: () => print("Select All action - Implement me"),
+                  ),
+                ],
+              ),
+              // Add Find, etc. if needed
+            ],
+          ),
+          // --- View Menu ---
+          PlatformMenu(
+            label: 'View',
+            menus: <PlatformMenuItem>[
+              // TODO: Implement actual full screen toggle if desired
+              // PlatformMenuItem(
+              //   label: 'Toggle Full Screen',
+              //   shortcut: const SingleActivator(LogicalKeyboardKey.keyF, meta: true, control: true),
+              //   onSelected: () => print("Toggle Full Screen action"),
+              // ),
+              PlatformMenuItem(
+                label:
+                    _viewMode == ViewMode.list
+                        ? 'Show Folder View'
+                        : 'Show Table View',
+                shortcut: const SingleActivator(
+                  LogicalKeyboardKey.keyT,
+                  meta: true,
+                ), // Example shortcut
+                onSelected: _toggleViewMode,
+              ),
+              PlatformMenuItem(
+                label:
+                    _isPlaylistPanelVisible
+                        ? 'Hide Playlists'
+                        : 'Show Playlists',
+                shortcut: const SingleActivator(
+                  LogicalKeyboardKey.keyP,
+                  meta: true,
+                  shift: true,
+                ), // Example shortcut
+                onSelected: _togglePlaylistPanel,
+              ),
+            ],
+          ),
+          // --- Help Menu ---
+          PlatformMenu(
+            label: 'Help',
+            menus: <PlatformMenuItem>[
+              PlatformMenuItem(
+                label: 'Audio Looker Help', // Example Help item
+                onSelected: () => print("Help action"), // Placeholder
+              ),
+            ],
+          ),
+        ],
+        // The actual UI content goes inside the child
+        child: Scaffold(
+          appBar: _buildAppBar(), // Add the AppBar back
+          body: Focus(
+            // Keep Focus for keyboard shortcuts
+            focusNode: _focusNode,
+            autofocus: true,
+            onKeyEvent: _handleKeyEvent,
+            child: Row(
+              children: [
+                _buildPlaylistPanel(), // Playlist Panel (Left)
+                Expanded(
+                  // Main Content Area (Right)
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildFilterBar(), // Search and Rating Filter
+                      if (_currentlySelectedPlaylist != null)
+                        _buildPlaylistHeader(), // Header shown when playlist is selected
+                      Expanded(
+                        child: _buildContentArea(),
+                      ), // Table or Tree View
+                      // Player (Bottom) - shows only if a track is selected for the player
+                      if (_selectedTrackForPlayer != null)
+                        CombinedAudioPlayerWidget(
+                          key: ValueKey(
+                            _selectedTrackForPlayer!.id,
+                          ), // Ensure widget rebuilds when track changes
+                          track: _selectedTrackForPlayer!,
+                          isMinimized: _isMinimized,
+                          onToggle: _handlePlayerToggle,
+                          onPreviousPressed: _playPreviousTrack,
+                          onNextPressed: _playNextTrack,
+                          maxExpandedHeight: maxPlayerHeight,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          bottomNavigationBar: const WaveformProgressBar(),
+          floatingActionButton: FloatingActionButton.small(
+            // Use small for discretion
+            onPressed: _showAddMenu, // Call the existing menu function
+            tooltip: 'Add...',
+            child: const Icon(Icons.add),
+          ),
         ),
       ),
     );
   }
-
   // --- Build Helper Methods ---
 
   // Handle keyboard events (e.g., Space for play/pause)
@@ -644,7 +817,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       title: BlocBuilder<CollectionManagementBloc, CollectionManagementState>(
         builder: (context, state) {
-          String title = 'Audio Looker'; // Default title
+          String title = 'WAUX'; // Default title
           if (state is CollectionManagementLoaded &&
               state.activeCollectionDefinition != null) {
             title = state.activeCollectionDefinition!.name;

@@ -340,7 +340,14 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
             ),
           );
         } else {
-          headerLabel = Text(config['label'], style: textTheme.titleSmall);
+          headerLabel = Text(
+            config['label'],
+            style: textTheme.titleSmall,
+            overflow: TextOverflow.ellipsis, // Add this line
+            maxLines:
+                1, // Add this line (optional, but good practice with ellipsis)
+            // softWrap: false, // Alternative to maxLines: 1 if needed
+          );
         }
 
         newColumns.add(
@@ -423,7 +430,6 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     super.dispose();
   }
 
-  // --- Selection Handling ---
   void _handleGridSelectionChange(
     List<DataGridRow> addedRows,
     List<DataGridRow> removedRows,
@@ -433,35 +439,41 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     final bool isCtrlPressed =
         keyState.isControlPressed || keyState.isMetaPressed;
 
-    if (addedRows.isNotEmpty) {
-      final row = addedRows.first;
+    // --- MODIFIED: Handle multiple added/removed rows ---
+    // Process removals first
+    for (final row in removedRows) {
       final idCell = row.getCells().firstWhere(
         (c) => c.columnName == 'id',
         orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
       );
       if (idCell.value != null && idCell.value != -1) {
+        // Report deselection to the parent handler
         widget.onSelectionChanged(
           idCell.value as int,
-          true,
-          isShiftPressed: isShiftPressed,
-          isCtrlPressed: isCtrlPressed,
-        );
-      }
-    } else if (removedRows.isNotEmpty) {
-      final row = removedRows.first;
-      final idCell = row.getCells().firstWhere(
-        (c) => c.columnName == 'id',
-        orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
-      );
-      if (idCell.value != null && idCell.value != -1) {
-        widget.onSelectionChanged(
-          idCell.value as int,
-          false,
-          isShiftPressed: isShiftPressed,
+          false, // isSelected is false for removal
+          isShiftPressed: isShiftPressed, // Pass modifiers
           isCtrlPressed: isCtrlPressed,
         );
       }
     }
+
+    // Process additions
+    for (final row in addedRows) {
+      final idCell = row.getCells().firstWhere(
+        (c) => c.columnName == 'id',
+        orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
+      );
+      if (idCell.value != null && idCell.value != -1) {
+        // Report selection to the parent handler
+        widget.onSelectionChanged(
+          idCell.value as int,
+          true, // isSelected is true for addition
+          isShiftPressed: isShiftPressed, // Pass modifiers
+          isCtrlPressed: isCtrlPressed,
+        );
+      }
+    }
+    // --- END MODIFICATION ---
 
     if (mounted && (addedRows.isNotEmpty || removedRows.isNotEmpty)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -510,6 +522,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         child: SfDataGrid(
           key: _sfDataGridKey,
           source: _trackDataSource,
+          selectionMode: SelectionMode.multiple,
           gridLinesVisibility: GridLinesVisibility.horizontal,
           headerGridLinesVisibility: GridLinesVisibility.both,
           headerRowHeight: 30,
@@ -582,12 +595,11 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
               widget.onSort('title', DataGridSortDirection.ascending);
             }
           },
-          selectionMode: SelectionMode.single, // Keep single selection mode
           navigationMode: GridNavigationMode.row,
           onSelectionChanged: _handleGridSelectionChange,
           controller: _dataGridController,
           columns: _gridColumns, // Use the dynamically built columns
-          // --- Context Menu Handler ---
+
           onCellSecondaryTap: (DataGridCellTapDetails details) {
             int rowIndex = details.rowColumnIndex.rowIndex;
             if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {

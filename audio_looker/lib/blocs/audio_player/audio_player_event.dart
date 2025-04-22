@@ -39,6 +39,22 @@ class SeekAudio extends AudioPlayerEvent {
   List<Object?> get props => [position];
 }
 
+class SetVolume extends AudioPlayerEvent {
+  final double volume;
+
+  const SetVolume(this.volume);
+
+  @override
+  List<Object?> get props => [volume];
+}
+
+class _UpdateVolume extends AudioPlayerEvent {
+  final double volume;
+  const _UpdateVolume(this.volume);
+  @override
+  List<Object> get props => [volume];
+}
+
 // *** Renamed AddAudioTag to AddTimeMarker ***
 class AddTimeMarker extends AudioPlayerEvent {
   // --- >>> ADDED trackId <<< ---

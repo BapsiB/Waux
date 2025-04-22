@@ -22,6 +22,7 @@ class CombinedAudioPlayerWidget extends StatefulWidget {
   final VoidCallback onToggle;
   final VoidCallback? onPreviousPressed; // Keep for track skipping
   final VoidCallback? onNextPressed; // Keep for track skipping
+  final double maxExpandedHeight;
 
   const CombinedAudioPlayerWidget({
     Key? key,
@@ -30,6 +31,7 @@ class CombinedAudioPlayerWidget extends StatefulWidget {
     required this.onToggle,
     this.onPreviousPressed,
     this.onNextPressed,
+    this.maxExpandedHeight = 0.0,
   }) : super(key: key);
 
   @override
@@ -43,8 +45,10 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   late AnimationController _animationController;
   late Animation<double> _playerHeightAnimation;
   // Adjust heights as needed, potentially calculate dynamically
-  final double _fullPlayerHeight =
-      420; // Reduced height due to removed tag section
+  // final double _fullPlayerHeight =
+  double _currentVolume = 1.0;
+  bool _isDraggingVolume = false;
+
   final double _minimizedPlayerHeight =
       100; // Adjusted height for minimized bar
 
@@ -81,7 +85,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       duration: const Duration(milliseconds: 250),
     );
     _playerHeightAnimation = Tween<double>(
-      begin: _fullPlayerHeight,
+      begin: widget.maxExpandedHeight,
       end: _minimizedPlayerHeight,
     ).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
@@ -90,7 +94,11 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     });
     // Set initial animation value based on the INITIAL isMinimized prop
     _animationController.value = widget.isMinimized ? 1.0 : 0.0;
-    // --- End Animation Controller Init ---
+
+    final initialPlayerState = context.read<AudioPlayerBloc>().state;
+    if (initialPlayerState is AudioPlayerLoaded) {
+      _currentVolume = initialPlayerState.volume;
+    }
 
     // Update local state from the initial track prop
     _updateStateFromWidget(widget.track);
@@ -109,24 +117,34 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       }
     }
 
-    // If the track prop itself changes, update internal state
     if (oldWidget.track.id != widget.track.id) {
       _updateStateFromWidget(widget.track);
-      // Reset waveform drag state if track changes
       _isDraggingWaveform = false;
       _dragProgress = null;
+      // Reset volume drag state if track changes (might not be necessary)
+      _isDraggingVolume = false;
     } else {
-      // If only metadata changed in the prop (e.g., due to external update)
-      // update local state if it differs from the prop.
       if (widget.track.rating != _currentRating) {
         _currentRating = widget.track.rating;
       }
       if (widget.track.comment != _notesController.text) {
-        // Avoid resetting cursor position if user is actively typing
-        // This might need more sophisticated handling if simultaneous edits are common
         if (!FocusScope.of(context).hasFocus ||
             FocusScope.of(context).focusedChild != _notesController.value) {
           _notesController.text = widget.track.comment;
+        }
+      }
+      // --- Update local volume if not currently dragging ---
+      final playerState = context.read<AudioPlayerBloc>().state;
+      if (playerState is AudioPlayerLoaded && !_isDraggingVolume) {
+        if (_currentVolume != playerState.volume) {
+          if (mounted) {
+            setState(() {
+              _currentVolume = playerState.volume;
+            });
+          } else {
+            _currentVolume =
+                playerState.volume; // Update directly if not mounted
+          }
         }
       }
     }
@@ -195,6 +213,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   }
 
   // Build the UI for the minimized player bar
+  // Build the UI for the minimized player bar
   Widget _buildMinimizedPlayerControls(
     AudioPlayerLoaded playerState,
     Track track,
@@ -213,7 +232,10 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
 
     return Container(
       height: _minimizedPlayerHeight, // Ensure container has the correct height
-      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8.0,
+        vertical: 4.0,
+      ), // Adjusted padding
       decoration: BoxDecoration(
         color: Theme.of(
           context,
@@ -221,152 +243,231 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       ),
       child: Row(
         children: [
-          // Previous Button
-          IconButton(
-            icon: const Icon(Icons.skip_previous),
-            iconSize: 30,
-            color:
-                widget.onPreviousPressed != null
-                    ? Theme.of(context).colorScheme.onSurface
-                    : Theme.of(context).disabledColor,
-            onPressed: widget.onPreviousPressed, // Use callback from props
-            tooltip: 'Previous Track',
-          ),
-          const SizedBox(width: 4),
-          // Play/Pause Button
-          IconButton(
-            icon: Icon(
-              isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-              size: 36,
-              color:
-                  canInteract
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).disabledColor,
-            ),
-            onPressed:
-                canInteract
-                    ? () {
-                      final bloc = context.read<AudioPlayerBloc>();
-                      if (isPlaying) {
-                        bloc.add(PauseAudio());
-                      } else {
-                        if (position >= duration && duration > Duration.zero) {
-                          bloc.add(const SeekAudio(position: Duration.zero));
-                          Future.delayed(
-                            const Duration(milliseconds: 50),
-                            () => bloc.add(PlayAudio()),
-                          );
-                        } else {
-                          bloc.add(PlayAudio());
+          // --- Controls (Left) ---
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Previous Button
+              IconButton(
+                icon: const Icon(Icons.skip_previous),
+                iconSize: 30,
+                color:
+                    widget.onPreviousPressed != null
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Theme.of(context).disabledColor,
+                onPressed: widget.onPreviousPressed, // Use callback from props
+                tooltip: 'Previous Track',
+              ),
+              const SizedBox(width: 4),
+              // Play/Pause Button
+              IconButton(
+                icon: Icon(
+                  isPlaying
+                      ? Icons.pause_circle_filled
+                      : Icons.play_circle_filled,
+                  size: 36,
+                  color:
+                      canInteract
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).disabledColor,
+                ),
+                onPressed:
+                    canInteract
+                        ? () {
+                          final bloc = context.read<AudioPlayerBloc>();
+                          if (isPlaying) {
+                            bloc.add(PauseAudio());
+                          } else {
+                            if (position >= duration &&
+                                duration > Duration.zero) {
+                              bloc.add(
+                                const SeekAudio(position: Duration.zero),
+                              );
+                              Future.delayed(
+                                const Duration(milliseconds: 50),
+                                () => bloc.add(PlayAudio()),
+                              );
+                            } else {
+                              bloc.add(PlayAudio());
+                            }
+                          }
                         }
-                      }
-                    }
-                    : null,
-            tooltip: isPlaying ? 'Pause' : 'Play',
+                        : null,
+                tooltip: isPlaying ? 'Pause' : 'Play',
+              ),
+              const SizedBox(width: 4),
+              // Next Button
+              IconButton(
+                icon: const Icon(Icons.skip_next),
+                iconSize: 30,
+                color:
+                    widget.onNextPressed != null
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Theme.of(context).disabledColor,
+                onPressed: widget.onNextPressed, // Use callback from props
+                tooltip: 'Next Track',
+              ),
+              const SizedBox(width: 4),
+              // Shuffle Button
+              IconButton(
+                icon: Icon(
+                  playerState.isShuffleActive
+                      ? Icons
+                          .shuffle_on_outlined // Icon when shuffle is ON
+                      : Icons.shuffle, // Icon when shuffle is OFF
+                ),
+                iconSize: 20, // Adjust size as needed
+                color:
+                    playerState.isShuffleActive
+                        ? Theme.of(context)
+                            .colorScheme
+                            .primary // Highlight color when ON
+                        : Theme.of(
+                          context,
+                        ).colorScheme.onSurfaceVariant, // Default color
+                tooltip:
+                    playerState.isShuffleActive
+                        ? 'Disable Shuffle'
+                        : 'Enable Shuffle',
+                onPressed: () {
+                  // Dispatch the toggle event to the BLoC
+                  context.read<AudioPlayerBloc>().add(ToggleShuffle());
+                },
+              ),
+            ],
           ),
-          const SizedBox(width: 4),
-          // Next Button
-          IconButton(
-            icon: const Icon(Icons.skip_next),
-            iconSize: 30,
-            color:
-                widget.onNextPressed != null
-                    ? Theme.of(context).colorScheme.onSurface
-                    : Theme.of(context).disabledColor,
-            onPressed: widget.onNextPressed, // Use callback from props
-            tooltip: 'Next Track',
-          ),
-          // const SizedBox(width: 4),
-          IconButton(
-            icon: Icon(
-              playerState.isShuffleActive
-                  ? Icons
-                      .shuffle_on_outlined // Icon when shuffle is ON
-                  : Icons.shuffle, // Icon when shuffle is OFF
-            ),
-            iconSize: 20, // Adjust size as needed
-            color:
-                playerState.isShuffleActive
-                    ? Theme.of(context)
-                        .colorScheme
-                        .primary // Highlight color when ON
-                    : Theme.of(
-                      context,
-                    ).colorScheme.onSurfaceVariant, // Default color
-            tooltip:
-                playerState.isShuffleActive
-                    ? 'Disable Shuffle'
-                    : 'Enable Shuffle',
-            onPressed: () {
-              // Dispatch the toggle event to the BLoC
-              context.read<AudioPlayerBloc>().add(ToggleShuffle());
-            },
-          ),
-          const SizedBox(width: 12), // Add spacing before track info
-          // Track Info
+          const SizedBox(width: 16), // Spacing between controls and center
+          // --- Track Info & Progress (Center) ---
           Expanded(
-            flex: 3, // Give more space to title/artist
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+                  CrossAxisAlignment
+                      .start, // Keep column items left-aligned overall
               children: [
-                Text(
-                  track.title,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  track.artist,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.color?.withOpacity(0.7),
+                // Track Title & Artist (Ellipsis applied) - Wrapped in Center
+                Center(
+                  // <<< WRAP the Text widget here
+                  child: Text(
+                    '${track.title} - ${track.artist}', // Combined for space
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w500, // Slightly less bold
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center, // Explicitly center text align
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                // Play Position Row (Time + Progress Bar + Duration)
+                Row(
+                  children: [
+                    Text(
+                      _formatDuration(position), // Current position
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 11, // Smaller font
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: SizedBox(
+                        height: 6, // Make progress bar thinner
+                        child: LinearProgressIndicator(
+                          value: progress,
+                          minHeight: 3,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.1),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Theme.of(context).colorScheme.primary,
+                          ),
+                          borderRadius: BorderRadius.circular(
+                            3,
+                          ), // Rounded ends
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _formatDuration(
+                        Duration(milliseconds: widget.track.duration),
+                      ), // Total duration
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 11, // Smaller font
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          // Time Display & Progress Bar
-          Text(
-            _formatDuration(position), // Current position from playerState
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            flex: 2,
-            child: LinearProgressIndicator(
-              // >>> Use track.duration for progress calculation <<<
-              value:
-                  widget.track.duration > 0
-                      ? (position.inMilliseconds / widget.track.duration).clamp(
-                        0.0,
-                        1.0,
-                      )
-                      : 0.0,
-              minHeight: 3,
-              backgroundColor: Theme.of(
-                context,
-              ).colorScheme.onSurface.withOpacity(0.1),
-              valueColor: AlwaysStoppedAnimation<Color>(
-                Theme.of(context).colorScheme.primary,
+          const SizedBox(width: 16), // Spacing between center and right
+          // --- Volume Slider (Right) ---
+          SizedBox(
+            width: 120, // Give the slider a fixed width
+            child: SliderTheme(
+              // Customize slider appearance
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 2.0, // Make track thinner
+                thumbShape: const RoundSliderThumbShape(
+                  enabledThumbRadius: 6.0,
+                ), // Smaller thumb
+                overlayShape: const RoundSliderOverlayShape(
+                  overlayRadius: 12.0,
+                ), // Smaller overlay
+                activeTrackColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withOpacity(0.8),
+                inactiveTrackColor: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.2),
+                thumbColor: Theme.of(context).colorScheme.primary,
+              ),
+              child: Slider(
+                // --- Use local state _currentVolume ---
+                value: _currentVolume,
+                min: 0.0,
+                max: 1.0,
+                // --- Add onChangeStart and onChangeEnd ---
+                onChangeStart: (value) {
+                  if (mounted) {
+                    // Check mount status
+                    setState(() {
+                      _isDraggingVolume = true; // User starts dragging
+                    });
+                  } else {
+                    _isDraggingVolume = true; // Update directly if not mounted
+                  }
+                },
+                onChanged: (value) {
+                  if (mounted) {
+                    // Check mount status
+                    // Update local state immediately for smooth UI feedback
+                    setState(() {
+                      _currentVolume = value;
+                    });
+                    // Dispatch event to BLoC
+                    context.read<AudioPlayerBloc>().add(SetVolume(value));
+                  }
+                },
+                onChangeEnd: (value) {
+                  if (mounted) {
+                    // Check mount status
+                    setState(() {
+                      _isDraggingVolume = false; // User stops dragging
+                    });
+                  } else {
+                    _isDraggingVolume = false; // Update directly if not mounted
+                  }
+                  // Optional: Dispatch one final SetVolume event here if needed,
+                  // but onChanged usually covers it.
+                  // context.read<AudioPlayerBloc>().add(SetVolume(value));
+                },
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            // >>> Use track.duration for total duration <<<
-            _formatDuration(Duration(milliseconds: widget.track.duration)),
-
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          // Expand button is part of the toggle bar now
         ],
       ),
     );
