@@ -5,18 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "audio_looker",
+            "name": "waux",
             "request": "launch",
             "type": "dart"
         },
         {
-            "name": "audio_looker (profile mode)",
+            "name": "waux (profile mode)",
             "request": "launch",
             "type": "dart",
             "flutterMode": "profile"
         },
         {
-            "name": "audio_looker (release mode)",
+            "name": "waux (release mode)",
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"

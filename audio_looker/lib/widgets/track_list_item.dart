@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:audio_looker/services/collection_service.dart';
-import 'package:audio_looker/widgets/waveform_painter.dart';
+import 'package:waux/services/collection_service.dart';
+import 'package:waux/widgets/waveform_painter.dart';
 
 class TrackListItem extends StatelessWidget {
   final Track track;
@@ -19,13 +19,9 @@ class TrackListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 8,
-      ),
-      color: isSelected
-          ? Theme.of(context).primaryColor.withOpacity(0.2)
-          : null,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color:
+          isSelected ? Theme.of(context).primaryColor.withOpacity(0.2) : null,
       child: Column(
         children: [
           ListTile(
@@ -37,30 +33,21 @@ class TrackListItem extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.star,
-                        size: 12,
-                        color: Colors.amber,
-                      ),
-                      Text(
-                        '${track.rating}',
-                        style: TextStyle(fontSize: 10),
-                      ),
+                      Icon(Icons.star, size: 12, color: Colors.amber),
+                      Text('${track.rating}', style: TextStyle(fontSize: 10)),
                     ],
                   ),
               ],
             ),
             title: Text(track.title),
-            subtitle: Text(
-              '${track.artist} • ${track.album}',
-            ),
+            subtitle: Text('${track.artist} • ${track.album}'),
             trailing: IconButton(
               icon: const Icon(Icons.delete),
               onPressed: onDelete,
             ),
             onTap: onTap,
           ),
-          
+
           // Waveform preview
           if (track.waveformData != null && track.waveformData!.isNotEmpty)
             Container(
@@ -76,7 +63,7 @@ class TrackListItem extends StatelessWidget {
                 ),
               ),
             ),
-          
+
           // Tags preview
           if (track.generalTags.isNotEmpty)
             Padding(
@@ -86,10 +73,14 @@ class TrackListItem extends StatelessWidget {
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: track.generalTags.length,
-                  separatorBuilder: (context, index) => const SizedBox(width: 4),
+                  separatorBuilder:
+                      (context, index) => const SizedBox(width: 4),
                   itemBuilder: (context, index) {
                     return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Theme.of(context).primaryColor.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(12),

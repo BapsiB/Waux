@@ -1,8 +1,8 @@
 // import 'package:flutter/material.dart';
 // import 'package:flutter_bloc/flutter_bloc.dart';
-// import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
-// import 'package:audio_looker/blocs/collection/collection_bloc.dart';
-// import 'package:audio_looker/services/collection_service.dart';
+// import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
+// import 'package:waux/blocs/collection/collection_bloc.dart';
+// import 'package:waux/services/collection_service.dart';
 
 // class TrackDetailScreen extends StatelessWidget {
 //   final Track track;

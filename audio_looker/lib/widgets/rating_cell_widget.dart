@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
-import 'package:audio_looker/services/collection_service.dart';
-import 'package:audio_looker/widgets/track_table_row.dart'
+import 'package:waux/services/collection_service.dart';
+import 'package:waux/widgets/track_table_row.dart'
     show WaveformPreviewCell; // Reuse the cell widget
 
 // Add these typedefs for clarity

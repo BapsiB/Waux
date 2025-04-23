@@ -7,8 +7,8 @@ import 'package:just_audio/just_audio.dart' as just_audio show PlayerState;
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert'; // For JSON encoding/decoding
-import 'package:audio_looker/services/performance_profiler.dart';
-import 'package:audio_looker/services/collection_service.dart';
+import 'package:waux/services/performance_profiler.dart';
+import 'package:waux/services/collection_service.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path/path.dart' as pathLib;

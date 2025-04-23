@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as pathLib;
 import 'package:collection/collection.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:audio_looker/services/collection_service.dart';
-import 'package:audio_looker/blocs/track_management/track_data_bloc.dart';
+import 'package:waux/services/collection_service.dart';
+import 'package:waux/blocs/track_management/track_data_bloc.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 

@@ -9,9 +9,9 @@ import 'dart:math';
 import 'package:collection/collection.dart';
 import 'package:flutter_bloc/flutter_bloc.dart'; // Import BlocProvider
 
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
-import 'package:audio_looker/services/collection_service.dart'; // Track model and CollectionService
-import 'package:audio_looker/widgets/track_data_source.dart';
+import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
+import 'package:waux/services/collection_service.dart'; // Track model and CollectionService
+import 'package:waux/widgets/track_data_source.dart';
 
 // Callback types
 typedef SelectionChangeCallback =

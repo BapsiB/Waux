@@ -5,9 +5,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:just_audio/just_audio.dart'
     as just_audio
     show PlayerState, ProcessingState;
-import 'package:audio_looker/services/audio_service.dart';
-import 'package:audio_looker/services/collection_service.dart';
-import 'package:audio_looker/blocs/track_management/track_metadata_bloc.dart';
+import 'package:waux/services/audio_service.dart';
+import 'package:waux/services/collection_service.dart';
+import 'package:waux/blocs/track_management/track_metadata_bloc.dart';
 import 'package:just_audio/just_audio.dart';
 
 part 'audio_player_event.dart';

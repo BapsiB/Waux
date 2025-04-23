@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:audio_looker/blocs/track_management/track_metadata_bloc.dart';
+import 'package:waux/blocs/track_management/track_metadata_bloc.dart';
 //           value: playlistService, // Provide PlaylistService
-import 'package:audio_looker/services/collection_service.dart';
+import 'package:waux/services/collection_service.dart';
 
 class TrackMetadataEditor extends StatefulWidget {
   final Track track;

@@ -65,7 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
   DataGridSortDirection _sortDirectionSf = DataGridSortDirection.ascending;
   Set<int> _selectedTrackIds = {};
   int? _anchorTrackId;
-  bool _isPlaylistPanelVisible = true;
+  bool _isPlaylistPanelVisible = false;
   String? _currentlySelectedPlaylistId;
   Playlist? _currentlySelectedPlaylist;
   bool _isMinimized = true;

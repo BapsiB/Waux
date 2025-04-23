@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:audio_looker/services/collection_service.dart';
-import 'package:audio_looker/widgets/waveform_painter.dart';
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
+import 'package:waux/services/collection_service.dart';
+import 'package:waux/widgets/waveform_painter.dart';
+import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 // --- Widget for the first cell (Waveform + Play Button) ---

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:audio_looker/services/audio_service.dart'; // Make sure this path is correct
+import 'package:waux/services/audio_service.dart'; // Make sure this path is correct
 import 'dart:math' as math;
 import 'dart:ui' as ui; // Required for canvas.drawParagraph
 

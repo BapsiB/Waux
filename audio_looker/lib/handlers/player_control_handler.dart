@@ -6,10 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 // Import BLoCs
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
+import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
 
 // Import models
-import 'package:audio_looker/services/collection_service.dart';
+import 'package:waux/services/collection_service.dart';
 
 /// Handles audio player controls and navigation
 class PlayerControlHandler {

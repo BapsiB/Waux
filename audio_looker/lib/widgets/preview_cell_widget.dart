@@ -3,10 +3,10 @@
 import 'dart:async'; // Keep for Timer if used elsewhere, but maybe not needed now
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:audio_looker/services/collection_service.dart';
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
-import 'package:audio_looker/widgets/waveform_painter.dart';
-// import 'package:audio_looker/services/audio_service.dart'; // Likely not needed directly
+import 'package:waux/services/collection_service.dart';
+import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
+import 'package:waux/widgets/waveform_painter.dart';
+// import 'package:waux/services/audio_service.dart'; // Likely not needed directly
 
 class PreviewCellWidget extends StatefulWidget {
   final Track track;

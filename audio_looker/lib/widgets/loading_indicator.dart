@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:audio_looker/blocs/track_management/track_data_bloc.dart';
-import 'package:audio_looker/blocs/playlist/playlist_bloc.dart';
+import 'package:waux/blocs/track_management/track_data_bloc.dart';
+import 'package:waux/blocs/playlist/playlist_bloc.dart';
 
 class LoadingIndicator extends StatelessWidget {
   final Widget child;

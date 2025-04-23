@@ -6,12 +6,12 @@ import 'package:url_launcher/url_launcher.dart'; // Import url_launcher
 import 'package:path/path.dart' as path_lib; // Import for path manipulation
 
 // Import BLoCs
-import 'package:audio_looker/blocs/track_management/track_data_bloc.dart';
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
-import 'package:audio_looker/blocs/playlist/playlist_bloc.dart';
+import 'package:waux/blocs/track_management/track_data_bloc.dart';
+import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
+import 'package:waux/blocs/playlist/playlist_bloc.dart';
 
 // Import models
-import 'package:audio_looker/services/collection_service.dart';
+import 'package:waux/services/collection_service.dart';
 
 /// Handles context menu creation and actions for tracks
 class ContextMenuHandler {

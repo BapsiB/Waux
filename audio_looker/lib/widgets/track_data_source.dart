@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
-import 'package:audio_looker/services/collection_service.dart'; // Your Track model
-import 'package:audio_looker/widgets/rating_cell_widget.dart'; // Reuse the cell widget
-import 'package:audio_looker/widgets/preview_cell_widget.dart'; // Reuse the cell widget
+import 'package:waux/services/collection_service.dart'; // Your Track model
+import 'package:waux/widgets/rating_cell_widget.dart'; // Reuse the cell widget
+import 'package:waux/widgets/preview_cell_widget.dart'; // Reuse the cell widget
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:audio_looker/blocs/audio_player/audio_player_bloc.dart';
+import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 // Add these typedefs for clarity

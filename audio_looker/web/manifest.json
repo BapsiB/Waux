@@ -1,6 +1,6 @@
 {
-    "name": "audio_looker",
-    "short_name": "audio_looker",
+    "name": "waux",
+    "short_name": "waux",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
