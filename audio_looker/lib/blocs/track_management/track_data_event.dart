@@ -35,6 +35,17 @@ class UpdateTrackWaveform extends TrackDataEvent {
   List<Object?> get props => [trackId, waveformData];
 }
 
+class CheckForNewFiles extends TrackDataEvent {}
+
+class AddDetectedFiles extends TrackDataEvent {
+  final List<String> filePathsToAdd;
+  const AddDetectedFiles(this.filePathsToAdd);
+  @override
+  List<Object> get props => [filePathsToAdd];
+}
+
+class SkipDetectedFiles extends TrackDataEvent {}
+
 /// Event to set the minimum rating filter.
 class SetRatingFilter extends TrackDataEvent {
   final int? rating; // Nullable to represent "All"

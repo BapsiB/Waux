@@ -92,6 +92,23 @@ class TrackDataLoaded extends TrackDataState {
   List<Object?> get props => [tracks, rootFolders, searchQuery, minimumRating];
 }
 
+// In track_data_state.dart
+class NewFilesDetected extends TrackDataState {
+  final List<String> newFilePaths;
+  // Include other necessary data to maintain UI state
+  final List<Track> currentTracks;
+  final List<String> rootFolders;
+
+  const NewFilesDetected({
+    required this.newFilePaths,
+    required this.currentTracks,
+    required this.rootFolders,
+  });
+
+  @override
+  List<Object> get props => [newFilePaths, currentTracks, rootFolders];
+}
+
 class TrackDataProcessingNeeded extends TrackDataState {
   final List<Track> addedTracks; // Tracks needing waveform processing
   // Include fields from TrackDataLoaded to maintain UI state

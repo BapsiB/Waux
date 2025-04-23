@@ -35,6 +35,7 @@ import '../handlers/player_control_handler.dart';
 // Import Other Screens
 import 'collection_manager_screen.dart';
 import 'package:flutter/widgets.dart';
+import 'package:path/path.dart' as pathLib;
 
 // Define view mode enum
 enum ViewMode { list, tree }
@@ -202,9 +203,8 @@ class _HomeScreenState extends State<HomeScreen> {
         );
 
         // --- Trigger Loading for TrackDataBloc and Playlists ---
-        context.read<TrackDataBloc>().add(
-          LoadTracks(),
-        ); // <<< CHANGED: Dispatch to TrackDataBloc
+        context.read<TrackDataBloc>().add(LoadTracks());
+        context.read<TrackDataBloc>().add(CheckForNewFiles());
         context.read<PlaylistBloc>().add(LoadPlaylists());
 
         // Optionally trigger sync after load
@@ -463,6 +463,13 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         BlocListener<TrackDataBloc, TrackDataState>(
           listener: (context, state) {
+            if (state is NewFilesDetected) {
+              print(
+                "HomeScreen Listener: NewFilesDetected state received. Showing dialog...",
+              ); // <-- Add this
+
+              _showNewFilesDialog(context, state.newFilePaths);
+            }
             if (state is FolderDeletionConfirmationNeeded) {
               _showFolderDeleteConfirmationDialog(
                 context,
@@ -595,24 +602,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   _fileHandler.pickAndAddAudioFile();
                 },
               ),
-              // TODO: Add 'Add Folder...' menu item here if needed
-              // PlatformMenuItem(
-              //   label: 'Add Folder...',
-              //   onSelected: () {
-              //     _fileHandler.pickAndAddFolder();
-              //   },
-              // ),
-              // Use standard PlatformMenuItem for separator
-              // const PlatformMenuItem(label: '-'),
-              // PlatformMenuItem(
-              //   label: 'Close Collection', // Example
-              //   onSelected: () {
-              //     // Dispatch event to close collection
-              //     context.read<CollectionManagementBloc>().add(
-              //       SwitchCollection(''),
-              //     ); // Or a dedicated Close event
-              //   },
-              // ),
             ],
           ),
           // --- Edit Menu ---
@@ -799,6 +788,150 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     // Add other keyboard shortcuts here (e.g., arrow keys for selection)
     return KeyEventResult.ignored;
+  }
+
+  void _showNewFilesDialog(BuildContext context, List<String> newFilePaths) {
+    // Use a Map to track the selection state of each file path
+    final Map<String, bool> selectionStates = {
+      for (var path in newFilePaths) path: true, // Start with all selected
+    };
+
+    // State variable for the main "Select All" Checkbox (nullable bool for tristate)
+    bool? selectAllValue = true; // Initial state: true (all checked)
+
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Prevent dismissing by tapping outside
+      builder: (dialogContext) {
+        // Use StatefulBuilder to manage the selection state within the dialog
+        return StatefulBuilder(
+          builder: (stfContext, stfSetState) {
+            final int count = newFilePaths.length;
+            // Recalculate selected count whenever the state changes
+            final int selectedCount =
+                selectionStates.values.where((v) => v).length;
+
+            // Update the main checkbox state based on current selections
+            if (count == 0) {
+              selectAllValue = false; // No items, nothing to select
+            } else if (selectedCount == 0) {
+              selectAllValue = false; // None selected
+            } else if (selectedCount == count) {
+              selectAllValue = true; // All selected
+            } else {
+              selectAllValue = null; // Some selected (indeterminate state)
+            }
+
+            return AlertDialog(
+              title: Text('New Files Detected ($count)'),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: MediaQuery.of(context).size.height * 0.5,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // --- Select All Checkbox ---
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: selectAllValue,
+                          tristate: true, // Allow indeterminate state (dash)
+                          // Disable checkbox if list is empty
+                          onChanged:
+                              count > 0
+                                  ? (bool? newValue) {
+                                    stfSetState(() {
+                                      // Clicking indeterminate usually cycles to true (checked)
+                                      // Clicking false cycles to true? Or should it deselect all? Let's make click always toggle all.
+                                      // If current state is anything other than fully checked, check all. Otherwise, uncheck all.
+                                      bool checkAll = selectAllValue != true;
+                                      selectAllValue =
+                                          checkAll; // Update state for the main checkbox
+
+                                      // Update all individual checkboxes
+                                      for (var key in selectionStates.keys) {
+                                        selectionStates[key] = checkAll;
+                                      }
+                                    });
+                                  }
+                                  : null, // Disable if no items
+                        ),
+                        // Optional: Add a label next to the checkbox
+                        const Text('Select All'),
+                        // Spacer(), // Use if you want the checkbox on the left
+                      ],
+                    ),
+                    const Divider(),
+                    // --- Scrollable List of Files with Checkboxes ---
+                    Expanded(
+                      child:
+                          count > 0
+                              ? ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: count,
+                                itemBuilder: (listContext, index) {
+                                  final filePath = newFilePaths[index];
+                                  final fileName = pathLib.basename(filePath);
+                                  return CheckboxListTile(
+                                    title: Text(
+                                      fileName,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    value: selectionStates[filePath] ?? false,
+                                    onChanged: (bool? newValue) {
+                                      if (newValue != null) {
+                                        stfSetState(() {
+                                          // Update the specific item
+                                          selectionStates[filePath] = newValue;
+                                          // No need to manually update selectAllValue here,
+                                          // it will be recalculated at the start of the builder.
+                                        });
+                                      }
+                                    },
+                                    dense: true,
+                                    controlAffinity:
+                                        ListTileControlAffinity.leading,
+                                  );
+                                },
+                              )
+                              : const Center(
+                                child: Text("No new files found."),
+                              ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Skip'),
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    context.read<TrackDataBloc>().add(SkipDetectedFiles());
+                  },
+                ),
+                TextButton(
+                  onPressed:
+                      selectedCount > 0
+                          ? () {
+                            final List<String> filesToAdd =
+                                selectionStates.entries
+                                    .where((entry) => entry.value)
+                                    .map((entry) => entry.key)
+                                    .toList();
+                            Navigator.of(dialogContext).pop();
+                            context.read<TrackDataBloc>().add(
+                              AddDetectedFiles(filesToAdd),
+                            );
+                          }
+                          : null,
+                  child: Text('Add Selected ($selectedCount)'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   // Build the app bar (AppBar)

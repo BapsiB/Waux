@@ -36,6 +36,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
   // Keep track of the last search query to re-apply after loads/syncs
   String _lastSearchQuery = '';
   int? _lastMinimumRating;
+  bool _isCheckingFiles = false;
 
   TrackDataBloc({
     required CollectionService collectionService,
@@ -60,6 +61,9 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     on<DeleteFolder>(_onDeleteFolder);
     on<ConfirmDeleteFolderFiles>(_onConfirmDeleteFolderFiles);
     on<UpdateTrackWaveform>(_onUpdateTrackWaveform);
+    on<CheckForNewFiles>(_onCheckForNewFiles); // Add handler
+    on<AddDetectedFiles>(_onAddDetectedFiles); // Add handler
+    on<SkipDetectedFiles>(_onSkipDetectedFiles);
   }
 
   // --- Helper to generate placeholder waveform (Updated) ---
@@ -668,6 +672,200 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       );
     }
     // }
+  }
+
+  Future<void> _onCheckForNewFiles(
+    CheckForNewFiles event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    // Prevent concurrent execution
+    if (_isCheckingFiles) {
+      print(
+        "TrackDataBloc: Already checking for files, skipping duplicate request.",
+      );
+      return;
+    }
+    _isCheckingFiles = true; // Set flag
+
+    print("TrackDataBloc: _onCheckForNewFiles entered.");
+
+    final activeDef = _collectionService.getActiveCollection();
+    // Currently only checking for local collections, adjust if needed for shared
+    if (activeDef == null || activeDef.type != CollectionType.local) {
+      print(
+        "Skipping new file check: Not a local collection or no active collection.",
+      );
+      _isCheckingFiles = false; // Reset flag before returning
+      return;
+    }
+
+    // Avoid checking if already in the NewFilesDetected state (user needs to respond first)
+    if (state is NewFilesDetected) {
+      print("Skipping new file check: Already awaiting user confirmation.");
+      _isCheckingFiles = false; // Reset flag
+      return;
+    }
+
+    print("TrackDataBloc: Checking for new files in ${activeDef.name}...");
+
+    Set<String>? lastKnownFiles;
+    Set<String> currentFilesOnDisk = {};
+    bool scanError = false;
+    List<String> rootFolders = []; // Store roots for state emission
+
+    try {
+      // 1. Load last state
+      lastKnownFiles = await _collectionService.loadLastScanState(activeDef.id);
+      print(
+        "Last known files state loaded: ${lastKnownFiles?.length ?? 'None (first scan)'}",
+      );
+
+      // 2. Scan current files
+      final List<String> currentFilesOnDiskList = [];
+      rootFolders = _collectionService.getRootFolders(); // Get current roots
+      if (rootFolders.isEmpty) {
+        print("No root folders to scan for collection ${activeDef.name}.");
+        // Save empty state if no roots defined, potentially clear last state?
+        await _collectionService.saveLastScanState(activeDef.id, {});
+        _isCheckingFiles = false; // Reset flag
+        return; // Nothing to scan
+      }
+
+      for (final rootPath in rootFolders) {
+        final dir = Directory(rootPath);
+        if (await dir.exists()) {
+          // Use the existing recursive helper from the BLoC
+          await _findAudioFilesRecursively(
+            dir,
+            currentFilesOnDiskList,
+            _supportedExtensions,
+          );
+        } else {
+          print("Warning: Root folder $rootPath not found during scan.");
+          // Optionally remove the root folder if it doesn't exist anymore?
+          // await _collectionService.removeRootFolder(rootPath);
+        }
+      }
+      currentFilesOnDisk =
+          currentFilesOnDiskList.map((p) => pathLib.normalize(p)).toSet();
+      print("Scan found ${currentFilesOnDisk.length} supported files on disk.");
+    } catch (e, stackTrace) {
+      print("Error during file scan or loading last state: $e\n$stackTrace");
+      scanError = true;
+      // Optionally emit an error state
+      // emit(TrackDataError("Failed during new file check: $e"));
+    }
+
+    // Only proceed if scan didn't error out
+    if (!scanError) {
+      Set<String> newFiles = {};
+      if (lastKnownFiles != null) {
+        // 3. Compare
+        newFiles = currentFilesOnDisk.difference(lastKnownFiles);
+      } else {
+        // 3a. First Scan Scenario
+        print(
+          "First scan for collection ${activeDef.name}. Saving current state.",
+        );
+        // Just save the current state, don't prompt on first scan
+        await _collectionService.saveLastScanState(
+          activeDef.id,
+          currentFilesOnDisk,
+        );
+        _isCheckingFiles = false; // Reset flag
+        return; // Exit, LoadTracks will handle showing initial files
+      }
+
+      // 4. Emit new state or save current state
+      if (newFiles.isNotEmpty) {
+        print("Detected ${newFiles.length} new files.");
+        // Get current UI state data to pass along
+        final currentTracksForState = _getTracksFromState();
+        // We already fetched rootFolders above
+        emit(
+          NewFilesDetected(
+            newFilePaths: newFiles.toList(),
+            currentTracks: currentTracksForState,
+            rootFolders: rootFolders, // Pass the fetched roots
+          ),
+        );
+        print("TrackDataBloc: Emitted NewFilesDetected state.");
+      } else {
+        print("No new files detected.");
+        // Save the current state as the last known state since scan was successful
+        // and no new files were found (or it was the first scan handled above).
+        await _collectionService.saveLastScanState(
+          activeDef.id,
+          currentFilesOnDisk,
+        );
+      }
+    } // End if(!scanError)
+
+    _isCheckingFiles = false; // Reset flag in all cases before exiting
+  }
+
+  Future<void> _onAddDetectedFiles(
+    AddDetectedFiles event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    print(
+      "User confirmed adding ${event.filePathsToAdd.length} detected files.",
+    );
+    // 1. Dispatch AddTracks
+    add(AddTracks(event.filePathsToAdd));
+
+    // 2. !!! IMPORTANT: Need mechanism to wait for AddTracks completion !!!
+    //    This is complex with BLoC. Options:
+    //    a) Make _onAddTracks async and return a Future. Await it here.
+    //    b) Have AddTracks emit a specific "AddTracksCompleted" state that this handler listens for.
+    //    c) Use `emit.forEach` or `await emit.forEach` if `AddTracks` generates a stream of updates.
+    //    Simplest for now (but potentially racy): Assume AddTracks finishes quickly and rescan/save.
+    await Future.delayed(
+      Duration(seconds: 2),
+    ); // Crude delay - **REPLACE WITH ROBUST METHOD**
+
+    // 3. Save the *new* current state after adding
+    await _saveCurrentDiskStateAfterScan();
+
+    // 4. Reload data to reflect additions and clear NewFilesDetected state
+    add(ReloadDataPreservingFilters());
+  }
+
+  Future<void> _saveCurrentDiskStateAfterScan() async {
+    final activeDef = _collectionService.getActiveCollection();
+    if (activeDef == null) return;
+    final List<String> currentFilesOnDiskList = [];
+    final rootFolders = _collectionService.getRootFolders();
+    for (final rootPath in rootFolders) {
+      final dir = Directory(rootPath);
+      if (await dir.exists()) {
+        await _findAudioFilesRecursively(
+          dir,
+          currentFilesOnDiskList,
+          _supportedExtensions,
+        );
+      }
+    }
+    final Set<String> currentFilesOnDisk =
+        currentFilesOnDiskList.map((p) => pathLib.normalize(p)).toSet();
+    await _collectionService.saveLastScanState(
+      activeDef.id,
+      currentFilesOnDisk,
+    );
+    print("Updated last scanned file state for collection ${activeDef.name}.");
+  }
+
+  Future<void> _onSkipDetectedFiles(
+    SkipDetectedFiles event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    print("User skipped adding detected files.");
+    // Save the state representing files *before* adding the new ones
+    // This requires getting the list scanned during _onCheckForNewFiles.
+    // For simplicity now, we rescan and save, effectively skipping the prompt next time.
+    await _saveCurrentDiskStateAfterScan();
+    // Reload data to clear the NewFilesDetected state
+    add(ReloadDataPreservingFilters());
   }
 
   Future<void> _onRemoveTrack(

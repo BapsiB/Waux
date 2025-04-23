@@ -1200,6 +1200,33 @@ class CollectionService {
     }
   }
 
+  static const String _lastScannedFilesKeyPrefix =
+      'lastScannedFiles_'; // Add prefix
+
+  Future<void> saveLastScanState(
+    String collectionId,
+    Set<String> filePaths,
+  ) async {
+    final jsonString = jsonEncode(filePaths.toList());
+    await saveUiSetting('$_lastScannedFilesKeyPrefix$collectionId', jsonString);
+  }
+
+  Future<Set<String>?> loadLastScanState(String collectionId) async {
+    final jsonString = await loadUiSetting(
+      '$_lastScannedFilesKeyPrefix$collectionId',
+    );
+    if (jsonString != null) {
+      try {
+        final List<dynamic> decodedList = jsonDecode(jsonString);
+        return Set<String>.from(decodedList.cast<String>());
+      } catch (e) {
+        print("Error decoding last scan state: $e");
+        return null;
+      }
+    }
+    return null;
+  }
+
   // --- Methods needing review/implementation ---
   // (Methods: addLocalFile, addUrl, importFromFile, exportToFile)
   Future<Track?> addLocalFile(String filePath) async {
