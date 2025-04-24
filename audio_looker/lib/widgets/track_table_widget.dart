@@ -41,6 +41,7 @@ class TrackTableWidget extends StatefulWidget {
   final DataGridSortDirection initialSortDirection;
   final PlayAndMinimizeCallback onPlayPreviewAndMinimize;
   final SelectAndOpenPlayerCallback onEditMetadata;
+  final SetSearchTextCallback onSetSearchText;
 
   const TrackTableWidget({
     Key? key,
@@ -55,6 +56,7 @@ class TrackTableWidget extends StatefulWidget {
     required this.initialSortDirection,
     required this.onPlayPreviewAndMinimize,
     required this.onEditMetadata,
+    required this.onSetSearchText,
   }) : super(key: key);
 
   @override
@@ -152,7 +154,8 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       onRatingChanged: widget.onRatingChanged,
       onPlayPreviewAndMinimize: widget.onPlayPreviewAndMinimize,
       onEditMetadata: widget.onEditMetadata,
-      initialColumnOrder: [], // Pass empty list initially
+      initialColumnOrder: [],
+      onSetSearchText: widget.onSetSearchText,
     );
 
     // Initialize Controller
@@ -420,7 +423,27 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         )) {
       _updateControllerSelection();
     }
-    // Note: No need to reload config on widget update unless collection changes
+
+    if (widget.onSetSearchText != oldWidget.onSetSearchText) {
+      // Assuming TrackDataSource has a method or way to update its callback reference
+      // This depends on how TrackDataSource is implemented. If it stores the callback directly,
+      // we might need to recreate the TrackDataSource instance or add an update method.
+      // For simplicity, let's recreate if the callback changes.
+      // NOTE: Recreating the datasource might have performance implications.
+      _trackDataSource = TrackDataSource(
+        trackData: widget.tracks,
+        audioPlayerBloc: widget.audioPlayerBloc,
+        onRatingChanged: widget.onRatingChanged,
+        onPlayPreviewAndMinimize: widget.onPlayPreviewAndMinimize,
+        onEditMetadata: widget.onEditMetadata,
+        initialColumnOrder: _columnOrder, // Use current order
+        onSetSearchText: widget.onSetSearchText, // <<< PASS UPDATED CALLBACK
+      );
+      // After recreating, we might need to re-apply selection
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _updateControllerSelection();
+      });
+    }
   }
 
   @override

@@ -643,7 +643,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
           TrackDataProcessingNeeded(
             addedTracks: processingState.addedTracks,
             tracks: updatedTracks,
-            rootFolders: rootFoldersToKeep ?? [],
+            rootFolders: rootFoldersToKeep,
             searchQuery: currentSearchQuery,
             minimumRating: currentMinimumRating,
           ),
@@ -652,7 +652,7 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
         emit(
           TrackDataLoaded(
             tracks: updatedTracks,
-            rootFolders: rootFoldersToKeep ?? [],
+            rootFolders: rootFoldersToKeep,
             searchQuery: currentSearchQuery,
             minimumRating: currentMinimumRating,
           ),

@@ -12,6 +12,7 @@ typedef PlayPreviewCallback = void Function(Track track);
 typedef RatingChangeCallback = void Function(int trackId, int newRating);
 typedef PlayAndMinimizeCallback = void Function(Track track, bool togglePlay);
 typedef SelectAndOpenPlayerCallback = void Function(Track track);
+typedef SetSearchTextCallback = void Function(String searchText);
 
 // lib/widgets/track_data_source.dart
 
@@ -23,7 +24,8 @@ class TrackDataSource extends DataGridSource {
     required this.onRatingChanged,
     required this.onPlayPreviewAndMinimize,
     required this.onEditMetadata,
-    required List<String> initialColumnOrder, // <<< ADD initial order
+    required List<String> initialColumnOrder,
+    required this.onSetSearchText,
   }) : _audioPlayerBloc = audioPlayerBloc,
        _currentColumnOrder = List<String>.from(
          initialColumnOrder.where((name) => name != 'id'),
@@ -39,11 +41,14 @@ class TrackDataSource extends DataGridSource {
   final RatingChangeCallback onRatingChanged;
   final PlayAndMinimizeCallback onPlayPreviewAndMinimize;
   final SelectAndOpenPlayerCallback onEditMetadata;
+  final SetSearchTextCallback onSetSearchText;
 
-  // --- ADDED: Store current visual column order ---
+  final Map<String, bool> _cellHoverState =
+      {}; // Use a compound key: "rowId_colName"
+  String? _currentlyHoveredCellKey;
+
   List<String> _currentColumnOrder;
 
-  // --- ADDED: Method to update column order ---
   void updateColumnOrder(List<String> newOrder) {
     // Filter out 'id' if it's present in the new order list
     _currentColumnOrder = List<String>.from(
@@ -58,48 +63,41 @@ class TrackDataSource extends DataGridSource {
   final Map<int, bool> _rowHoverState = {};
   int? _currentlyHoveredTrackId;
 
-  // --- setHoverState remains the same ---
-  void setHoverState(int? trackId, bool isHovering) {
+  // --- Updated setHoverState for cells ---
+  void setHoverState(String? cellKey, bool isHovering) {
     bool changed = false;
-    int? previousHoveredTrackId = _currentlyHoveredTrackId;
-
-    // Use trackId directly if provided, otherwise use _currentlyHoveredTrackId for exit logic
-    int? targetTrackId = trackId ?? _currentlyHoveredTrackId;
-    if (targetTrackId == null) return; // No track ID to act upon
-
-    if (isHovering) {
+    String? previousHoveredCellKey = _currentlyHoveredCellKey;
+    print("Hovering over cell: $_currentlyHoveredCellKey");
+    if (isHovering && cellKey != null) {
       // Hover Enter
-      if (_currentlyHoveredTrackId != targetTrackId) {
-        // Clear previous hover state if different row
-        if (_currentlyHoveredTrackId != null) {
-          _rowHoverState[_currentlyHoveredTrackId!] = false;
-          // Ensure previousHoveredTrackId is set for notification below
-          previousHoveredTrackId = _currentlyHoveredTrackId;
+      if (_currentlyHoveredCellKey != cellKey) {
+        // Clear previous hover state if different cell
+        if (_currentlyHoveredCellKey != null) {
+          _cellHoverState[_currentlyHoveredCellKey!] = false;
+          // No need to track previousHoveredCellKey for rowIndices anymore
         }
         // Set new hover state
-        _rowHoverState[targetTrackId] = true;
-        _currentlyHoveredTrackId = targetTrackId;
+        _cellHoverState[cellKey] = true;
+        _currentlyHoveredCellKey = cellKey;
+        print("Hovering over cell: $cellKey");
         changed = true;
       }
     } else {
-      // Hover Exit (only clear if exiting the currently hovered row)
-      if (_currentlyHoveredTrackId == targetTrackId) {
-        _rowHoverState[targetTrackId] = false;
-        _currentlyHoveredTrackId = null;
+      // Hover Exit (only clear if exiting the currently hovered cell)
+      if (_currentlyHoveredCellKey != null &&
+          _currentlyHoveredCellKey == cellKey) {
+        _cellHoverState[_currentlyHoveredCellKey!] = false;
+        // No need to track previousHoveredCellKey for rowIndices anymore
+        _currentlyHoveredCellKey = null;
         changed = true;
-        // Ensure previousHoveredTrackId is set for notification below
-        previousHoveredTrackId = targetTrackId;
       }
     }
 
     if (changed) {
-      try {
-        // Notify listeners about the change
-        notifyListeners();
-      } catch (e) {
-        debugPrint("Error notifying hover listeners: $e");
-        notifyListeners(); // Fallback
-      }
+      // --- FIXED: Call notifyListeners without arguments ---
+      // The grid will determine which rows need updating based on
+      // the changed hover state affecting the buildRow output.
+      notifyListeners();
     }
   }
 
@@ -190,7 +188,6 @@ class TrackDataSource extends DataGridSource {
     if (track == null) return null;
     // --- End Track object finding ---
 
-    final bool isHovering = _rowHoverState[trackId] ?? false;
     final String draggableData = track.path;
 
     // *** MODIFIED: Build cellWidgets list based on _currentColumnOrder ***
@@ -205,6 +202,8 @@ class TrackDataSource extends DataGridSource {
     for (final String columnName in _currentColumnOrder) {
       final DataGridCell? dataGridCell = cellMap[columnName];
       Widget cellContent; // Widget to hold the actual cell content
+      final cellKey = "${trackId}_$columnName";
+      final bool isHovering = _cellHoverState[cellKey] ?? false;
 
       if (dataGridCell == null) {
         // Should not happen if _currentColumnOrder is correct, but handle defensively
@@ -273,6 +272,45 @@ class TrackDataSource extends DataGridSource {
               ),
             );
             break;
+          case 'artist':
+          case 'album':
+            final String cellValue = dataGridCell.value?.toString() ?? '';
+            // The Row widget arranges the text and the icon
+            cellContent = Row(
+              children: [
+                // Displays the artist or album name
+                Expanded(
+                  child: Text(cellValue, overflow: TextOverflow.ellipsis),
+                ),
+
+                // This 'if' condition controls the icon's visibility
+                if (isHovering &&
+                    cellValue
+                        .isNotEmpty) // <--- Check if hovering this cell AND value exists
+                  // This IconButton is the filter icon
+                  IconButton(
+                    icon: const Icon(
+                      Icons.filter_alt_outlined,
+                    ), // The filter icon itself
+                    iconSize: 16,
+                    splashRadius: 16,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    tooltip: 'Filter by "$cellValue"',
+                    onPressed: () {
+                      onSetSearchText(cellValue);
+                    }, // Action on click
+                  ),
+
+                // This SizedBox acts as a placeholder when the icon is hidden
+                // to keep the text alignment consistent.
+                if (!isHovering || cellValue.isEmpty)
+                  const SizedBox(width: 30), // Placeholder
+              ],
+            );
+            break; // Added break statement
+
           case 'source':
             final Track sourceTrack = dataGridCell.value as Track;
             IconData iconData;
@@ -402,12 +440,22 @@ class TrackDataSource extends DataGridSource {
             break;
         }
       }
-      // *** Wrap the generated cellContent widget with MouseRegion ***
+      // Wrap the cell content with MouseRegion and alignment container
+      // --- FIXED: Wrap the Container with MouseRegion ---
       cellWidgets.add(
         MouseRegion(
-          onEnter: (_) => setHoverState(trackId, true),
-          onExit: (_) => setHoverState(trackId, false),
-          child: cellContent, // The actual widget for the cell
+          // <<< MouseRegion is now the outer wrapper
+          onEnter: (_) => setHoverState(cellKey, true),
+          onExit: (_) => setHoverState(cellKey, false),
+          child: Container(
+            // Container provides padding and alignment
+            alignment:
+                (columnName == 'duration')
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+            child: cellContent, // The actual cell content (Row, Text, etc.)
+          ),
         ),
       );
     } // End for loop through _currentColumnOrder

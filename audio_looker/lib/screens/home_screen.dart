@@ -1320,6 +1320,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // --- NEW: Handle filter icon click ---
+  void _handleSetSearchText(String searchText) {
+    print("Setting search text from cell click: $searchText");
+    _searchController.text = searchText;
+  }
+
   // Build the header shown when a playlist is active
   Widget _buildPlaylistHeader() {
     // Ensure playlist is not null before building
@@ -1497,6 +1503,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child:
                     _viewMode == ViewMode.list
                         ? TrackTableWidget(
+                          onSetSearchText: _handleSetSearchText,
                           // Use ValueKey to ensure rebuild when fundamental data changes
                           key: ValueKey(
                             'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}-${displayedTracksForTable.length}',
