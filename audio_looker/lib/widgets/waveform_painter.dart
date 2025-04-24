@@ -162,11 +162,7 @@ class WaveformPainter extends CustomPainter {
     final splitIndex = (progressPosition * dataToRender.length).floor();
 
     // --- Draw Baseline & Waveform ---
-    canvas.drawLine(
-      Offset(0, centerY),
-      Offset(size.width, centerY),
-      _baselinePaint,
-    );
+
     for (int i = 0; i < dataToRender.length; i++) {
       final x = i * spacing;
       final amplitude = dataToRender[i].clamp(0.0, 1.0) * maxAmplitude;

@@ -3,9 +3,11 @@ import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:waux/services/collection_service.dart'; // Your Track model
 import 'package:waux/widgets/rating_cell_widget.dart'; // Reuse the cell widget
 import 'package:waux/widgets/preview_cell_widget.dart'; // Reuse the cell widget
-import 'package:flutter_bloc/flutter_bloc.dart';
+// import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+// import '../models/track_filter.dart'; // Import the filter enum
+// import '../utils/track_filtering.dart'; // Import the filtering utility
 
 // Add these typedefs for clarity
 typedef PlayPreviewCallback = void Function(Track track);
@@ -66,7 +68,6 @@ class TrackDataSource extends DataGridSource {
   // --- Updated setHoverState for cells ---
   void setHoverState(String? cellKey, bool isHovering) {
     bool changed = false;
-    String? previousHoveredCellKey = _currentlyHoveredCellKey;
     print("Hovering over cell: $_currentlyHoveredCellKey");
     if (isHovering && cellKey != null) {
       // Hover Enter
@@ -275,6 +276,9 @@ class TrackDataSource extends DataGridSource {
           case 'artist':
           case 'album':
             final String cellValue = dataGridCell.value?.toString() ?? '';
+            final String fieldName =
+                dataGridCell.columnName; // 'artist' or 'album'
+
             // The Row widget arranges the text and the icon
             cellContent = Row(
               children: [
@@ -283,15 +287,14 @@ class TrackDataSource extends DataGridSource {
                   child: Text(cellValue, overflow: TextOverflow.ellipsis),
                 ),
 
+                // Add space to prevent text overlap when icon appears
+                const SizedBox(width: 4),
+
                 // This 'if' condition controls the icon's visibility
-                if (isHovering &&
-                    cellValue
-                        .isNotEmpty) // <--- Check if hovering this cell AND value exists
+                if (isHovering && cellValue.isNotEmpty)
                   // This IconButton is the filter icon
                   IconButton(
-                    icon: const Icon(
-                      Icons.filter_alt_outlined,
-                    ), // The filter icon itself
+                    icon: const Icon(Icons.filter_alt_outlined),
                     iconSize: 16,
                     splashRadius: 16,
                     visualDensity: VisualDensity.compact,
@@ -299,13 +302,16 @@ class TrackDataSource extends DataGridSource {
                     constraints: const BoxConstraints(),
                     tooltip: 'Filter by "$cellValue"',
                     onPressed: () {
-                      onSetSearchText(cellValue);
-                    }, // Action on click
-                  ),
-
-                // This SizedBox acts as a placeholder when the icon is hidden
-                // to keep the text alignment consistent.
-                if (!isHovering || cellValue.isEmpty)
+                      // Construct the filter string: field:value
+                      // Basic escaping for values with spaces (wrap in quotes)
+                      // More robust escaping might be needed for complex values
+                      final filterValue =
+                          cellValue.contains(' ') ? '"$cellValue"' : cellValue;
+                      final filterString = '$fieldName:$filterValue';
+                      onSetSearchText(filterString); // Call the callback
+                    },
+                  )
+                else
                   const SizedBox(width: 30), // Placeholder
               ],
             );
@@ -441,7 +447,6 @@ class TrackDataSource extends DataGridSource {
         }
       }
       // Wrap the cell content with MouseRegion and alignment container
-      // --- FIXED: Wrap the Container with MouseRegion ---
       cellWidgets.add(
         MouseRegion(
           // <<< MouseRegion is now the outer wrapper

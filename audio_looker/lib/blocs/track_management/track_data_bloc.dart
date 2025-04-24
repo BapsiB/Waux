@@ -11,7 +11,7 @@ import 'package:path/path.dart' as pathLib; // Use alias
 // Import Services and Models
 import '../../services/collection_service.dart'; // For Track, CollectionService, CollectionDefinition, CollectionType
 import '../../services/waveform_processing_service.dart';
-// import '../waveform_processing/waveform_processing_bloc.dart';
+import '../../utils/track_filtering.dart'; // For applyFilters
 // import '../waveform_processing/waveform_processing_event.dart';
 
 part 'track_data_event.dart';
@@ -134,16 +134,15 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
           tracksForState.add(track);
         }
       }
-      // --- END: Process Placeholders & Check for Missing Waveforms ---
 
       // Apply existing filters *after* potential placeholder generation
-      final filteredTracksForState = _applyFilters(
-        tracksForState, // Filter the list potentially containing placeholders
-        _lastSearchQuery,
-        _lastMinimumRating,
+      final filteredTracksForState = applyFilters(
+        allTracks:
+            tracksForState, // Filter the list potentially containing placeholders
+        searchQuery: _lastSearchQuery,
+        minRating: _lastMinimumRating,
       );
 
-      // --- Queue tracks that need actual processing ---
       if (tracksNeedingProcessing.isNotEmpty) {
         print(
           '[TrackDataBloc._onLoadTracks] Found ${tracksNeedingProcessing.length} tracks needing actual waveform processing.',
@@ -313,10 +312,10 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
                 return track;
               }).toList();
           // --- Apply filters to the list with placeholders ---
-          final filteredTracks = _applyFilters(
-            allTracksWithPlaceholders,
-            _lastSearchQuery,
-            _lastMinimumRating,
+          final filteredTracks = applyFilters(
+            allTracks: allTracksWithPlaceholders,
+            searchQuery: _lastSearchQuery,
+            minRating: _lastMinimumRating,
           );
 
           emit(
@@ -420,10 +419,10 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
         }).toList();
     // --- End Add placeholders ---
 
-    final filteredTracks = _applyFilters(
-      allTracksWithPlaceholders, // <<< Filter list with placeholders
-      _lastSearchQuery,
-      _lastMinimumRating,
+    final filteredTracks = applyFilters(
+      allTracks: allTracksWithPlaceholders, // <<< Filter list with placeholders
+      searchQuery: _lastSearchQuery,
+      minRating: _lastMinimumRating,
     );
 
     emit(
@@ -466,10 +465,10 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
         }).toList();
     // --- End Add placeholders ---
 
-    final filteredTracks = _applyFilters(
-      allTracksWithPlaceholders, // <<< Filter list with placeholders
-      _lastSearchQuery,
-      _lastMinimumRating,
+    final filteredTracks = applyFilters(
+      allTracks: allTracksWithPlaceholders, // <<< Filter list with placeholders
+      searchQuery: _lastSearchQuery,
+      minRating: _lastMinimumRating,
     );
 
     emit(
@@ -1105,35 +1104,6 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       return currentState.previousRootFolders ?? [];
     }
     return [];
-  }
-
-  List<Track> _applyFilters(
-    List<Track> allTracks,
-    String searchQuery,
-    int? minRating,
-  ) {
-    List<Track> filtered = allTracks;
-
-    if (searchQuery.isNotEmpty) {
-      final lowerCaseQuery = searchQuery.toLowerCase();
-      filtered =
-          filtered.where((track) {
-            return track.title.toLowerCase().contains(lowerCaseQuery) ||
-                track.artist.toLowerCase().contains(lowerCaseQuery) ||
-                track.album.toLowerCase().contains(lowerCaseQuery) ||
-                track.comment.toLowerCase().contains(lowerCaseQuery) ||
-                track.generalTags.any(
-                  (tag) => tag.toLowerCase().contains(lowerCaseQuery),
-                ) ||
-                track.path.toLowerCase().contains(lowerCaseQuery);
-          }).toList();
-    }
-
-    if (minRating != null && minRating > 0) {
-      filtered = filtered.where((track) => track.rating >= minRating).toList();
-    }
-
-    return filtered;
   }
 
   Future<void> _findAudioFilesRecursively(
