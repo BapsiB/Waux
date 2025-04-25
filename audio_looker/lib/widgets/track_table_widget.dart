@@ -192,7 +192,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     // Focus logic
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        FocusScope.of(context).requestFocus(_focusNode);
+        // FocusScope.of(context).requestFocus(_focusNode);
         _updateControllerSelection();
       }
     });
