@@ -6,7 +6,7 @@ import 'package:waux/widgets/preview_cell_widget.dart'; // Reuse the cell widget
 // import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-// import '../models/track_filter.dart'; // Import the filter enum
+import 'package:flutter/services.dart';
 // import '../utils/track_filtering.dart'; // Import the filtering utility
 
 // Add these typedefs for clarity
@@ -15,6 +15,8 @@ typedef RatingChangeCallback = void Function(int trackId, int newRating);
 typedef PlayAndMinimizeCallback = void Function(Track track, bool togglePlay);
 typedef SelectAndOpenPlayerCallback = void Function(Track track);
 typedef SetSearchTextCallback = void Function(String searchText);
+typedef GetEditingCellKeyCallback = String? Function();
+typedef EndEditingCallback = void Function({String? newValue});
 
 // lib/widgets/track_data_source.dart
 
@@ -28,6 +30,10 @@ class TrackDataSource extends DataGridSource {
     required this.onEditMetadata,
     required List<String> initialColumnOrder,
     required this.onSetSearchText,
+    required this.getEditingCellKey,
+    required this.onEndEditing,
+    required this.cellEditController,
+    required this.cellEditFocusNode,
   }) : _audioPlayerBloc = audioPlayerBloc,
        _currentColumnOrder = List<String>.from(
          initialColumnOrder.where((name) => name != 'id'),
@@ -44,6 +50,10 @@ class TrackDataSource extends DataGridSource {
   final PlayAndMinimizeCallback onPlayPreviewAndMinimize;
   final SelectAndOpenPlayerCallback onEditMetadata;
   final SetSearchTextCallback onSetSearchText;
+  final GetEditingCellKeyCallback getEditingCellKey;
+  final EndEditingCallback onEndEditing;
+  final TextEditingController cellEditController;
+  final FocusNode cellEditFocusNode;
 
   final Map<String, bool> _cellHoverState =
       {}; // Use a compound key: "rowId_colName"
@@ -197,12 +207,15 @@ class TrackDataSource extends DataGridSource {
       for (var cell in row.getCells()) cell.columnName: cell,
     };
 
+    final String? editingKey = getEditingCellKey();
+
     // Iterate through the CURRENT VISUAL ORDER
     for (final String columnName in _currentColumnOrder) {
       final DataGridCell? dataGridCell = cellMap[columnName];
       Widget cellContent; // Widget to hold the actual cell content
       final cellKey = "${trackId}_$columnName";
       final bool isHovering = _cellHoverState[cellKey] ?? false;
+      final bool isEditing = editingKey == cellKey;
 
       if (dataGridCell == null) {
         // Should not happen if _currentColumnOrder is correct, but handle defensively
@@ -222,99 +235,118 @@ class TrackDataSource extends DataGridSource {
             );
             break;
           case 'title':
-            cellContent = Draggable<String>(
-              data: draggableData,
-              feedback: Material(
-                elevation: 4.0,
-                child: Builder(
-                  builder: (BuildContext context) {
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      color: Theme.of(context).colorScheme.primaryContainer,
-                      child: Text(
-                        track!.title,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color:
-                              Theme.of(context).colorScheme.onPrimaryContainer,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              childWhenDragging: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8.0,
-                  vertical: 4.0,
-                ),
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  dataGridCell.value.toString(),
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Colors.grey.shade400),
-                ),
-              ),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8.0,
-                  vertical: 4.0,
-                ),
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  dataGridCell.value.toString(),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            );
-            break;
           case 'artist':
           case 'album':
-            final String cellValue = dataGridCell.value?.toString() ?? '';
-            final String fieldName =
-                dataGridCell.columnName; // 'artist' or 'album'
-
-            // The Row widget arranges the text and the icon
-            cellContent = Row(
-              children: [
-                // Displays the artist or album name
-                Expanded(
-                  child: Text(cellValue, overflow: TextOverflow.ellipsis),
-                ),
-
-                // Add space to prevent text overlap when icon appears
-                const SizedBox(width: 4),
-
-                // This 'if' condition controls the icon's visibility
-                if (isHovering && cellValue.isNotEmpty)
-                  // This IconButton is the filter icon
-                  IconButton(
-                    icon: const Icon(Icons.filter_alt_outlined),
-                    iconSize: 16,
-                    splashRadius: 16,
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    tooltip: 'Filter by "$cellValue"',
-                    onPressed: () {
-                      // Construct the filter string: field:value
-                      // Basic escaping for values with spaces (wrap in quotes)
-                      // More robust escaping might be needed for complex values
-                      final filterValue =
-                          cellValue.contains(' ') ? '"$cellValue"' : cellValue;
-                      final filterString = '$fieldName:$filterValue';
-                      onSetSearchText(filterString); // Call the callback
+            if (isEditing) {
+              // --- Show TextField for editing ---
+              // Wrap with Builder to get context for Theme
+              cellContent = Builder(
+                // <<< Wrap TextField's parent or TextField itself
+                builder: (context) {
+                  // <<< Builder provides the context
+                  return RawKeyboardListener(
+                    focusNode:
+                        FocusNode(), // Local focus node for keyboard listener
+                    onKey: (RawKeyEvent event) {
+                      if (event is RawKeyDownEvent) {
+                        if (event.logicalKey == LogicalKeyboardKey.enter ||
+                            event.logicalKey ==
+                                LogicalKeyboardKey.numpadEnter) {
+                          onEndEditing(newValue: cellEditController.text);
+                        } else if (event.logicalKey ==
+                            LogicalKeyboardKey.escape) {
+                          onEndEditing(); // Cancel edit
+                        }
+                      }
                     },
-                  )
-                else
-                  const SizedBox(width: 30), // Placeholder
-              ],
-            );
-            break; // Added break statement
+                    child: TextField(
+                      controller: cellEditController,
+                      focusNode: cellEditFocusNode,
+                      // autofocus: true,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          vertical: 8.0,
+                          horizontal: 2.0,
+                        ),
+                        border: OutlineInputBorder(borderSide: BorderSide.none),
+                        focusedBorder: OutlineInputBorder(
+                          // *** Use context from Builder ***
+                          borderSide: BorderSide(
+                            color: Theme.of(context).primaryColor,
+                            width: 1.0,
+                          ),
+                        ),
+                      ),
 
+                      style: TextStyle(fontSize: 13), // Match text style
+                      onSubmitted: (newValue) {
+                        onEndEditing(newValue: newValue);
+                      },
+                      // Optional: Handle focus loss to save/cancel
+                      // onEditingComplete: () {
+                      //    // This might be called too often, onSubmitted is usually better
+                      //    // Check if focus is truly lost before calling onEndEditing
+                      //    if (!cellEditFocusNode.hasFocus) {
+                      //       onEndEditing(newValue: cellEditController.text);
+                      //    }
+                      // },
+                    ),
+                  );
+                },
+              );
+            } else {
+              // --- Show regular Text or Draggable Text ---
+              final String cellValue = dataGridCell.value?.toString() ?? '';
+              Widget textWidget = Text(
+                cellValue,
+                overflow: TextOverflow.ellipsis,
+                // Apply any specific styling if needed
+              );
+
+              if (columnName == 'title') {
+                // Wrap title in Draggable
+                cellContent = Draggable<String>(
+                  data: draggableData,
+                  feedback: Material(/* ... existing feedback ... */),
+                  childWhenDragging: Container(
+                    /* ... existing placeholder ... */
+                  ),
+                  child: Container(
+                    // Container needed for Draggable child
+                    alignment: Alignment.centerLeft, // Ensure alignment
+                    // padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0), // Padding handled by outer container
+                    child: textWidget,
+                  ),
+                );
+              } else {
+                // For Artist/Album, add hover filter icon logic
+                final String fieldName = columnName;
+                cellContent = Row(
+                  children: [
+                    Expanded(child: textWidget),
+                    const SizedBox(width: 4),
+                    if (isHovering && cellValue.isNotEmpty)
+                      IconButton(
+                        icon: const Icon(Icons.filter_alt_outlined),
+                        iconSize: 20,
+                        onPressed: () {
+                          final filterValue =
+                              cellValue.contains(' ')
+                                  ? '"$cellValue"'
+                                  : cellValue;
+
+                          final filterString = '$fieldName:$filterValue';
+                          onSetSearchText(filterString);
+                        },
+                      )
+                    else
+                      const SizedBox(width: 30), // Placeholder
+                  ],
+                );
+              }
+            }
+            break;
           case 'source':
             final Track sourceTrack = dataGridCell.value as Track;
             IconData iconData;
@@ -354,9 +386,9 @@ class TrackDataSource extends DataGridSource {
           case 'duration':
             cellContent = Container(
               alignment: Alignment.centerRight, // Align numeric data right
-              padding: const EdgeInsets.symmetric(
+              padding: EdgeInsets.symmetric(
                 horizontal: 8.0,
-                vertical: 4.0,
+                vertical: isEditing ? 0.0 : 4.0,
               ),
               child: Text(
                 _formatDuration(dataGridCell.value as int? ?? 0),

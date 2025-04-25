@@ -415,21 +415,6 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                             final bloc = context.read<AudioPlayerBloc>();
                             final seekPosition = duration * seekRatio;
                             bloc.add(SeekAudio(position: seekPosition));
-                            // If paused, start playing after seek
-                            // if (!playerState.isPlaying) {
-                            //   bloc.add(PlayAudio());
-                            // }
-                            // Update UI immediately for tap feedback (optional)
-                            // setState(() {
-                            //   _minimizedDragRatio = seekRatio;
-                            //   _isDraggingMinimizedBar = true; // Briefly show visual feedback
-                            // });
-                            // // Reset visual feedback after a short delay
-                            // Future.delayed(const Duration(milliseconds: 100), () {
-                            //    if(mounted && _isDraggingMinimizedBar) {
-                            //      setState(() => _isDraggingMinimizedBar = false);
-                            //    }
-                            // });
                           }
                         },
                         onHorizontalDragStart: (details) {

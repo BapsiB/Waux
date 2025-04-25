@@ -13,6 +13,8 @@ import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
 import 'package:waux/services/collection_service.dart'; // Track model and CollectionService
 import 'package:waux/widgets/track_data_source.dart';
 
+import 'dart:async';
+
 // Callback types
 typedef SelectionChangeCallback =
     void Function(
@@ -92,6 +94,14 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
 
   final double _minColWidth = 50.0;
 
+  Timer? _clickTimer;
+  DataGridCellTapDetails? _potentialEditCellDetails;
+  String? _editingCellKey; // Format: "trackId_columnName"
+  final Duration _doubleClickThreshold = const Duration(milliseconds: 300);
+  // Controller for the text field when editing
+  final TextEditingController _cellEditController = TextEditingController();
+  final FocusNode _cellEditFocusNode = FocusNode();
+
   // Define the full set of possible columns and their default states (used as fallback)
   final Map<String, dynamic> _defaultColumnConfig = {
     'preview': {
@@ -166,6 +176,10 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       onEditMetadata: widget.onEditMetadata,
       initialColumnOrder: [],
       onSetSearchText: widget.onSetSearchText,
+      getEditingCellKey: () => _editingCellKey,
+      onEndEditing: _handleEndEditing, // Add callback
+      cellEditController: _cellEditController, // Pass controller
+      cellEditFocusNode: _cellEditFocusNode, // Pass focus node
     );
 
     // Initialize Controller
@@ -180,6 +194,132 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         FocusScope.of(context).requestFocus(_focusNode);
         _updateControllerSelection();
       }
+    });
+  }
+
+  void _handleEndEditing({String? newValue}) {
+    if (_editingCellKey == null) return;
+
+    final parts = _editingCellKey!.split('_');
+    if (parts.length == 2) {
+      final trackIdStr = parts[0];
+      final columnName = parts[1];
+      final trackId = int.tryParse(trackIdStr);
+
+      if (trackId != null && newValue != null) {
+        // --- TODO: Implement Saving Logic ---
+        // This is where you'd typically call a BLoC event or service method
+        // e.g., context.read<TrackMetadataBloc>().add(UpdateTrackField(...));
+        print(
+          "Saving Track ID: $trackId, Column: $columnName, New Value: '$newValue'",
+        );
+        // Find the original track to compare value (optional)
+        // final originalTrack = widget.tracks.firstWhere((t) => t.id == trackId);
+        // final originalValue = _getTrackValueByColumn(originalTrack, columnName);
+        // if (newValue != originalValue) { ... save ... }
+        // --- End TODO ---
+      } else {
+        print("Edit cancelled for $_editingCellKey");
+      }
+    }
+
+    setState(() {
+      _editingCellKey = null;
+      _potentialEditCellDetails = null;
+    });
+    // Refocus the main grid focus node after editing finishes
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) FocusScope.of(context).requestFocus(_focusNode);
+    });
+  }
+
+  // --- Helper to check if a row index corresponds to a selected track ---
+  bool _isRowSelected(int rowIndex) {
+    if (rowIndex <= 0 || rowIndex > _trackDataSource.rows.length) return false;
+    final dataRow =
+        _trackDataSource.rows[rowIndex - 1]; // Adjust for header row
+    final idCell = dataRow.getCells().firstWhere(
+      (cell) => cell.columnName == 'id',
+      orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
+    );
+    final int trackId = idCell.value as int? ?? -1;
+    return trackId != -1 && widget.selectedTrackIds.contains(trackId);
+  }
+
+  // --- Helper to get track value ---
+  String _getTrackValueByColumn(Track track, String columnName) {
+    switch (columnName) {
+      case 'title':
+        return track.title;
+      case 'artist':
+        return track.artist;
+      case 'album':
+        return track.album;
+      default:
+        return '';
+    }
+  }
+
+  // --- Logic to start the edit timer ---
+  void _startEditTimer(DataGridCellTapDetails details) {
+    _clickTimer?.cancel(); // Cancel previous timer
+    _potentialEditCellDetails = details; // Store details for the timer callback
+
+    _clickTimer = Timer(_doubleClickThreshold, () {
+      // Timer expired - this is a slow single click
+      if (_potentialEditCellDetails == null) return;
+
+      final int rowIndex = _potentialEditCellDetails!.rowColumnIndex.rowIndex;
+      final int columnIndex =
+          _potentialEditCellDetails!.rowColumnIndex.columnIndex;
+      // Ensure row index is valid (greater than 0 for data rows)
+      if (rowIndex <= 0 ||
+          columnIndex < 0 ||
+          columnIndex >= _gridColumns.length)
+        return;
+
+      final String columnName = _gridColumns[columnIndex].columnName;
+      final List<String> editableColumns = ['title', 'artist', 'album'];
+
+      if (editableColumns.contains(columnName)) {
+        final dataRow =
+            _trackDataSource.rows[rowIndex - 1]; // Adjust for header
+        final idCell = dataRow.getCells().firstWhere(
+          (cell) => cell.columnName == 'id',
+          orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
+        );
+        final int trackId = idCell.value as int? ?? -1;
+
+        if (trackId != -1) {
+          final String newEditingCellKey = "${trackId}_$columnName";
+          // Check if already editing this cell to prevent infinite loop? No, should be fine.
+          if (_editingCellKey != newEditingCellKey) {
+            try {
+              final track = widget.tracks.firstWhere((t) => t.id == trackId);
+              final currentValue = _getTrackValueByColumn(track, columnName);
+              _cellEditController.text = currentValue; // Pre-fill controller
+              setState(() {
+                _editingCellKey = newEditingCellKey;
+              });
+              // Request focus after state update
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  FocusScope.of(context).requestFocus(_cellEditFocusNode);
+                  // Select all text in the text field
+                  _cellEditController.selection = TextSelection(
+                    baseOffset: 0,
+                    extentOffset: _cellEditController.text.length,
+                  );
+                }
+              });
+            } catch (e) {
+              print("Error finding track to edit: $e");
+              _handleEndEditing(); // Clear editing state on error
+            }
+          }
+        }
+      }
+      _potentialEditCellDetails = null; // Clear potential edit details
     });
   }
 
@@ -448,6 +588,10 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         onEditMetadata: widget.onEditMetadata,
         initialColumnOrder: _columnOrder, // Use current order
         onSetSearchText: widget.onSetSearchText, // <<< PASS UPDATED CALLBACK
+        getEditingCellKey: () => _editingCellKey,
+        onEndEditing: _handleEndEditing, // Add callback
+        cellEditController: _cellEditController, // Pass controller
+        cellEditFocusNode: _cellEditFocusNode, // Pass focus node
       );
       // After recreating, we might need to re-apply selection
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -458,6 +602,10 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
 
   @override
   void dispose() {
+    _clickTimer?.cancel();
+    _cellEditController.dispose();
+    _cellEditFocusNode.dispose();
+    _focusNode.dispose();
     _focusNode.dispose();
     _dataGridController.dispose();
     super.dispose();
@@ -744,6 +892,136 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
               //   return true; // Indicate resize was handled
               // },
               allowSorting: true,
+              // --- MODIFIED: Handle cell taps for editing ---
+              onCellTap: (DataGridCellTapDetails details) {
+                final int rowIndex = details.rowColumnIndex.rowIndex;
+                final int columnIndex = details.rowColumnIndex.columnIndex;
+                final bool isDataRow = rowIndex > 0; // Row 0 is header
+                final bool isEditing = _editingCellKey != null;
+
+                print(
+                  "Cell Tapped: Row $rowIndex, Col $columnIndex",
+                ); // Debug output
+                if (!isDataRow ||
+                    columnIndex < 0 ||
+                    columnIndex >= _gridColumns.length) {
+                  // Clicked header or invalid column index
+                  if (isEditing) {
+                    // Finish previous edit if clicking outside data area while editing
+                    print(
+                      "Clicked header/invalid column while editing. Finishing edit.",
+                    );
+                    _handleEndEditing(newValue: _cellEditController.text);
+                  }
+                  return; // Ignore header/invalid clicks
+                }
+
+                // --- Get details of the tapped cell ---
+                final String tappedColumnName =
+                    _gridColumns[columnIndex].columnName;
+                final List<String> editableColumns = [
+                  'title',
+                  'artist',
+                  'album',
+                ];
+                final bool isTappedCellEditable = editableColumns.contains(
+                  tappedColumnName,
+                );
+
+                final dataRow =
+                    _trackDataSource.rows[rowIndex -
+                        1]; // Adjust for header row
+                final idCell = dataRow.getCells().firstWhere(
+                  (cell) => cell.columnName == 'id',
+                  orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
+                );
+                final int trackId = idCell.value as int? ?? -1;
+                // Create a key representing the tapped cell (trackId_columnName)
+                final String tappedCellKey =
+                    trackId != -1 ? "${trackId}_$tappedColumnName" : "";
+
+                // --- Main Logic ---
+
+                // 1. If currently editing *this specific* cell, do nothing extra.
+                //    The tap likely occurred within the TextField itself.
+                if (isEditing && _editingCellKey == tappedCellKey) {
+                  print("Tapped inside the currently editing cell.");
+                  return;
+                }
+
+                // 2. If currently editing a *different* cell, finish that edit first.
+                //    This prevents having two editors open and ensures changes are processed.
+                if (isEditing && _editingCellKey != tappedCellKey) {
+                  print(
+                    "Tapped different cell ($tappedCellKey) while editing ($_editingCellKey). Finishing previous edit.",
+                  );
+                  _handleEndEditing(newValue: _cellEditController.text);
+                  // Note: We don't immediately start the new edit here.
+                  // This requires the user to click again on the desired cell after the first edit closes.
+                  return;
+                }
+
+                // 3. If *not* currently editing, check if we should START editing.
+                //    This happens if the row is selected and the cell is editable.
+                if (!isEditing) {
+                  if (_isRowSelected(rowIndex) &&
+                      isTappedCellEditable &&
+                      trackId != -1) {
+                    // --- Start Editing ---
+                    print("Starting edit for $tappedCellKey");
+                    try {
+                      // Find the track to get the current value
+                      final track = widget.tracks.firstWhere(
+                        (t) => t.id == trackId,
+                      );
+                      final currentValue = _getTrackValueByColumn(
+                        track,
+                        tappedColumnName,
+                      );
+                      // Pre-fill the controller used by the TextField in TrackDataSource
+                      _cellEditController.text = currentValue;
+                      // Update the state to tell TrackDataSource which cell to render as TextField
+                      setState(() {
+                        _editingCellKey = tappedCellKey;
+                      });
+                      // Request focus for the TextField after the state update and rebuild
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        Future.delayed(const Duration(milliseconds: 50), () {
+                          if (mounted) {
+                            print("Requesting focus and selection NOW");
+                            // Ensure the widget is still in the tree
+                            FocusScope.of(
+                              context,
+                            ).requestFocus(_cellEditFocusNode);
+                            // Select all text for easy replacement
+                            _cellEditController.selection = TextSelection(
+                              baseOffset: 0,
+                              extentOffset: _cellEditController.text.length,
+                            );
+                            print(
+                              "_cellEditController.text.length ${_cellEditController.text.length}",
+                            );
+                          }
+                        });
+                      });
+                    } catch (e) {
+                      print("Error finding track to edit: $e");
+                      // Ensure editing state is cleared if track lookup fails
+                      _handleEndEditing();
+                    }
+                  } else {
+                    // Conditions for starting an edit were not met.
+                    // This could be:
+                    // - Row wasn't selected.
+                    // - Cell wasn't editable.
+                    // - Track ID was invalid.
+                    // No edit action needed, allow default grid behavior (like selection).
+                    print(
+                      "Tap conditions not met for starting edit (Row Selected: ${_isRowSelected(rowIndex)}, Cell Editable: $isTappedCellEditable, Track ID: $trackId).",
+                    );
+                  }
+                }
+              }, // End onCellTap
               // --- Sorting Handler ---
               onColumnSortChanged: (
                 SortColumnDetails? newSortColumn,

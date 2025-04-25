@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'dart:math' as math; // For clamp
 
 // Callback type remains the same
 typedef RatingFilterCallback = void Function(int? rating);
