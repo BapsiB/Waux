@@ -1506,7 +1506,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           onSetSearchText: _handleSetSearchText,
                           // Use ValueKey to ensure rebuild when fundamental data changes
                           key: ValueKey(
-                            'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}-${displayedTracksForTable.length}',
+                            'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}', // <-- Reverted key
                           ),
                           tracks:
                               displayedTracksForTable, // Pass filtered/sorted tracks
