@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
-import 'dart:math';
 import 'package:collection/collection.dart';
+import 'dart:math' as math;
 import 'package:flutter_bloc/flutter_bloc.dart'; // Import BlocProvider
 
 import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
@@ -75,12 +75,22 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   bool _isLayoutFrozen = false;
   bool _isLoadingConfig = true; // State to track config loading
 
+  // Add state variable to store width
+  double _containerWidth = 0;
+  // Flag to prevent recursive resizing loops (optional but safer)
+  bool _isAdjustingLastColumn = false;
+
   // Map storing current width for each column name
   Map<String, double> _columnWidths = {};
   // List storing the current order of visible column names
   List<String> _columnOrder = [];
   // Set storing the names of columns that are currently visible
   Set<String> _visibleColumns = {};
+
+  // Define minimum width specifically for the last column when auto-shrinking
+  final double _minLastColShrinkWidth = 50.0;
+
+  final double _minColWidth = 50.0;
 
   // Define the full set of possible columns and their default states (used as fallback)
   final Map<String, dynamic> _defaultColumnConfig = {
@@ -505,11 +515,128 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     }
   }
 
-  // Freezes layout after first resize and rebuilds columns
-  void _freezeLayoutAndRebuildColumns(String resizedColumnName) {
-    if (!_isLayoutFrozen) {
-      _isLayoutFrozen = true;
+  // Updated method to handle resize logic
+  void _handleColumnResize(
+    ColumnResizeUpdateDetails details,
+    double containerWidth,
+  ) {
+    if (_isAdjustingLastColumn || containerWidth <= 0)
+      return; // Prevent potential recursion and handle zero width
+
+    final String resizedColumnName = details.column.columnName;
+    // Ensure minimum width for the resized column
+    double newWidth = math.max(_minColWidth, details.width);
+
+    // Create a temporary map to calculate potential new total width
+    final Map<String, double> tentativeWidths = Map.from(_columnWidths);
+    tentativeWidths[resizedColumnName] = newWidth;
+
+    // Calculate the total width of *visible* columns with the new width applied
+    double currentTotalWidth = 0;
+    final List<String> visibleOrderedColumns =
+        _columnOrder.where((name) => _visibleColumns.contains(name)).toList();
+
+    if (visibleOrderedColumns.isEmpty) {
+      print("Warning: No visible columns found during resize.");
+    } else {
+      for (final colName in visibleOrderedColumns) {
+        currentTotalWidth +=
+            tentativeWidths[colName] ??
+            _minColWidth; // Use default if somehow missing
+      }
+
+      print(
+        "Container Width: $containerWidth, Tentative Total Width: $currentTotalWidth",
+      );
+
+      final String lastVisibleColumnName = visibleOrderedColumns.last;
+      final bool isResizingLastColumn =
+          (lastVisibleColumnName == resizedColumnName);
+      double lastColCurrentWidth =
+          _columnWidths[lastVisibleColumnName] ??
+          _minColWidth; // Use width *before* this resize event
+
+      // --- Logic Branching ---
+      if (currentTotalWidth < containerWidth) {
+        // ** CASE 1: Total width is TOO SMALL - Expand last column **
+        double difference = containerWidth - currentTotalWidth;
+        double lastColTargetWidth =
+            (isResizingLastColumn ? newWidth : lastColCurrentWidth) +
+            difference;
+
+        // Ensure the last column doesn't shrink below minimum (shouldn't happen here, but safe)
+        tentativeWidths[lastVisibleColumnName] = math.max(
+          _minColWidth,
+          lastColTargetWidth,
+        );
+        print(
+          "Expanding last column '$lastVisibleColumnName' width to ${tentativeWidths[lastVisibleColumnName]}",
+        );
+      } else if (currentTotalWidth > containerWidth) {
+        // ** CASE 2: Total width is TOO BIG - Shrink last column (if possible) **
+        double excessWidth = currentTotalWidth - containerWidth;
+
+        // Only shrink if the last column isn't the one being actively resized *larger*
+        // Or if the last column is being resized smaller anyway
+        if (!isResizingLastColumn ||
+            (isResizingLastColumn && newWidth < lastColCurrentWidth)) {
+          // Calculate the width the last column *would* have if we remove the excess
+          double potentialNewLastColWidth =
+              (isResizingLastColumn ? newWidth : lastColCurrentWidth) -
+              excessWidth;
+
+          // Apply the shrink, but respect the minimum last column shrink width
+          double newLastColWidth = math.max(
+            _minLastColShrinkWidth,
+            potentialNewLastColWidth,
+          );
+
+          // Only apply if this new width is actually smaller than its current tentative width
+          if (newLastColWidth <
+              (tentativeWidths[lastVisibleColumnName] ?? _minColWidth)) {
+            tentativeWidths[lastVisibleColumnName] = newLastColWidth;
+            print(
+              "Shrinking last column '$lastVisibleColumnName' width to ${tentativeWidths[lastVisibleColumnName]} to fit container",
+            );
+          } else {
+            print(
+              "Cannot shrink last column '$lastVisibleColumnName' further (Minimum: $_minLastColShrinkWidth, Current: ${tentativeWidths[lastVisibleColumnName]})",
+            );
+          }
+        } else {
+          print(
+            "Skipping shrink for last column '$lastVisibleColumnName' as it was resized larger.",
+          );
+        }
+      }
+      // ** CASE 3: Total width is EXACTLY container width - No adjustment needed **
+      else {
+        print("Total width matches container width. No adjustment needed.");
+      }
     }
+
+    // Apply the final widths (potentially adjusted) to the state
+    setState(() {
+      _columnWidths = tentativeWidths;
+      _freezeLayoutAndRebuildColumns(resizedColumnName);
+    });
+
+    _saveColumnConfiguration();
+  }
+
+  // Update the existing onColumnResizeUpdate in SfDataGrid to call the new handler:
+  // Inside SfDataGrid properties:
+  // onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
+  //   _handleColumnResize(details, _containerWidth); // Pass container width
+  //   return true; // Indicate resize was handled
+  // },
+
+  // Modify _freezeLayoutAndRebuildColumns if needed (or ensure it uses _columnWidths)
+  void _freezeLayoutAndRebuildColumns(String resizedColumnName) {
+    // This method should ideally just rebuild the _gridColumns list
+    // based on the current state (_columnWidths, _columnOrder, _visibleColumns)
+    // No need to set _isLayoutFrozen here repeatedly, maybe set it once after initial load/first resize
+    if (!mounted) return;
     _buildGridColumnsFromState(); // Rebuild columns using the updated widths
   }
 
@@ -536,119 +663,136 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
 
     return Focus(
       focusNode: _focusNode,
-      child: SfDataGridTheme(
-        data: SfDataGridThemeData(
-          selectionColor: colorScheme.primary.withOpacity(0.2),
-          headerColor: colorScheme.surfaceVariant.withOpacity(0.5),
-          headerHoverColor: colorScheme.primary.withOpacity(0.1),
-        ),
-        child: SfDataGrid(
-          key: _sfDataGridKey,
-          source: _trackDataSource,
-          selectionMode: SelectionMode.multiple,
-          gridLinesVisibility: GridLinesVisibility.horizontal,
-          headerGridLinesVisibility: GridLinesVisibility.both,
-          headerRowHeight: 30,
-          rowHeight: 40,
-          allowColumnsResizing: true,
-          allowColumnsDragging: true,
-          // --- Column Dragging Handler ---
-          onColumnDragging: (DataGridColumnDragDetails details) {
-            if (details.action == DataGridColumnDragAction.dropping) {
-              setState(() {
-                final int fromIndex = details.from;
-                final int toIndex = details.to!;
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Store the container width
+          _containerWidth = constraints.maxWidth;
 
-                // Find the actual column objects based on the visible columns in _gridColumns
-                if (fromIndex >= 0 &&
-                    fromIndex < _gridColumns.length &&
-                    toIndex >= 0 &&
-                    toIndex < _gridColumns.length &&
-                    fromIndex != toIndex) {
-                  final GridColumn draggedColumn = _gridColumns.removeAt(
-                    fromIndex,
+          return SfDataGridTheme(
+            data: SfDataGridThemeData(
+              selectionColor: colorScheme.primary.withOpacity(0.2),
+              headerColor: colorScheme.surfaceVariant.withOpacity(0.5),
+              headerHoverColor: colorScheme.primary.withOpacity(0.1),
+            ),
+            child: SfDataGrid(
+              key: _sfDataGridKey,
+              source: _trackDataSource,
+              selectionMode: SelectionMode.multiple,
+              gridLinesVisibility: GridLinesVisibility.horizontal,
+              headerGridLinesVisibility: GridLinesVisibility.both,
+              headerRowHeight: 30,
+              rowHeight: 40,
+              allowColumnsResizing: true,
+              allowColumnsDragging: true,
+              // --- Column Dragging Handler ---
+              onColumnDragging: (DataGridColumnDragDetails details) {
+                if (details.action == DataGridColumnDragAction.dropping) {
+                  setState(() {
+                    final int fromIndex = details.from;
+                    final int toIndex = details.to!;
+
+                    // Find the actual column objects based on the visible columns in _gridColumns
+                    if (fromIndex >= 0 &&
+                        fromIndex < _gridColumns.length &&
+                        toIndex >= 0 &&
+                        toIndex < _gridColumns.length &&
+                        fromIndex != toIndex) {
+                      final GridColumn draggedColumn = _gridColumns.removeAt(
+                        fromIndex,
+                      );
+                      _gridColumns.insert(toIndex, draggedColumn);
+
+                      // Update the internal _columnOrder state based on the new _gridColumns order
+                      _columnOrder =
+                          _gridColumns.map((c) => c.columnName).toList();
+
+                      // Update the DataSource with the new order
+                      _trackDataSource.updateColumnOrder(_columnOrder);
+                      print("Column order updated: $_columnOrder");
+
+                      // Save the new configuration
+                      _saveColumnConfiguration();
+                    } else {
+                      print(
+                        "Column drag index out of bounds or invalid: from $fromIndex, to $toIndex",
+                      );
+                    }
+                  });
+                }
+                return true; // Indicate drag was handled
+              },
+              columnResizeMode: ColumnResizeMode.onResize,
+              onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
+                // Pass container width to the handler
+                _handleColumnResize(details, _containerWidth);
+                return true; // Indicate resize was handled
+              },
+              // --- Column Resizing Handler ---
+              // onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
+              //   final columnName = details.column.columnName;
+              //   // Ensure minimum width
+              //   double newWidth = max(50.0, details.width);
+
+              //   // Update the width in the state map
+              //   setState(() {
+              //     _columnWidths[columnName] = newWidth;
+              //     // Rebuild columns to apply the new width and freeze layout
+              //     _freezeLayoutAndRebuildColumns(columnName);
+              //   });
+              //   // Save the configuration after resize
+              //   _saveColumnConfiguration();
+              //   return true; // Indicate resize was handled
+              // },
+              allowSorting: true,
+              // --- Sorting Handler ---
+              onColumnSortChanged: (
+                SortColumnDetails? newSortColumn,
+                SortColumnDetails? oldSortColumn,
+              ) {
+                if (newSortColumn != null) {
+                  widget.onSort(
+                    newSortColumn.name,
+                    newSortColumn.sortDirection,
                   );
-                  _gridColumns.insert(toIndex, draggedColumn);
-
-                  // Update the internal _columnOrder state based on the new _gridColumns order
-                  _columnOrder = _gridColumns.map((c) => c.columnName).toList();
-
-                  // Update the DataSource with the new order
-                  _trackDataSource.updateColumnOrder(_columnOrder);
-                  print("Column order updated: $_columnOrder");
-
-                  // Save the new configuration
-                  _saveColumnConfiguration();
                 } else {
-                  print(
-                    "Column drag index out of bounds or invalid: from $fromIndex, to $toIndex",
-                  );
+                  // Default sort if sorting is cleared (optional)
+                  widget.onSort('title', DataGridSortDirection.ascending);
                 }
-              });
-            }
-            return true; // Indicate drag was handled
-          },
-          columnResizeMode: ColumnResizeMode.onResize,
-          // --- Column Resizing Handler ---
-          onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
-            final columnName = details.column.columnName;
-            // Ensure minimum width
-            double newWidth = max(50.0, details.width);
+              },
+              navigationMode: GridNavigationMode.row,
+              onSelectionChanged: _handleGridSelectionChange,
+              controller: _dataGridController,
+              columns: _gridColumns, // Use the dynamically built columns
 
-            // Update the width in the state map
-            setState(() {
-              _columnWidths[columnName] = newWidth;
-              // Rebuild columns to apply the new width and freeze layout
-              _freezeLayoutAndRebuildColumns(columnName);
-            });
-            // Save the configuration after resize
-            _saveColumnConfiguration();
-            return true; // Indicate resize was handled
-          },
-          allowSorting: true,
-          // --- Sorting Handler ---
-          onColumnSortChanged: (
-            SortColumnDetails? newSortColumn,
-            SortColumnDetails? oldSortColumn,
-          ) {
-            if (newSortColumn != null) {
-              widget.onSort(newSortColumn.name, newSortColumn.sortDirection);
-            } else {
-              // Default sort if sorting is cleared (optional)
-              widget.onSort('title', DataGridSortDirection.ascending);
-            }
-          },
-          navigationMode: GridNavigationMode.row,
-          onSelectionChanged: _handleGridSelectionChange,
-          controller: _dataGridController,
-          columns: _gridColumns, // Use the dynamically built columns
-
-          onCellSecondaryTap: (DataGridCellTapDetails details) {
-            int rowIndex = details.rowColumnIndex.rowIndex;
-            if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
-              final dataRow = _trackDataSource.rows[rowIndex - 1];
-              final idCell = dataRow.getCells().firstWhere(
-                (cell) => cell.columnName == 'id',
-                orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
-              );
-              final int trackId = idCell.value as int? ?? -1;
-              if (trackId != -1) {
-                try {
-                  final track = widget.tracks.firstWhere(
-                    (t) => t.id == trackId,
+              onCellSecondaryTap: (DataGridCellTapDetails details) {
+                int rowIndex = details.rowColumnIndex.rowIndex;
+                if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
+                  final dataRow = _trackDataSource.rows[rowIndex - 1];
+                  final idCell = dataRow.getCells().firstWhere(
+                    (cell) => cell.columnName == 'id',
+                    orElse:
+                        () => DataGridCell<int>(columnName: 'id', value: -1),
                   );
-                  widget.onShowContextMenu(
-                    context,
-                    details.globalPosition,
-                    track,
-                  );
-                } catch (e) {
-                  debugPrint("Error finding track for context menu: $e");
+                  final int trackId = idCell.value as int? ?? -1;
+                  if (trackId != -1) {
+                    try {
+                      final track = widget.tracks.firstWhere(
+                        (t) => t.id == trackId,
+                      );
+                      widget.onShowContextMenu(
+                        context,
+                        details.globalPosition,
+                        track,
+                      );
+                    } catch (e) {
+                      debugPrint("Error finding track for context menu: $e");
+                    }
+                  }
                 }
-              }
-            }
-          },
-        ),
+              },
+            ),
+          );
+        },
       ),
     );
   }

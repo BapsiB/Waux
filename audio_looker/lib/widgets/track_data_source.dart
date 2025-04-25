@@ -68,7 +68,6 @@ class TrackDataSource extends DataGridSource {
   // --- Updated setHoverState for cells ---
   void setHoverState(String? cellKey, bool isHovering) {
     bool changed = false;
-    print("Hovering over cell: $_currentlyHoveredCellKey");
     if (isHovering && cellKey != null) {
       // Hover Enter
       if (_currentlyHoveredCellKey != cellKey) {
@@ -80,7 +79,6 @@ class TrackDataSource extends DataGridSource {
         // Set new hover state
         _cellHoverState[cellKey] = true;
         _currentlyHoveredCellKey = cellKey;
-        print("Hovering over cell: $cellKey");
         changed = true;
       }
     } else {

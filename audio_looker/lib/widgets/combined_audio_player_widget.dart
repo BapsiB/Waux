@@ -72,6 +72,11 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   Offset? _hoverPosition; // Store local
   final GlobalKey _waveformContainerKey = GlobalKey();
 
+  final GlobalKey _minimizedProgressBarKey = GlobalKey();
+  // +++ Add state for minimized bar dragging +++
+  bool _isDraggingMinimizedBar = false;
+  double _minimizedDragRatio = 0.0;
+
   // State for Time Tagging (Unchanged)
   final TextEditingController _timeMarkerController = TextEditingController();
 
@@ -150,6 +155,24 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     }
   }
 
+  // Helper to calculate seek ratio for the minimized bar
+  double? _calculateMinimizedSeekRatio(Offset globalPosition) {
+    final RenderBox? box =
+        _minimizedProgressBarKey.currentContext?.findRenderObject()
+            as RenderBox?;
+    if (box != null && box.hasSize) {
+      final localPosition = box.globalToLocal(globalPosition);
+      // Important: Adjust calculation based on the actual tappable area width
+      // If the GestureDetector wraps the Expanded widget containing the progress bar:
+      final progressBarWidth = box.size.width;
+      if (progressBarWidth > 0) {
+        // Clamp ensures the ratio stays between 0.0 and 1.0
+        return (localPosition.dx / progressBarWidth).clamp(0.0, 1.0);
+      }
+    }
+    return null;
+  }
+
   // Helper to update local state based on the track prop
   void _updateStateFromWidget(Track track) {
     if (!mounted) return;
@@ -221,13 +244,16 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     final isPlaying = playerState.isPlaying;
     final position = playerState.position;
     final duration = playerState.duration;
-    final progress =
-        duration > Duration.zero
-            ? (position.inMilliseconds / duration.inMilliseconds).clamp(
-              0.0,
-              1.0,
-            )
-            : 0.0;
+    final double displayProgress =
+        _isDraggingMinimizedBar
+            ? _minimizedDragRatio
+            : (duration > Duration.zero
+                ? (position.inMilliseconds / duration.inMilliseconds).clamp(
+                  0.0,
+                  1.0,
+                )
+                : 0.0);
+
     final bool canInteract = true; // Enable buttons only if duration is known
 
     return Container(
@@ -338,24 +364,22 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
           ),
           const SizedBox(width: 16), // Spacing between controls and center
           // --- Track Info & Progress (Center) ---
+          // --- Track Info & Progress (Center) ---
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment:
-                  CrossAxisAlignment
-                      .start, // Keep column items left-aligned overall
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Track Title & Artist (Ellipsis applied) - Wrapped in Center
+                // Track Title & Artist
                 Center(
-                  // <<< WRAP the Text widget here
                   child: Text(
-                    '${track.title} - ${track.artist}', // Combined for space
+                    '${track.title} - ${track.artist}',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w500, // Slightly less bold
+                      fontWeight: FontWeight.w500,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center, // Explicitly center text align
+                    textAlign: TextAlign.center,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -363,39 +387,120 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 Row(
                   children: [
                     Text(
-                      _formatDuration(position), // Current position
+                      // +++ Show position based on drag or player state +++
+                      _formatDuration(
+                        _isDraggingMinimizedBar
+                            ? (duration * _minimizedDragRatio)
+                            : position,
+                      ),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontSize: 11, // Smaller font
+                        fontSize: 11,
                       ),
                     ),
                     const SizedBox(width: 6),
+                    // +++ Wrap Expanded progress bar area with GestureDetector +++
                     Expanded(
-                      child: SizedBox(
-                        height: 6, // Make progress bar thinner
-                        child: LinearProgressIndicator(
-                          value: progress,
-                          minHeight: 3,
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.1),
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Theme.of(context).colorScheme.primary,
+                      child: GestureDetector(
+                        key: _minimizedProgressBarKey, // Assign key
+                        behavior:
+                            HitTestBehavior
+                                .opaque, // Capture taps within bounds
+                        onTapDown: (details) {
+                          if (!canInteract) return;
+                          final seekRatio = _calculateMinimizedSeekRatio(
+                            details.globalPosition,
+                          );
+                          if (seekRatio != null) {
+                            final bloc = context.read<AudioPlayerBloc>();
+                            final seekPosition = duration * seekRatio;
+                            bloc.add(SeekAudio(position: seekPosition));
+                            // If paused, start playing after seek
+                            // if (!playerState.isPlaying) {
+                            //   bloc.add(PlayAudio());
+                            // }
+                            // Update UI immediately for tap feedback (optional)
+                            // setState(() {
+                            //   _minimizedDragRatio = seekRatio;
+                            //   _isDraggingMinimizedBar = true; // Briefly show visual feedback
+                            // });
+                            // // Reset visual feedback after a short delay
+                            // Future.delayed(const Duration(milliseconds: 100), () {
+                            //    if(mounted && _isDraggingMinimizedBar) {
+                            //      setState(() => _isDraggingMinimizedBar = false);
+                            //    }
+                            // });
+                          }
+                        },
+                        onHorizontalDragStart: (details) {
+                          if (!canInteract) return;
+                          final seekRatio = _calculateMinimizedSeekRatio(
+                            details.globalPosition,
+                          );
+                          if (seekRatio != null) {
+                            setState(() {
+                              _isDraggingMinimizedBar = true;
+                              _minimizedDragRatio = seekRatio;
+                              // Don't pause playback during drag on the minimized bar
+                            });
+                            // Optional: Immediately seek on drag start
+                            // context.read<AudioPlayerBloc>().add(SeekAudio(position: duration * seekRatio));
+                          }
+                        },
+                        onHorizontalDragUpdate: (details) {
+                          if (!_isDraggingMinimizedBar || !canInteract) return;
+                          final seekRatio = _calculateMinimizedSeekRatio(
+                            details.globalPosition,
+                          );
+                          if (seekRatio != null) {
+                            setState(() {
+                              _minimizedDragRatio = seekRatio;
+                            });
+                            // Throttle seek updates if needed, similar to waveform painter
+                            // For simplicity here, we seek directly. Add throttling if performance is an issue.
+                            context.read<AudioPlayerBloc>().add(
+                              SeekAudio(position: duration * seekRatio),
+                            );
+                          }
+                        },
+                        onHorizontalDragEnd: (details) {
+                          if (!_isDraggingMinimizedBar || !canInteract) return;
+                          // Final seek is already done in onHorizontalDragUpdate
+                          // Just reset the dragging state
+                          setState(() {
+                            _isDraggingMinimizedBar = false;
+                          });
+                        },
+                        child: Padding(
+                          // Add some padding to make the tap area slightly larger than the indicator height
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: SizedBox(
+                            height: 6, // Visual height of the indicator
+                            child: LinearProgressIndicator(
+                              // +++ Use displayProgress which reflects drag state +++
+                              value: displayProgress,
+                              minHeight: 3, // Make the line thin
+                              backgroundColor: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.1),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(context).colorScheme.primary,
+                              ),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
                           ),
-                          borderRadius: BorderRadius.circular(
-                            3,
-                          ), // Rounded ends
                         ),
                       ),
                     ),
+                    // +++ End GestureDetector +++
                     const SizedBox(width: 6),
                     Text(
                       _formatDuration(
-                        Duration(milliseconds: widget.track.duration),
-                      ), // Total duration
+                        duration,
+                      ), // Total duration from playerState
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontSize: 11, // Smaller font
+                        fontSize: 11,
                       ),
                     ),
                   ],
