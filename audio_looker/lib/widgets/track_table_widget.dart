@@ -639,7 +639,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     _cellEditController.dispose();
     _cellEditFocusNode.dispose();
     _focusNode.dispose();
-    _focusNode.dispose();
+    // _focusNode.dispose();
     _dataGridController.dispose();
     super.dispose();
   }
