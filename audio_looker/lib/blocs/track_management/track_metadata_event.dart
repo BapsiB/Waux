@@ -8,6 +8,32 @@ abstract class TrackMetadataEvent extends Equatable {
   List<Object?> get props => [];
 }
 
+class UpdateTrackTitle extends TrackMetadataEvent {
+  final int trackId;
+  final String title;
+  const UpdateTrackTitle(this.trackId, this.title);
+  @override
+  List<Object?> get props => [trackId, title];
+}
+
+/// Event to update the artist of a specific track.
+class UpdateTrackArtist extends TrackMetadataEvent {
+  final int trackId;
+  final String artist;
+  const UpdateTrackArtist(this.trackId, this.artist);
+  @override
+  List<Object?> get props => [trackId, artist];
+}
+
+/// Event to update the album of a specific track.
+class UpdateTrackAlbum extends TrackMetadataEvent {
+  final int trackId;
+  final String album;
+  const UpdateTrackAlbum(this.trackId, this.album);
+  @override
+  List<Object?> get props => [trackId, album];
+}
+
 /// Event to update the rating of a specific track.
 class UpdateTrackRating extends TrackMetadataEvent {
   final int trackId;

@@ -1227,6 +1227,42 @@ class CollectionService {
     return null;
   }
 
+  Future<void> updateTrackTitle(int trackId, String title) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnTitle: title}, // Update only the title column
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated title for track $trackId");
+  }
+
+  Future<void> updateTrackArtist(int trackId, String artist) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnArtist: artist}, // Update only the artist column
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated artist for track $trackId");
+  }
+
+  Future<void> updateTrackAlbum(int trackId, String album) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnAlbum: album}, // Update only the album column
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated album for track $trackId");
+  }
+
   // --- Methods needing review/implementation ---
   // (Methods: addLocalFile, addUrl, importFromFile, exportToFile)
   Future<Track?> addLocalFile(String filePath) async {

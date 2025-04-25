@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
 import 'package:collection/collection.dart';
+import 'package:waux/blocs/track_management/track_metadata_bloc.dart';
 import 'dart:math' as math;
 import 'package:flutter_bloc/flutter_bloc.dart'; // Import BlocProvider
 
@@ -207,19 +208,50 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       final trackId = int.tryParse(trackIdStr);
 
       if (trackId != null && newValue != null) {
-        // --- TODO: Implement Saving Logic ---
-        // This is where you'd typically call a BLoC event or service method
-        // e.g., context.read<TrackMetadataBloc>().add(UpdateTrackField(...));
-        print(
-          "Saving Track ID: $trackId, Column: $columnName, New Value: '$newValue'",
-        );
-        // Find the original track to compare value (optional)
-        // final originalTrack = widget.tracks.firstWhere((t) => t.id == trackId);
-        // final originalValue = _getTrackValueByColumn(originalTrack, columnName);
-        // if (newValue != originalValue) { ... save ... }
-        // --- End TODO ---
+        Track? originalTrack;
+        try {
+          originalTrack = widget.tracks.firstWhere((t) => t.id == trackId);
+        } catch (e) {
+          /* Handle error */
+        }
+        final originalValue =
+            originalTrack != null
+                ? _getTrackValueByColumn(originalTrack, columnName)
+                : null;
+
+        if (newValue != originalValue) {
+          print(
+            "Saving Track ID: $trackId, Column: $columnName, New Value: '$newValue'",
+          );
+          try {
+            final metadataBloc = context.read<TrackMetadataBloc>();
+            switch (columnName) {
+              case 'title':
+                // *** DISPATCH ACTUAL EVENT ***
+                metadataBloc.add(UpdateTrackTitle(trackId, newValue));
+                break;
+              case 'artist':
+                // *** DISPATCH ACTUAL EVENT ***
+                metadataBloc.add(UpdateTrackArtist(trackId, newValue));
+                break;
+              case 'album':
+                // *** DISPATCH ACTUAL EVENT ***
+                metadataBloc.add(UpdateTrackAlbum(trackId, newValue));
+                break;
+              default:
+                print("Warning: Tried to save unhandled column: $columnName");
+            }
+          } catch (e) {
+            print("Error dispatching metadata update: $e");
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('Error saving changes: $e')));
+          }
+        } else {
+          print("Value not changed for $_editingCellKey. No save needed.");
+        }
       } else {
-        print("Edit cancelled for $_editingCellKey");
+        print("Edit cancelled or invalid ID for $_editingCellKey");
       }
     }
 
@@ -227,10 +259,25 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       _editingCellKey = null;
       _potentialEditCellDetails = null;
     });
-    // Refocus the main grid focus node after editing finishes
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) FocusScope.of(context).requestFocus(_focusNode);
     });
+  }
+
+  // Helper to get track value by column name (you already have this)
+  String _getTrackValueByColumn(Track track, String columnName) {
+    switch (columnName) {
+      case 'title':
+        return track.title;
+      case 'artist':
+        return track.artist;
+      case 'album':
+        return track.album;
+      // Add other cases if needed
+      default:
+        return '';
+    }
   }
 
   // --- Helper to check if a row index corresponds to a selected track ---
@@ -244,20 +291,6 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     );
     final int trackId = idCell.value as int? ?? -1;
     return trackId != -1 && widget.selectedTrackIds.contains(trackId);
-  }
-
-  // --- Helper to get track value ---
-  String _getTrackValueByColumn(Track track, String columnName) {
-    switch (columnName) {
-      case 'title':
-        return track.title;
-      case 'artist':
-        return track.artist;
-      case 'album':
-        return track.album;
-      default:
-        return '';
-    }
   }
 
   // --- Logic to start the edit timer ---

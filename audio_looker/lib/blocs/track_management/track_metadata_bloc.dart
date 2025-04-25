@@ -25,6 +25,74 @@ class TrackMetadataBloc extends Bloc<TrackMetadataEvent, TrackMetadataState> {
     on<RemoveTrackGeneralTag>(_onRemoveTrackGeneralTag);
     on<UpdateTrackMarkers>(_onUpdateTrackMarkers);
     on<UpdateTrackDuration>(_onUpdateTrackDuration);
+    on<UpdateTrackTitle>(_onUpdateTrackTitle); // Add this
+    on<UpdateTrackArtist>(_onUpdateTrackArtist); // Add this
+    on<UpdateTrackAlbum>(_onUpdateTrackAlbum); // Add this
+  }
+
+  Future<void> _onUpdateTrackTitle(
+    UpdateTrackTitle event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      // Assuming CollectionService will have an updateTrackTitle method
+      await _collectionService.updateTrackTitle(event.trackId, event.title);
+      print("TrackMetadataBloc: Updated title for track ${event.trackId}");
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating title: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update title: ${e.toString()}",
+        ),
+      );
+    }
+  }
+
+  // Handler for UpdateTrackArtist
+  Future<void> _onUpdateTrackArtist(
+    UpdateTrackArtist event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      // Assuming CollectionService will have an updateTrackArtist method
+      await _collectionService.updateTrackArtist(event.trackId, event.artist);
+      print("TrackMetadataBloc: Updated artist for track ${event.trackId}");
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating artist: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update artist: ${e.toString()}",
+        ),
+      );
+    }
+  }
+
+  // Handler for UpdateTrackAlbum
+  Future<void> _onUpdateTrackAlbum(
+    UpdateTrackAlbum event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      // Assuming CollectionService will have an updateTrackAlbum method
+      await _collectionService.updateTrackAlbum(event.trackId, event.album);
+      print("TrackMetadataBloc: Updated album for track ${event.trackId}");
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating album: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update album: ${e.toString()}",
+        ),
+      );
+    }
   }
 
   Future<void> _onUpdateTrackDuration(
