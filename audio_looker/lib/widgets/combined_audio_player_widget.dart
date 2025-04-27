@@ -186,11 +186,11 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     super.dispose();
   }
 
-  // Minimized player controls build method (remains the same)
   Widget _buildMinimizedPlayerControls(
     AudioPlayerLoaded playerState,
     Track track,
   ) {
+    // State variables remain the same
     final isPlaying = playerState.isPlaying;
     final position = playerState.position;
     final duration = playerState.duration;
@@ -204,269 +204,385 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 )
                 : 0.0);
     final bool canInteract = duration > Duration.zero;
+    final controlsEnabled = canInteract; // Use this for enabling controls
 
-    return Container(
-      height: _minimizedPlayerHeight,
-      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface.withOpacity(0.95),
-      ),
-      child: Row(
-        children: [
-          // Controls (Left)
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.skip_previous),
-                iconSize: 28,
-                color:
-                    widget.onPreviousPressed != null
-                        ? Theme.of(context).colorScheme.onSurface
-                        : Theme.of(context).disabledColor,
-                onPressed: widget.onPreviousPressed,
-                tooltip: 'Previous Track',
+    // Theme colors
+    final activeColor = Theme.of(context).colorScheme.primary;
+    final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
+
+    // --- Use LayoutBuilder to get width ---
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double totalWidth = constraints.maxWidth;
+        const double homeButtonWidth =
+            50.0; // Adjusted width for icon button + padding
+        const double playerControlsWidth = 150.0;
+        final double timelineWidth = totalWidth * 0.25;
+        final double timelineStart = (totalWidth - timelineWidth) / 2;
+        final double spaceForPlayerControls = timelineStart - homeButtonWidth;
+        // Ensure space is not negative if layout is too tight
+        final double playerControlsStart =
+            homeButtonWidth +
+            (spaceForPlayerControls > playerControlsWidth
+                ? (spaceForPlayerControls - playerControlsWidth) / 2
+                : 0); // Center if space allows, else align left after home btn
+
+        // Calculate width for the right-side buttons (approximate)
+        const double rightButtonsWidth =
+            120.0; // Sum of Vol + Tag + Toggle + padding
+
+        return Container(
+          height: _minimizedPlayerHeight,
+          padding: const EdgeInsets.symmetric(
+            horizontal: 8.0,
+          ), // Overall horizontal padding
+          decoration: BoxDecoration(
+            /* ... border/color ... */
+            color: Theme.of(context).colorScheme.surface.withOpacity(0.95),
+            border: Border(
+              top: BorderSide(
+                color: Theme.of(context).dividerColor,
+                width: 0.5,
               ),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: Icon(
-                  isPlaying
-                      ? Icons.pause_circle_filled
-                      : Icons.play_circle_filled,
-                  size: 32,
-                  color:
-                      canInteract
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).disabledColor,
-                ),
-                onPressed:
-                    canInteract
-                        ? () {
-                          final bloc = context.read<AudioPlayerBloc>();
-                          if (isPlaying) {
-                            bloc.add(PauseAudio());
-                          } else {
-                            if (position >= duration &&
-                                duration > Duration.zero) {
-                              bloc.add(
-                                const SeekAudio(position: Duration.zero),
-                              );
-                              Future.delayed(
-                                const Duration(milliseconds: 50),
-                                () => bloc.add(PlayAudio()),
-                              );
-                            } else {
-                              bloc.add(PlayAudio());
-                            }
-                          }
-                        }
-                        : null,
-                tooltip: isPlaying ? 'Pause' : 'Play',
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: const Icon(Icons.skip_next),
-                iconSize: 28,
-                color:
-                    widget.onNextPressed != null
-                        ? Theme.of(context).colorScheme.onSurface
-                        : Theme.of(context).disabledColor,
-                onPressed: widget.onNextPressed,
-                tooltip: 'Next Track',
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: Icon(
-                  playerState.isShuffleActive
-                      ? Icons.shuffle_on_outlined
-                      : Icons.shuffle,
-                ),
-                iconSize: 18,
-                color:
-                    playerState.isShuffleActive
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
-                tooltip:
-                    playerState.isShuffleActive
-                        ? 'Disable Shuffle'
-                        : 'Enable Shuffle',
-                onPressed: () {
-                  context.read<AudioPlayerBloc>().add(ToggleShuffle());
-                },
-              ),
-            ],
+            ),
           ),
-          const SizedBox(width: 12),
-          // Track Info & Progress (Center)
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${track.title} - ${track.artist}',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 12, // Slightly smaller font
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          // --- Use Stack for positioned layout ---
+          child: Stack(
+            alignment: Alignment.center, // Base alignment
+            children: [
+              // --- Positioned Home Button ---
+              Positioned(
+                left: 0, // Align to far left of padding
+                top: 0,
+                bottom: 0,
+                width: homeButtonWidth,
+                child: Center(
+                  child: _buildHomeButton(context),
+                ), // Center within its space
+              ),
+
+              // --- Positioned Player Controls ---
+              Positioned(
+                left: playerControlsStart,
+                top: 0,
+                bottom: 0,
+                width: playerControlsWidth,
+                child: _buildPlayerControls(
+                  context,
+                  playerState,
+                  controlsEnabled,
                 ),
-                const SizedBox(height: 2), // Reduced space
-                Row(
+              ),
+
+              // --- Positioned Timeline ---
+              Positioned(
+                left: timelineStart,
+                width: timelineWidth,
+                top: 0,
+                bottom: 0,
+                child: Column(
+                  // Keep the column for progress + time
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      _formatDuration(
-                        _isDraggingMinimizedBar
-                            ? (duration * _minimizedDragRatio)
-                            : position,
-                      ),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontSize: 10, // Smaller font
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: GestureDetector(
-                        key: _minimizedProgressBarKey,
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (details) {
-                          if (!canInteract) return;
-                          final seekRatio = _calculateMinimizedSeekRatio(
-                            details.globalPosition,
-                          );
-                          if (seekRatio != null) {
-                            final bloc = context.read<AudioPlayerBloc>();
-                            final seekPosition = duration * seekRatio;
-                            bloc.add(SeekAudio(position: seekPosition));
-                            // Ensure playback resumes or starts if paused
-                            if (!isPlaying) {
-                              bloc.add(PlayAudio());
-                            }
-                          }
-                        },
-                        onHorizontalDragStart: (details) {
-                          if (!canInteract) return;
-                          final seekRatio = _calculateMinimizedSeekRatio(
-                            details.globalPosition,
-                          );
-                          if (seekRatio != null) {
-                            setState(() {
-                              _isDraggingMinimizedBar = true;
-                              _minimizedDragRatio = seekRatio;
-                            });
-                          }
-                        },
-                        onHorizontalDragUpdate: (details) {
-                          if (!_isDraggingMinimizedBar || !canInteract) return;
-                          final seekRatio = _calculateMinimizedSeekRatio(
-                            details.globalPosition,
-                          );
-                          if (seekRatio != null) {
-                            setState(() {
-                              _minimizedDragRatio = seekRatio;
-                            });
-                            context.read<AudioPlayerBloc>().add(
-                              SeekAudio(position: duration * seekRatio),
-                            );
-                          }
-                        },
-                        onHorizontalDragEnd: (details) {
-                          if (!_isDraggingMinimizedBar || !canInteract) return;
-                          setState(() {
-                            _isDraggingMinimizedBar = false;
-                          });
-                          // Ensure playback resumes or starts if paused
+                    GestureDetector(
+                      // Keep GestureDetector and its contents
+                      key: _minimizedProgressBarKey,
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (details) {
+                        /* ... seek logic ... */
+                        if (!canInteract) return;
+                        final seekRatio = _calculateMinimizedSeekRatio(
+                          details.globalPosition,
+                        );
+                        if (seekRatio != null) {
                           final bloc = context.read<AudioPlayerBloc>();
+                          final seekPosition = duration * seekRatio;
+                          bloc.add(SeekAudio(position: seekPosition));
                           if (!isPlaying) {
                             bloc.add(PlayAudio());
                           }
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6.0),
-                          child: SizedBox(
-                            height: 4, // Thinner progress bar
-                            child: LinearProgressIndicator(
-                              value: displayProgress,
-                              minHeight: 4, // Match SizedBox height
-                              backgroundColor: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.1),
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Theme.of(context).colorScheme.primary,
+                        }
+                      },
+                      onHorizontalDragStart: (details) {
+                        /* ... drag start logic ... */
+                        if (!canInteract) return;
+                        final seekRatio = _calculateMinimizedSeekRatio(
+                          details.globalPosition,
+                        );
+                        if (seekRatio != null) {
+                          setState(() {
+                            _isDraggingMinimizedBar = true;
+                            _minimizedDragRatio = seekRatio;
+                          });
+                        }
+                      },
+                      onHorizontalDragUpdate: (details) {
+                        /* ... drag update logic ... */
+                        if (!_isDraggingMinimizedBar || !canInteract) return;
+                        final seekRatio = _calculateMinimizedSeekRatio(
+                          details.globalPosition,
+                        );
+                        if (seekRatio != null) {
+                          setState(() {
+                            _minimizedDragRatio = seekRatio;
+                          });
+                          context.read<AudioPlayerBloc>().add(
+                            SeekAudio(position: duration * seekRatio),
+                          );
+                        }
+                      },
+                      onHorizontalDragEnd: (details) {
+                        /* ... drag end logic ... */
+                        if (!_isDraggingMinimizedBar || !canInteract) return;
+                        setState(() {
+                          _isDraggingMinimizedBar = false;
+                        });
+                        final bloc = context.read<AudioPlayerBloc>();
+                        if (!isPlaying) {
+                          bloc.add(PlayAudio());
+                        }
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8.0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              height: 4,
+                              child: LinearProgressIndicator(
+                                value: displayProgress,
+                                backgroundColor: inactiveColor.withOpacity(0.1),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  activeColor,
+                                ),
+                                borderRadius: BorderRadius.circular(2),
                               ),
-                              borderRadius: BorderRadius.circular(2),
                             ),
-                          ),
+                            const SizedBox(height: 4),
+                            Row(
+                              // Time indicators
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  _formatDuration(
+                                    _isDraggingMinimizedBar
+                                        ? (duration * _minimizedDragRatio)
+                                        : position,
+                                  ),
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.bodySmall?.copyWith(
+                                    fontSize: 10,
+                                    color: inactiveColor,
+                                  ),
+                                ),
+                                Text(
+                                  _formatDuration(duration),
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.bodySmall?.copyWith(
+                                    fontSize: 10,
+                                    color: inactiveColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      _formatDuration(duration),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontSize: 10, // Smaller font
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          // Volume Slider (Right)
-          SizedBox(
-            width: 90, // Slightly narrower slider
-            child: SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 2.0,
-                thumbShape: const RoundSliderThumbShape(
-                  enabledThumbRadius: 5.0,
-                ), // Smaller thumb
-                overlayShape: const RoundSliderOverlayShape(
-                  overlayRadius: 10.0,
-                ), // Smaller overlay
               ),
-              child: Slider(
-                value: _currentVolume,
-                min: 0.0,
-                max: 1.0,
-                onChangeStart: (value) {
-                  if (mounted)
-                    setState(() => _isDraggingVolume = true);
-                  else
-                    _isDraggingVolume = true;
-                },
-                onChanged: (value) {
-                  if (mounted) {
-                    setState(() => _currentVolume = value);
-                    context.read<AudioPlayerBloc>().add(SetVolume(value));
-                  }
-                },
-                onChangeEnd: (value) {
-                  if (mounted)
-                    setState(() => _isDraggingVolume = false);
-                  else
-                    _isDraggingVolume = false;
-                },
+
+              // --- Positioned Right-Side Buttons ---
+              Positioned(
+                right: 0, // Align to far right of padding
+                top: 0,
+                bottom: 0,
+                // width: rightButtonsWidth, // Optional: Set width
+                child: Row(
+                  // Keep these buttons together
+                  mainAxisSize: MainAxisSize.min, // Take only needed space
+                  children: [
+                    _buildVolumeButton(context),
+                    const SizedBox(width: 0), // Adjust spacing
+                    _buildAddTagButton(context),
+                    const SizedBox(width: 0), // Adjust spacing
+                    _buildToggleButton(context),
+                  ],
+                ),
               ),
-            ),
+            ],
           ),
-          const SizedBox(width: 4),
+        );
+      },
+    );
+  }
+
+  // Helper function for the Home Button
+  Widget _buildHomeButton(BuildContext context) {
+    final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    return IconButton(
+      icon: const Icon(Icons.home_outlined),
+      iconSize: 22,
+      tooltip: 'Show Collections (Placeholder)',
+      color: inactiveColor,
+      onPressed: () {
+        // TODO: Implement Home/Collection view navigation or action
+        print("Home button pressed");
+      },
+    );
+  }
+
+  Widget _buildPlayerControls(
+    BuildContext context,
+    AudioPlayerLoaded playerState,
+    bool controlsEnabled,
+  ) {
+    final isPlaying = playerState.isPlaying;
+    final activeColor = Theme.of(context).colorScheme.primary;
+    final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    final disabledColor = Theme.of(context).disabledColor;
+
+    return SizedBox(
+      width: 150, // Fixed width
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Previous Button
+          IconButton(
+            icon: const Icon(Icons.skip_previous),
+            iconSize: 28,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            color:
+                widget.onPreviousPressed != null
+                    ? inactiveColor
+                    : disabledColor,
+            tooltip: 'Previous Track',
+            onPressed: widget.onPreviousPressed,
+          ),
+          // Play/Pause Button
           IconButton(
             icon: Icon(
-              widget.isMinimized
-                  ? Icons.keyboard_arrow_down
-                  : Icons.keyboard_arrow_up,
-              size: 20,
+              isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+              size: 32,
+              color: controlsEnabled ? activeColor : disabledColor,
             ),
-            tooltip: widget.isMinimized ? 'Expand Player' : 'Collapse Player',
-            onPressed: widget.onToggle,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            tooltip: isPlaying ? 'Pause' : 'Play',
+            onPressed:
+                controlsEnabled
+                    ? () {
+                      final bloc = context.read<AudioPlayerBloc>();
+                      final position =
+                          playerState.position; // Get position here
+                      final duration =
+                          playerState.duration; // Get duration here
+                      if (isPlaying) {
+                        bloc.add(PauseAudio());
+                      } else {
+                        if (position >= duration && duration > Duration.zero) {
+                          bloc.add(const SeekAudio(position: Duration.zero));
+                          Future.delayed(
+                            const Duration(milliseconds: 50),
+                            () => bloc.add(PlayAudio()),
+                          );
+                        } else {
+                          bloc.add(PlayAudio());
+                        }
+                      }
+                    }
+                    : null,
+          ),
+          // Next Button
+          IconButton(
+            icon: const Icon(Icons.skip_next),
+            iconSize: 28,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            color: widget.onNextPressed != null ? inactiveColor : disabledColor,
+            tooltip: 'Next Track',
+            onPressed: widget.onNextPressed,
+          ),
+          // Shuffle Button
+          IconButton(
+            icon: Icon(
+              playerState.isShuffleActive
+                  ? Icons.shuffle_on_outlined
+                  : Icons.shuffle,
+            ),
+            iconSize: 18,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            color: playerState.isShuffleActive ? activeColor : inactiveColor,
+            tooltip:
+                playerState.isShuffleActive
+                    ? 'Disable Shuffle'
+                    : 'Enable Shuffle',
+            onPressed:
+                () => context.read<AudioPlayerBloc>().add(ToggleShuffle()),
           ),
         ],
       ),
+    );
+  }
+
+  // Helper function for the Volume Button
+  Widget _buildVolumeButton(BuildContext context) {
+    final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    return IconButton(
+      icon: Icon(
+        _currentVolume <= 0
+            ? Icons.volume_off
+            : _currentVolume < 0.5
+            ? Icons.volume_down
+            : Icons.volume_up,
+      ),
+      iconSize: 20,
+      color: inactiveColor,
+      tooltip: 'Volume (Placeholder)',
+      onPressed: () {
+        // TODO: Implement Volume control action
+        print("Volume button pressed");
+      },
+    );
+  }
+
+  Widget _buildAddTagButton(BuildContext context) {
+    final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    final disabledColor = Theme.of(context).disabledColor;
+    return BlocBuilder<GlobalTagBloc, GlobalTagState>(
+      builder: (context, globalTagState) {
+        final bool tagsLoaded = globalTagState is GlobalTagLoaded;
+        return IconButton(
+          icon: const Icon(
+            Icons.sell_outlined,
+          ), // Alternative icon: local_offer
+          iconSize: 18,
+          tooltip: tagsLoaded ? 'Add/Edit Tags' : 'Loading tags...',
+          color: tagsLoaded ? inactiveColor : disabledColor,
+          onPressed: tagsLoaded ? () => _openTagEditor(context) : null,
+        );
+      },
+    );
+  }
+
+  // Helper function for the Toggle Button
+  Widget _buildToggleButton(BuildContext context) {
+    final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    return IconButton(
+      icon: Icon(
+        widget.isMinimized
+            ? Icons.keyboard_arrow_down
+            : Icons.keyboard_arrow_up,
+        size: 24,
+      ),
+      color: inactiveColor,
+      tooltip: widget.isMinimized ? 'Expand Player' : 'Collapse Player',
+      onPressed: widget.onToggle,
     );
   }
 
@@ -520,222 +636,118 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
 
   // Build method for the expanded player UI (Modified Layout)
   Widget _buildExpandedPlayerUI(AudioPlayerLoaded playerState, Track track) {
+    // State variables remain the same
     final isPlaying = playerState.isPlaying;
     final duration = playerState.duration;
     final position = playerState.position;
     final waveformData = playerState.waveformData;
     final timeMarkers = playerState.markers;
     final bool canInteract = duration > Duration.zero;
+    final controlsEnabled = canInteract; // Use this for enabling controls
+
+    // Theme colors
+    final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    final disabledColor = Theme.of(context).disabledColor;
 
     return BlocBuilder<TrackDataBloc, TrackDataState>(
-      //
       builder: (context, trackDataState) {
-        //
-        // ... (tag loading logic remains the same) ...
-        List<String> currentGeneralTags = []; //
+        // ... Tag loading logic ...
+        List<String> currentGeneralTags = [];
         if (trackDataState is TrackDataLoaded) {
-          //
           try {
             final currentTrackFromBloc = trackDataState.tracks.firstWhere(
-              //
-              (t) => t.id == track.id, //
-              orElse: () => track, //
+              (t) => t.id == track.id,
+              orElse: () => track,
             );
-            currentGeneralTags = currentTrackFromBloc.generalTags; //
+            currentGeneralTags = currentTrackFromBloc.generalTags;
           } catch (e) {
-            currentGeneralTags = track.generalTags; //
+            currentGeneralTags = track.generalTags;
           }
         } else {
-          currentGeneralTags = track.generalTags; //
+          currentGeneralTags = track.generalTags;
         }
 
-        // ... inside build method ...
-        // ... inside build method ...
         return SingleChildScrollView(
-          //
           child: Padding(
-            //
             padding: const EdgeInsets.symmetric(
               horizontal: 16.0,
               vertical: 8.0,
-            ), //
+            ),
             child: Column(
-              //
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // --- Top Section: Title & Artist ---
-                Column(
-                  // Wrap Title and Artist in their own Column
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start, // Center Title and Artist
-                  children: [
-                    // Apply the style from the minimized player
-                    Text(
-                      //
-                      '${track.title} - ${track.artist}',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        // <<< MATCHED STYLE
-                        fontWeight: FontWeight.w500, // <<< MATCHED STYLE
-                        fontSize: 12, // <<< MATCHED STYLE
-                      ),
-                      maxLines: 1, //
-                      overflow: TextOverflow.ellipsis, //
-                    ),
-                  ],
+                // --- Top Section: Title & Artist (Combined & Left Aligned) ---
+                Text(
+                  '${track.title} - ${track.artist}',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 12,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 10), // // Space after artist
-                // --- Middle Row: Controls, Waveform, Add Tag ---
+                const SizedBox(height: 10),
+
+                // --- Main Interactive Row ---
                 ConstrainedBox(
-                  // ... (rest of the middle row with controls, waveform, add tag button remains the same) ...
                   constraints: const BoxConstraints(
-                    minHeight: 45,
-                    maxHeight: 80,
-                  ), // Adjust max height //
+                    minHeight: 65,
+                    maxHeight: 100,
+                  ),
                   child: Row(
-                    //
-                    crossAxisAlignment:
-                        CrossAxisAlignment.center, // Center items vertically //
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Playback Controls (Left)
-                      Row(
-                        //
-                        mainAxisSize: MainAxisSize.min, //
-                        children: [
-                          // Previous Button
-                          IconButton(
-                            //
-                            icon: const Icon(Icons.skip_previous), //
-                            iconSize: 30,
-                            tooltip: 'Previous Track', //
-                            color:
-                                widget.onPreviousPressed != null
-                                    ? Theme.of(context).colorScheme.onSurface
-                                    : Theme.of(context).disabledColor, //
-                            onPressed: widget.onPreviousPressed, //
-                          ),
-                          const SizedBox(width: 8), //
-                          // Play/Pause Button
-                          IconButton(
-                            //
-                            icon: Icon(
-                              //
-                              isPlaying //
-                                  ? Icons
-                                      .pause_circle_filled //
-                                  : Icons.play_circle_filled, //
-                              size: 32, //
-                              color: //
-                                  canInteract //
-                                      ? Theme.of(context)
-                                          .colorScheme
-                                          .primary //
-                                      : Theme.of(context).disabledColor, //
-                            ),
-                            onPressed: //
-                                canInteract //
-                                    ? () {
-                                      //
-                                      final bloc =
-                                          context.read<AudioPlayerBloc>(); //
-                                      if (isPlaying) {
-                                        //
-                                        bloc.add(PauseAudio()); //
-                                      } else {
-                                        if (position >= duration && //
-                                            duration > Duration.zero) {
-                                          //
-                                          bloc.add(
-                                            //
-                                            const SeekAudio(
-                                              position: Duration.zero,
-                                            ), //
-                                          );
-                                          Future.delayed(
-                                            //
-                                            const Duration(milliseconds: 50), //
-                                            () => bloc.add(PlayAudio()), //
-                                          );
-                                        } else {
-                                          bloc.add(PlayAudio()); //
-                                        }
-                                      }
-                                    }
-                                    : null, //
-                            tooltip: isPlaying ? 'Pause' : 'Play', //
-                          ),
-                          const SizedBox(width: 8), //
-                          // Next Button
-                          IconButton(
-                            //
-                            icon: const Icon(Icons.skip_next), //
-                            iconSize: 30,
-                            tooltip: 'Next Track', //
-                            color:
-                                widget.onNextPressed != null
-                                    ? Theme.of(context).colorScheme.onSurface
-                                    : Theme.of(context).disabledColor, //
-                            onPressed: widget.onNextPressed, //
-                          ),
-                        ],
-                      ),
-                      const SizedBox(width: 12), // Spacer after controls //
-                      // Waveform + Time Indicators (Middle - Expands)
+                      // --- Call Helper Functions ---
+                      _buildHomeButton(context),
+                      const SizedBox(width: 8),
+                      _buildPlayerControls(
+                        context,
+                        playerState,
+                        controlsEnabled,
+                      ), // Pass state and enabled flag
+                      const SizedBox(width: 12),
+
+                      // --- Waveform (Specific to expanded view) ---
                       Expanded(
-                        //
-                        // ... waveform column content remains the same ...
                         child: Column(
-                          //
-                          mainAxisAlignment:
-                              MainAxisAlignment.center, // Center vertically //
-                          mainAxisSize: MainAxisSize.min, //
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            // Waveform Container
                             SizedBox(
-                              //
-                              key: _waveformContainerKey, //
-                              height:
-                                  80, // Reduced height for waveform in row //
+                              // Waveform container
+                              key: _waveformContainerKey,
+                              height: 80,
                               child: Stack(
-                                //
-                                clipBehavior: Clip.none, //
+                                // Keep Stack and its contents
+                                clipBehavior: Clip.none,
                                 children: [
                                   Positioned.fill(
-                                    //
                                     child: Container(
-                                      //
                                       decoration: BoxDecoration(
-                                        //
                                         color: Theme.of(context)
                                             .colorScheme
                                             .surfaceVariant
-                                            .withOpacity(0.3), //
-                                        borderRadius: BorderRadius.circular(
-                                          6,
-                                        ), //
+                                            .withOpacity(0.3),
+                                        borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: ClipRRect(
-                                        //
-                                        borderRadius: BorderRadius.circular(
-                                          6,
-                                        ), //
+                                        borderRadius: BorderRadius.circular(6),
                                         child: MouseRegion(
-                                          //
                                           onHover:
                                               (event) => setState(
                                                 () =>
                                                     _hoverPositionForPainter =
                                                         event.localPosition,
-                                              ), //
+                                              ),
                                           onExit:
                                               (event) => setState(
                                                 () =>
                                                     _hoverPositionForPainter =
                                                         null,
-                                              ), //
+                                              ),
                                           child: GestureDetector(
-                                            //
-                                            // Waveform interaction logic (Keep existing logic)
                                             onTapUp: (details) {
-                                              /* ... existing seek/play logic ... */ //
+                                              /* ... seek/play logic ... */
                                               if (!canInteract) return;
                                               final RenderBox? box =
                                                   _waveformContainerKey
@@ -803,10 +815,10 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                                 if (!playerState.isPlaying) {
                                                   bloc.add(PlayAudio());
                                                 }
-                                              } //
+                                              }
                                             },
                                             onHorizontalDragStart: (details) {
-                                              /* ... existing drag start logic ... */ //
+                                              /* ... drag start logic ... */
                                               if (canInteract) {
                                                 final bloc =
                                                     context
@@ -858,10 +870,10 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                                 });
                                                 if (_wasPlayingBeforeDrag)
                                                   bloc.add(PauseAudio());
-                                              } //
+                                              }
                                             },
                                             onHorizontalDragUpdate: (details) {
-                                              /* ... existing drag update logic ... */ //
+                                              /* ... drag update logic ... */
                                               if (_isDraggingWaveform &&
                                                   canInteract) {
                                                 final RenderBox box =
@@ -907,10 +919,10 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                                     _dragProgress = seekRatio;
                                                   });
                                                 }
-                                              } //
+                                              }
                                             },
                                             onHorizontalDragEnd: (details) {
-                                              /* ... existing drag end logic ... */ //
+                                              /* ... drag end logic ... */
                                               if (_isDraggingWaveform) {
                                                 if (canInteract) {
                                                   final finalSeekPosition =
@@ -945,23 +957,21 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                                     },
                                                   );
                                                 }
-                                              } //
+                                              }
                                             },
                                             child: CustomPaint(
-                                              //
-                                              size: Size.infinite, //
+                                              size: Size.infinite,
                                               painter: WaveformPainter(
-                                                //
                                                 waveformData:
-                                                    waveformData ?? [], //
+                                                    waveformData ?? [],
                                                 activeColor:
                                                     Theme.of(
                                                       context,
-                                                    ).colorScheme.primary, //
+                                                    ).colorScheme.primary,
                                                 inactiveColor: Theme.of(context)
                                                     .colorScheme
                                                     .onSurfaceVariant
-                                                    .withOpacity(0.5), //
+                                                    .withOpacity(0.5),
                                                 playbackProgress:
                                                     canInteract &&
                                                             playerState
@@ -975,11 +985,11 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                                                     .duration
                                                                     .inMilliseconds)
                                                             .clamp(0.0, 1.0)
-                                                        : 0.0, //
-                                                dragProgress: _dragProgress, //
-                                                markers: timeMarkers, //
+                                                        : 0.0,
+                                                dragProgress: _dragProgress,
+                                                markers: timeMarkers,
                                                 hoverPosition:
-                                                    _hoverPositionForPainter, //
+                                                    _hoverPositionForPainter,
                                               ),
                                             ),
                                           ),
@@ -987,9 +997,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                       ),
                                     ),
                                   ),
-                                  // Placeholder/Loading Indicator for Waveform (Keep existing logic)
                                   if (waveformData == null ||
-                                      waveformData.isEmpty) //
+                                      waveformData.isEmpty)
                                     Center(
                                       child:
                                           (track.sourceType ==
@@ -1024,26 +1033,21 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                                               .onSurfaceVariant,
                                                     ),
                                               ),
-                                    ), //
+                                    ),
                                 ],
                               ),
                             ),
-                            // Time Indicators (conditionally shown below waveform)
-                            if (canInteract) // Only show if duration is known //
+                            if (canInteract) // Time Indicators
                               Padding(
-                                //
-                                padding: const EdgeInsets.only(
-                                  top: 2.0,
-                                ), // Space between waveform and time //
+                                padding: const EdgeInsets.only(top: 2.0),
                                 child: Row(
-                                  //
                                   mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween, //
+                                      MainAxisAlignment.spaceBetween,
                                   children: [
                                     Text(
                                       _formatDuration(position),
                                       style: const TextStyle(fontSize: 10),
-                                    ), //
+                                    ),
                                     Text(
                                       _formatDuration(
                                         Duration(
@@ -1051,80 +1055,48 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                         ),
                                       ),
                                       style: const TextStyle(fontSize: 10),
-                                    ), //
+                                    ),
                                   ],
                                 ),
                               ),
                           ],
-                        ), //
+                        ),
                       ),
-                      const SizedBox(width: 12), // Spacer //
-                      // Add Tag Button (Right)
-                      BlocBuilder<GlobalTagBloc, GlobalTagState>(
-                        //
-                        builder: (context, globalTagState) {
-                          //
-                          final bool tagsLoaded =
-                              globalTagState is GlobalTagLoaded; //
-                          return Tooltip(
-                            //
-                            message:
-                                tagsLoaded
-                                    ? 'Add/Edit Tags'
-                                    : 'Loading tags...', //
-                            child: IconButton(
-                              //
-                              icon: const Icon(Icons.add_circle_outline), //
-                              iconSize: 20, //
-                              onPressed:
-                                  tagsLoaded
-                                      ? () => _openTagEditor(context)
-                                      : null, //
-                              color:
-                                  tagsLoaded
-                                      ? Theme.of(context).iconTheme.color
-                                      : Colors.grey, //
-                              padding: EdgeInsets.zero, //
-                              constraints: const BoxConstraints(), //
-                            ),
-                          );
-                        },
-                      ),
+                      const SizedBox(width: 12), // Spacer
+                      // --- Call Helper Functions ---
+                      _buildVolumeButton(context),
+                      const SizedBox(width: 4),
+                      _buildToggleButton(
+                        context,
+                      ), // Always "up" arrow here implicitly
                     ],
                   ),
-                ), // End ConstrainedBox for Middle Row
-                // ... (Rating, Additional Buttons, Time Tag Input, Notes section remain the same) ...
+                ), // End ConstrainedBox for Main Row
+                // --- Rating Section ---
                 Padding(
-                  //
-                  padding: const EdgeInsets.only(
-                    top: 8.0,
-                  ), // Space above rating //
+                  /* ... Rating section ... */
+                  padding: const EdgeInsets.only(top: 8.0),
                   child: Align(
-                    //
-                    alignment:
-                        Alignment.centerLeft, // Align rating to the left //
-                    child: _buildRatingBar(
-                      track.id!,
-                    ), // Use the rating bar widget //
+                    alignment: Alignment.centerLeft,
+                    child: _buildRatingBar(track.id!),
                   ),
                 ),
-                const SizedBox(height: 10), // Space after rating //
-                // --- Additional Buttons (Markers, Collapse) ---
+                const SizedBox(height: 10),
+                _buildAddTagButton(context),
+                const SizedBox(width: 4),
+
+                // --- Marker Button (Specific to expanded) ---
                 Row(
-                  //
-                  mainAxisAlignment:
-                      MainAxisAlignment.end, // Align buttons to the right //
+                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    // Add Time Marker Button
                     IconButton(
-                      //
-                      icon: const Icon(Icons.bookmark_add_outlined), //
+                      icon: const Icon(Icons.bookmark_add_outlined),
                       tooltip: 'Add Time Marker',
-                      iconSize: 24, //
+                      iconSize: 24,
                       color:
                           canInteract
                               ? Theme.of(context).colorScheme.secondary
-                              : Theme.of(context).disabledColor, //
+                              : disabledColor,
                       onPressed:
                           canInteract
                               ? () {
@@ -1134,30 +1106,18 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                   });
                                 }
                               }
-                              : null, //
-                    ),
-                    // Collapse Button
-                    IconButton(
-                      //
-                      icon: const Icon(Icons.keyboard_arrow_up), //
-                      tooltip: 'Collapse Player',
-                      iconSize: 24, //
-                      color: Theme.of(context).colorScheme.secondary, //
-                      onPressed: widget.onToggle, //
+                              : null,
                     ),
                   ],
                 ),
 
                 // --- Time Tag Input Row ---
                 Padding(
-                  //
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 0.0,
-                  ), // Adjust padding if needed //
+                  /* ... Time marker input section ... */
+                  padding: const EdgeInsets.symmetric(horizontal: 0.0),
                   child:
                       _isTimeMarkingMode
                           ? Row(
-                            //
                             children: [
                               Expanded(
                                 child: TextField(
@@ -1172,7 +1132,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                       (_) =>
                                           _addMarkerAtCurrentTime(playerState),
                                 ),
-                              ), //
+                              ),
                               IconButton(
                                 icon: const Icon(
                                   Icons.check_circle,
@@ -1181,7 +1141,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                 tooltip: 'Save Marker',
                                 onPressed:
                                     () => _addMarkerAtCurrentTime(playerState),
-                              ), //
+                              ),
                               IconButton(
                                 icon: const Icon(
                                   Icons.cancel,
@@ -1194,14 +1154,14 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                     _timeMarkerController.clear();
                                   });
                                 },
-                              ), //
+                              ),
                             ],
                           )
-                          : const SizedBox.shrink(), //
+                          : const SizedBox.shrink(),
                 ),
 
                 // --- Notes Section ---
-                _buildNotesSection(), // Keep existing notes section //
+                _buildNotesSection(), // Keep existing notes section
               ],
             ),
           ),
