@@ -298,7 +298,8 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
                                     dbDetected = false;
                                     nameController.clear();
                                     // --- *** FIX: Request focus using FocusNode *** ---
-                                    if (foundDbPath == null &&
+                                    if (directoryPath != null &&
+                                        foundDbPath == null &&
                                         dbFiles.length <= 1) {
                                       // Use WidgetsBinding to request focus after the current frame
                                       WidgetsBinding.instance.addPostFrameCallback((
@@ -312,6 +313,7 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
                                         }
                                       });
                                     }
+                                    // --- *** END FIX *** ---
                                   }
                                 });
                               }

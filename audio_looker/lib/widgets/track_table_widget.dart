@@ -973,8 +973,6 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
                 final String tappedCellKey =
                     trackId != -1 ? "${trackId}_$tappedColumnName" : "";
 
-                // --- Main Logic ---
-
                 // 1. If currently editing *this specific* cell, do nothing extra.
                 //    The tap likely occurred within the TextField itself.
                 if (isEditing && _editingCellKey == tappedCellKey) {

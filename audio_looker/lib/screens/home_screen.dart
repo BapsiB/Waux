@@ -324,7 +324,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // context.read<TrackDataBloc>().add(ApplyPlaylistFilter(newSelectedPlaylist)); // Requires adding this event/logic
   }
 
-  // Callback for TrackSelectionHandler to update HomeScreen's state
   void _handleSelectionStateUpdate(
     Set<int> newSelectedIds,
     int? newAnchorId,
@@ -339,9 +338,14 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     // If the player selection changed, ensure the track is loaded (without playing)
-    if (playerSelectionChanged && newSelectedTrackForPlayer != null) {
-      _trackSelectionHandler.selectTrackForPlayer(newSelectedTrackForPlayer);
-    }
+    // --- REMOVE OR COMMENT OUT THIS BLOCK ---
+    /*
+  if (playerSelectionChanged && newSelectedTrackForPlayer != null) {
+    print("Player selection changed, automatically calling selectTrackForPlayer"); // Add log
+    _trackSelectionHandler.selectTrackForPlayer(newSelectedTrackForPlayer);
+  }
+  */
+    // --- END REMOVAL ---
 
     _initializeHandlers(); // Keep handlers in sync with state
   }
@@ -741,18 +745,48 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: _buildContentArea(),
                       ), // Table or Tree View
                       // Player (Bottom) - shows only if a track is selected for the player
-                      if (_selectedTrackForPlayer != null)
-                        CombinedAudioPlayerWidget(
-                          key: ValueKey(
-                            _selectedTrackForPlayer!.id,
-                          ), // Ensure widget rebuilds when track changes
-                          track: _selectedTrackForPlayer!,
-                          isMinimized: _isMinimized,
-                          onToggle: _handlePlayerToggle,
-                          onPreviousPressed: _playPreviousTrack,
-                          onNextPressed: _playNextTrack,
-                          maxExpandedHeight: maxPlayerHeight,
-                        ),
+                      BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
+                        builder: (context, playerState) {
+                          // Determine if the player should be visible based on BLoC state AND selected track
+                          bool shouldShowPlayer = false;
+                          if (_selectedTrackForPlayer != null) {
+                            if (playerState is AudioPlayerLoading &&
+                                playerState.loadingSource ==
+                                    _selectedTrackForPlayer!.path) {
+                              // Show if loading the currently selected track
+                              shouldShowPlayer = true;
+                            } else if (playerState is AudioPlayerLoaded &&
+                                playerState.currentSource ==
+                                    _selectedTrackForPlayer!.path) {
+                              // Show if loaded with the currently selected track
+                              shouldShowPlayer = true;
+                            }
+                            // --- Optionally show on error for the selected track ---
+                            // else if (playerState is AudioPlayerError && playerState.source == _selectedTrackForPlayer!.path) {
+                            //  shouldShowPlayer = true; // Or handle error display differently
+                            //}
+                          }
+
+                          // Conditionally build the player
+                          if (shouldShowPlayer &&
+                              _selectedTrackForPlayer != null) {
+                            return CombinedAudioPlayerWidget(
+                              key: ValueKey(
+                                _selectedTrackForPlayer!.id,
+                              ), // Ensure widget rebuilds when track changes
+                              track: _selectedTrackForPlayer!,
+                              isMinimized: _isMinimized,
+                              onToggle: _handlePlayerToggle,
+                              onPreviousPressed: _playPreviousTrack,
+                              onNextPressed: _playNextTrack,
+                              maxExpandedHeight: maxPlayerHeight,
+                            );
+                          } else {
+                            // If player shouldn't be shown, return an empty widget
+                            return const SizedBox.shrink();
+                          }
+                        },
+                      ),
                     ],
                   ),
                 ),
