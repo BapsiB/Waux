@@ -337,17 +337,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _selectedTrackForPlayer = newSelectedTrackForPlayer;
     });
 
-    // If the player selection changed, ensure the track is loaded (without playing)
-    // --- REMOVE OR COMMENT OUT THIS BLOCK ---
-    /*
-  if (playerSelectionChanged && newSelectedTrackForPlayer != null) {
-    print("Player selection changed, automatically calling selectTrackForPlayer"); // Add log
-    _trackSelectionHandler.selectTrackForPlayer(newSelectedTrackForPlayer);
-  }
-  */
+    // --- REMOVED _initializeHandlers() CALL ---
+    // _initializeHandlers();
     // --- END REMOVAL ---
-
-    _initializeHandlers(); // Keep handlers in sync with state
   }
 
   // Selects track, updates state, and tells handler to load (no auto-play)

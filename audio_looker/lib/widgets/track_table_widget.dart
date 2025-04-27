@@ -80,6 +80,9 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   bool _isColumnsInitialized = false;
   bool _isLayoutFrozen = false;
   bool _isLoadingConfig = true; // State to track config loading
+  final Duration _doubleClickThreshold = const Duration(milliseconds: 300);
+  DateTime? _lastTapTime;
+  int? _lastTappedTrackId;
 
   // Add state variable to store width
   double _containerWidth = 0;
@@ -101,7 +104,6 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
   Timer? _clickTimer;
   DataGridCellTapDetails? _potentialEditCellDetails;
   String? _editingCellKey; // Format: "trackId_columnName"
-  final Duration _doubleClickThreshold = const Duration(milliseconds: 300);
   // Controller for the text field when editing
   final TextEditingController _cellEditController = TextEditingController();
   final FocusNode _cellEditFocusNode = FocusNode();
@@ -911,72 +913,62 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
                 _handleColumnResize(details, _containerWidth);
                 return true; // Indicate resize was handled
               },
-              onCellDoubleTap: (DataGridCellDoubleTapDetails details) {
-                final int rowIndex = details.rowColumnIndex.rowIndex;
-                // Ensure it's a data row (not header)
-                if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
-                  final dataRow = _trackDataSource.rows[rowIndex - 1];
-                  final idCell = dataRow.getCells().firstWhere(
-                    (cell) => cell.columnName == 'id',
-                    orElse:
-                        () => DataGridCell<int>(columnName: 'id', value: -1),
-                  );
-                  final int trackId = idCell.value as int? ?? -1;
+              // onCellDoubleTap: (DataGridCellDoubleTapDetails details) {
+              //   final int rowIndex = details.rowColumnIndex.rowIndex;
+              //   // Ensure it's a data row (not header)
+              //   if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
+              //     final dataRow = _trackDataSource.rows[rowIndex - 1];
+              //     final idCell = dataRow.getCells().firstWhere(
+              //       (cell) => cell.columnName == 'id',
+              //       orElse:
+              //           () => DataGridCell<int>(columnName: 'id', value: -1),
+              //     );
+              //     final int trackId = idCell.value as int? ?? -1;
 
-                  if (trackId != -1) {
-                    try {
-                      // Find the track corresponding to the double-tapped row
-                      final track = widget.tracks.firstWhere(
-                        (t) => t.id == trackId,
-                      );
-                      // Call the callback passed from HomeScreen
-                      widget.onRowDoubleTap(track);
-                      print(
-                        "Double tapped on track: ${track.title}",
-                      ); // Optional log
-                    } catch (e) {
-                      debugPrint("Error finding track for double tap: $e");
-                    }
-                  }
-                }
-              },
+              //     if (trackId != -1) {
+              //       try {
+              //         // Find the track corresponding to the double-tapped row
+              //         final track = widget.tracks.firstWhere(
+              //           (t) => t.id == trackId,
+              //         );
+              //         // Call the callback passed from HomeScreen
+              //         widget.onRowDoubleTap(track);
+              //         print(
+              //           "Double tapped on track: ${track.title}",
+              //         ); // Optional log
+              //       } catch (e) {
+              //         debugPrint("Error finding track for double tap: $e");
+              //       }
+              //     }
+              //   }
+              // },
               allowSorting: true,
-              // --- MODIFIED: Handle cell taps for editing ---
               onCellTap: (DataGridCellTapDetails details) {
                 final int rowIndex = details.rowColumnIndex.rowIndex;
                 final int columnIndex = details.rowColumnIndex.columnIndex;
-                final bool isDataRow = rowIndex > 0; // Row 0 is header
-                final bool isEditing = _editingCellKey != null;
+                final bool isDataRow = rowIndex > 0;
+                // final bool isEditing = _editingCellKey != null; // Keep editing logic if needed
 
-                print(
-                  "Cell Tapped: Row $rowIndex, Col $columnIndex",
-                ); // Debug output
+                print("Cell Tapped: Row $rowIndex, Col $columnIndex"); // Debug
+
                 if (!isDataRow ||
                     columnIndex < 0 ||
                     columnIndex >= _gridColumns.length) {
-                  // Clicked header or invalid column index
-                  if (isEditing) {
-                    // Finish previous edit if clicking outside data area while editing
+                  // Handle header/invalid clicks, finish editing if necessary
+                  // ... (existing logic for finishing edit on outside click) ...
+                  if (_editingCellKey != null) {
                     print(
                       "Clicked header/invalid column while editing. Finishing edit.",
                     );
                     _handleEndEditing(newValue: _cellEditController.text);
                   }
-                  return; // Ignore header/invalid clicks
+                  // Clear tap tracking if clicking outside data rows
+                  _lastTapTime = null;
+                  _lastTappedTrackId = null;
+                  return;
                 }
 
-                // --- Get details of the tapped cell ---
-                final String tappedColumnName =
-                    _gridColumns[columnIndex].columnName;
-                final List<String> editableColumns = [
-                  'title',
-                  'artist',
-                  'album',
-                ];
-                final bool isTappedCellEditable = editableColumns.contains(
-                  tappedColumnName,
-                );
-
+                // --- Get Track ID ---
                 final dataRow =
                     _trackDataSource.rows[rowIndex -
                         1]; // Adjust for header row
@@ -984,92 +976,125 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
                   (cell) => cell.columnName == 'id',
                   orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
                 );
-                final int trackId = idCell.value as int? ?? -1;
-                // Create a key representing the tapped cell (trackId_columnName)
-                final String tappedCellKey =
-                    trackId != -1 ? "${trackId}_$tappedColumnName" : "";
+                final int currentTrackId = idCell.value as int? ?? -1;
 
-                // 1. If currently editing *this specific* cell, do nothing extra.
-                //    The tap likely occurred within the TextField itself.
-                if (isEditing && _editingCellKey == tappedCellKey) {
-                  print("Tapped inside the currently editing cell.");
-                  return;
-                }
+                if (currentTrackId == -1) return; // Invalid track ID
 
-                // 2. If currently editing a *different* cell, finish that edit first.
-                //    This prevents having two editors open and ensures changes are processed.
-                if (isEditing && _editingCellKey != tappedCellKey) {
-                  print(
-                    "Tapped different cell ($tappedCellKey) while editing ($_editingCellKey). Finishing previous edit.",
-                  );
-                  _handleEndEditing(newValue: _cellEditController.text);
-                  // Note: We don't immediately start the new edit here.
-                  // This requires the user to click again on the desired cell after the first edit closes.
-                  return;
-                }
+                // --- Custom Double-Click Logic ---
+                final DateTime now = DateTime.now();
+                bool isDoubleClick = false;
 
-                // 3. If *not* currently editing, check if we should START editing.
-                //    This happens if the row is selected and the cell is editable.
-                if (!isEditing) {
-                  if (_isRowSelected(rowIndex) &&
-                      isTappedCellEditable &&
-                      trackId != -1) {
-                    // --- Start Editing ---
-                    print("Starting edit for $tappedCellKey");
-                    try {
-                      // Find the track to get the current value
-                      final track = widget.tracks.firstWhere(
-                        (t) => t.id == trackId,
-                      );
-                      final currentValue = _getTrackValueByColumn(
-                        track,
-                        tappedColumnName,
-                      );
-                      // Pre-fill the controller used by the TextField in TrackDataSource
-                      _cellEditController.text = currentValue;
-                      // Update the state to tell TrackDataSource which cell to render as TextField
-                      setState(() {
-                        _editingCellKey = tappedCellKey;
-                      });
-                      // Request focus for the TextField after the state update and rebuild
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        Future.delayed(const Duration(milliseconds: 50), () {
-                          if (mounted) {
-                            print("Requesting focus and selection NOW");
-                            // Ensure the widget is still in the tree
-                            FocusScope.of(
-                              context,
-                            ).requestFocus(_cellEditFocusNode);
-                            // Select all text for easy replacement
-                            _cellEditController.selection = TextSelection(
-                              baseOffset: 0,
-                              extentOffset: _cellEditController.text.length,
-                            );
-                            print(
-                              "_cellEditController.text.length ${_cellEditController.text.length}",
-                            );
-                          }
-                        });
-                      });
-                    } catch (e) {
-                      print("Error finding track to edit: $e");
-                      // Ensure editing state is cleared if track lookup fails
-                      _handleEndEditing();
-                    }
-                  } else {
-                    // Conditions for starting an edit were not met.
-                    // This could be:
-                    // - Row wasn't selected.
-                    // - Cell wasn't editable.
-                    // - Track ID was invalid.
-                    // No edit action needed, allow default grid behavior (like selection).
-                    print(
-                      "Tap conditions not met for starting edit (Row Selected: ${_isRowSelected(rowIndex)}, Cell Editable: $isTappedCellEditable, Track ID: $trackId).",
+                if (_lastTapTime != null &&
+                    _lastTappedTrackId == currentTrackId &&
+                    now.difference(_lastTapTime!) < _doubleClickThreshold) {
+                  // --- Double Click Detected ---
+                  isDoubleClick = true;
+                  print("Double Click Detected on Track ID: $currentTrackId");
+
+                  // Find the track and trigger the double-click callback
+                  try {
+                    final track = widget.tracks.firstWhere(
+                      (t) => t.id == currentTrackId,
                     );
+                    widget.onRowDoubleTap(track); // Call the load/play callback
+                  } catch (e) {
+                    debugPrint("Error finding track for double tap: $e");
                   }
+
+                  // Reset tap tracking after a double-click
+                  _lastTapTime = null;
+                  _lastTappedTrackId = null;
+                } else {
+                  // --- Single Click ---
+                  // Update last tap info for potential next click
+                  _lastTapTime = now;
+                  _lastTappedTrackId = currentTrackId;
+                }
+                // --- End Custom Double-Click Logic ---
+
+                // --- IMPORTANT: Always handle selection immediately on the first tap ---
+                // The selection logic relies on the SfDataGrid's internal mechanism
+                // triggered by the tap, which then calls onSelectionChanged.
+                // We don't need to explicitly call widget.onSelectionChanged here.
+                // The selection highlight should appear instantly via the grid's default behavior.
+
+                // --- Handle Cell Editing (if applicable, after double-click check) ---
+                if (!isDoubleClick) {
+                  // --- Get details of the tapped cell ---
+                  final String tappedColumnName =
+                      _gridColumns[columnIndex].columnName;
+                  final List<String> editableColumns = [
+                    'title',
+                    'artist',
+                    'album',
+                  ];
+                  final bool isTappedCellEditable = editableColumns.contains(
+                    tappedColumnName,
+                  );
+                  final String tappedCellKey =
+                      "${currentTrackId}_$tappedColumnName";
+                  final bool isEditing =
+                      _editingCellKey != null; // Check editing state *now*
+
+                  // --- Cell Editing Logic (mostly unchanged from before) ---
+                  if (isEditing && _editingCellKey == tappedCellKey) {
+                    // Tapped inside the currently editing cell
+                    return;
+                  }
+                  if (isEditing && _editingCellKey != tappedCellKey) {
+                    // Tapped different cell while editing, finish previous
+                    _handleEndEditing(newValue: _cellEditController.text);
+                    // Reset tap tracking because the action was finishing an edit
+                    _lastTapTime = null;
+                    _lastTappedTrackId = null;
+                    return;
+                  }
+                  if (!isEditing) {
+                    if (_isRowSelected(rowIndex) && isTappedCellEditable) {
+                      // Start editing
+                      print("Starting edit for $tappedCellKey");
+                      try {
+                        final track = widget.tracks.firstWhere(
+                          (t) => t.id == currentTrackId,
+                        );
+                        final currentValue = _getTrackValueByColumn(
+                          track,
+                          tappedColumnName,
+                        );
+                        _cellEditController.text = currentValue;
+                        setState(() {
+                          _editingCellKey = tappedCellKey;
+                        });
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          // ... (focus and selection logic) ...
+                          Future.delayed(const Duration(milliseconds: 50), () {
+                            if (mounted) {
+                              print("Requesting focus and selection NOW");
+                              FocusScope.of(
+                                context,
+                              ).requestFocus(_cellEditFocusNode);
+                              _cellEditController.selection = TextSelection(
+                                baseOffset: 0,
+                                extentOffset: _cellEditController.text.length,
+                              );
+                            }
+                          });
+                        });
+                      } catch (e) {
+                        print("Error finding track to edit: $e");
+                        _handleEndEditing();
+                      }
+                    } else {
+                      print(
+                        "Tap conditions not met for starting edit (Row Selected: ${_isRowSelected(rowIndex)}, Cell Editable: $isTappedCellEditable, Track ID: $currentTrackId).",
+                      );
+                      // No edit action needed for single click here. Selection handled by grid.
+                    }
+                  }
+                  // --- End Cell Editing Logic ---
                 }
               }, // End onCellTap
-              // --- Sorting Handler ---
+
               onColumnSortChanged: (
                 SortColumnDetails? newSortColumn,
                 SortColumnDetails? oldSortColumn,

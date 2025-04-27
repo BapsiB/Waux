@@ -137,6 +137,7 @@ class TrackSelectionHandler {
   /// Handles track selection changes in the UI (e.g., DataGrid).
   /// Calculates the new selection state based on modifiers (Shift, Ctrl/Meta).
   /// Calls the [onSelectionStateChanged] callback with the updated state.
+
   void handleSelectionChanged(
     int trackId,
     bool isSelected, {
@@ -152,29 +153,24 @@ class TrackSelectionHandler {
     final Set<int> newSelectedIds = Set.from(selectedTrackIds);
     int? newAnchorId = anchorTrackId;
 
-    // Use the current *displayed* tracks for shift-selection logic
-    final List<Track> currentDisplayedTracks = getCurrentDisplayedTracks();
+    // --- OPTIMIZATION START ---
+    // Only get the full displayed list if Shift is pressed for range selection
+    List<Track> currentDisplayedTracks = [];
+    if (isShiftPressed && newAnchorId != null) {
+      currentDisplayedTracks =
+          getCurrentDisplayedTracks(); // Get list only when needed
+      print(
+        "Shift pressed, getting displayed tracks (Count: ${currentDisplayedTracks.length})",
+      );
+    } else {
+      print(
+        "Shift not pressed or no anchor, skipping get displayed tracks for range calculation.",
+      );
+    }
+    // --- OPTIMIZATION END ---
 
     // --- LOGGING START ---
-    print("--- Selection Change ---");
-    print(
-      "Incoming: trackId=$trackId, isSelected=$isSelected, shift=$isShiftPressed, ctrl=$isCtrlPressed",
-    );
-    print(
-      "Current State: anchorId=$anchorTrackId, selectedIds=$selectedTrackIds",
-    );
-    print("Displayed Tracks (Count: ${currentDisplayedTracks.length}):");
-    // Log IDs and Titles for context, truncated if too long
-    int logCount = 0;
-    for (var track in currentDisplayedTracks) {
-      print("  - ID: ${track.id}, Title: ${track.title}");
-      logCount++;
-      if (logCount > 20) {
-        // Limit log output
-        print("  ... (list truncated)");
-        break;
-      }
-    }
+    // ... (keep existing logging if desired, maybe move the track list log inside the if above)
     // --- LOGGING END ---
 
     if (isSelected) {
@@ -183,41 +179,43 @@ class TrackSelectionHandler {
         newSelectedIds.add(trackId);
         newAnchorId = trackId; // Set anchor to the last clicked item
       } else if (isShiftPressed && newAnchorId != null) {
-        // Range selection
-        final anchorIndex = currentDisplayedTracks.indexWhere(
-          (t) => t.id == newAnchorId,
-        );
-        final clickedIndex = currentDisplayedTracks.indexWhere(
-          (t) => t.id == trackId,
-        );
-
-        print(
-          "Shift Selection: Anchor ID=$newAnchorId (Index: $anchorIndex), Clicked ID=$trackId (Index: $clickedIndex)",
-        ); // Log indices
-
-        if (anchorIndex != -1 && clickedIndex != -1) {
-          final start = anchorIndex < clickedIndex ? anchorIndex : clickedIndex;
-          final end = anchorIndex > clickedIndex ? anchorIndex : clickedIndex;
-          print(
-            "Shift Selection: Calculated Range [$start - $end]",
-          ); // Log range
-          // Add the range to the *existing* selection if Ctrl/Meta is also held
-          // Otherwise, clear the selection first. For simplicity, let's assume Shift clears first.
-          // TODO: Refine this based on standard platform behavior if needed (Shift+Ctrl)
-          newSelectedIds.clear();
-          for (int i = start; i <= end; i++) {
-            if (i >= 0 &&
-                i < currentDisplayedTracks.length &&
-                currentDisplayedTracks[i].id != null) {
-              newSelectedIds.add(currentDisplayedTracks[i].id!);
-            }
-          }
-          // Anchor remains the same for subsequent shift clicks
-        } else {
-          // Anchor not found or clicked item not found in current view
-          print(
-            "Shift Selection: Anchor or Clicked item not found in displayed list. Selecting only clicked.",
+        // Range selection (Uses currentDisplayedTracks fetched above)
+        if (currentDisplayedTracks.isNotEmpty) {
+          // Check if we actually fetched the list
+          final anchorIndex = currentDisplayedTracks.indexWhere(
+            (t) => t.id == newAnchorId,
           );
+          final clickedIndex = currentDisplayedTracks.indexWhere(
+            (t) => t.id == trackId,
+          );
+
+          print(
+            "Shift Selection: Anchor ID=$newAnchorId (Index: $anchorIndex), Clicked ID=$trackId (Index: $clickedIndex)",
+          );
+
+          if (anchorIndex != -1 && clickedIndex != -1) {
+            final start =
+                anchorIndex < clickedIndex ? anchorIndex : clickedIndex;
+            final end = anchorIndex > clickedIndex ? anchorIndex : clickedIndex;
+            print("Shift Selection: Calculated Range [$start - $end]");
+            newSelectedIds.clear();
+            for (int i = start; i <= end; i++) {
+              if (i >= 0 &&
+                  i < currentDisplayedTracks.length &&
+                  currentDisplayedTracks[i].id != null) {
+                newSelectedIds.add(currentDisplayedTracks[i].id!);
+              }
+            }
+          } else {
+            print(
+              "Shift Selection: Anchor or Clicked item not found in displayed list. Selecting only clicked.",
+            );
+            newSelectedIds.clear();
+            newSelectedIds.add(trackId);
+            newAnchorId = trackId;
+          }
+        } else {
+          // Fallback if shift was pressed but list wasn't fetched (e.g., no anchor)
           newSelectedIds.clear();
           newSelectedIds.add(trackId);
           newAnchorId = trackId;
@@ -229,21 +227,15 @@ class TrackSelectionHandler {
         newAnchorId = trackId;
       }
     } else {
-      // Deselecting
+      // ... (deselection logic remains the same) ...
       if (isCtrlPressed) {
-        // Remove single item
         newSelectedIds.remove(trackId);
-        // If the deselected item was the anchor, clear the anchor
         if (newAnchorId == trackId)
           newAnchorId = newSelectedIds.isNotEmpty ? newSelectedIds.last : null;
       } else {
-        // Simple deselection (e.g., clicking already selected item without modifier)
-        // This case might be handled by the DataGrid itself depending on selection mode.
-        // If called, assume it means deselecting this specific item.
         newSelectedIds.remove(trackId);
         if (newAnchorId == trackId)
           newAnchorId = newSelectedIds.isNotEmpty ? newSelectedIds.last : null;
-        // If deselecting the only selected item, clear anchor
         if (newSelectedIds.isEmpty) newAnchorId = null;
       }
     }
@@ -252,28 +244,28 @@ class TrackSelectionHandler {
     Track? newSelectedTrackForPlayer;
     if (newSelectedIds.length == 1) {
       final newSelectedId = newSelectedIds.first;
-      // Get the track data from the currently displayed list to avoid extra lookups
-      try {
-        newSelectedTrackForPlayer = currentDisplayedTracks.firstWhere(
-          (t) => t.id == newSelectedId,
-        );
-      } catch (e) {
-        // Fallback: try getting from the BLoC state directly if not in displayed list (shouldn't happen often)
+      // Get the track data - TRY to get from displayed list if shift was pressed
+      if (isShiftPressed && currentDisplayedTracks.isNotEmpty) {
+        try {
+          newSelectedTrackForPlayer = currentDisplayedTracks.firstWhere(
+            (t) => t.id == newSelectedId,
+          );
+        } catch (e) {
+          /* fallback below */
+        }
+      }
+      // Fallback: Get from BLoC state if not found above or shift wasn't pressed
+      if (newSelectedTrackForPlayer == null) {
         newSelectedTrackForPlayer = getTrackByIdFromBlocState(newSelectedId);
-        print(
-          "Warning: Selected track $newSelectedId not found in displayed list, using fallback lookup.",
-        );
       }
     }
 
-    // --- LOGGING START ---
+    // ... (logging and callback) ...
     print(
       "Resulting State: newAnchorId=$newAnchorId, newSelectedIds=$newSelectedIds",
     );
     print("--- End Selection Change ---");
-    // --- LOGGING END ---
 
-    // Call the callback provided by HomeScreen to update its state
     onSelectionStateChanged(
       newSelectedIds,
       newAnchorId,
