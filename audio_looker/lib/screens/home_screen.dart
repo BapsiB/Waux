@@ -745,13 +745,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? 'Switch to folder view'
                     : 'Switch to table view',
           ),
-          const SizedBox(width: 8),
-          // Search Text Field
-          Expanded(
+
+          // --- MODIFICATION START ---
+          // Spacer pushes subsequent widgets to the right
+          const Spacer(),
+
+          // Wrap TextField in SizedBox for specific width
+          SizedBox(
+            width: MediaQuery.of(context).size.width * 0.2, // Approx 25% width
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search collection...',
+                hintText: 'Search...', // Shortened hint text
                 prefixIcon: const Icon(Icons.search, size: 20),
                 suffixIcon:
                     _searchController.text.isNotEmpty
@@ -764,12 +769,25 @@ class _HomeScreenState extends State<HomeScreen> {
                               const SearchTracks(''),
                             );
                           },
+                          padding: EdgeInsets.zero, // Minimize padding
+                          constraints:
+                              const BoxConstraints(), // Minimize constraints
                         )
                         : null,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 0,
+                ), // Adjust padding
               ),
+              style:
+                  Theme.of(
+                    context,
+                  ).textTheme.bodyMedium, // Ensure text isn't too large
             ),
           ),
-          const SizedBox(width: 16),
+
+          // --- MODIFICATION END ---
+          const SizedBox(width: 16), // Keep space before rating filter
           // Rating Filter Widget
           BlocBuilder<TrackDataBloc, TrackDataState>(
             builder: (context, state) {
@@ -777,6 +795,12 @@ class _HomeScreenState extends State<HomeScreen> {
               if (state is TrackDataLoaded) {
                 currentFilterValue = state.minimumRating;
               } else if (state is TrackDataLoading) {
+                currentFilterValue = state.minimumRating;
+              } else if (state is TrackDataProcessingNeeded) {
+                // Added state
+                currentFilterValue = state.minimumRating;
+              } else if (state is TrackDataDeletingFolder) {
+                // Added state
                 currentFilterValue = state.minimumRating;
               }
 
@@ -1052,9 +1076,9 @@ class _HomeScreenState extends State<HomeScreen> {
         (_currentlySelectedPlaylist != null ? _playlistHeaderHeight : 0) -
         MediaQuery.of(context).padding.top - // Account for status bar
         MediaQuery.of(context).padding.bottom; // Account for bottom system bars
-    final maxPlayerHeight = (availableHeight * 0.8).clamp(
+    final maxPlayerHeight = (availableHeight * 0.6).clamp(
       200.0,
-      500.0,
+      250.0,
     ); // Example: 80% of remaining height
 
     return MultiBlocListener(

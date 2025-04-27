@@ -41,6 +41,7 @@ class ContextMenuHandler {
     }
 
     showMenu(
+      popUpAnimationStyle: AnimationStyle.noAnimation,
       context: context,
       position: RelativeRect.fromRect(
         Rect.fromLTWH(tapPosition.dx, tapPosition.dy, 0, 0), // Position at tap
