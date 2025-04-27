@@ -31,6 +31,7 @@ typedef SortCallback =
     void Function(String columnName, DataGridSortDirection direction);
 typedef PlayAndMinimizeCallback = void Function(Track track, bool togglePlay);
 typedef SelectAndOpenPlayerCallback = void Function(Track track);
+typedef DoubleTapCallback = void Function(Track track);
 
 class TrackTableWidget extends StatefulWidget {
   final List<Track> tracks;
@@ -45,6 +46,7 @@ class TrackTableWidget extends StatefulWidget {
   final PlayAndMinimizeCallback onPlayPreviewAndMinimize;
   final SelectAndOpenPlayerCallback onEditMetadata;
   final SetSearchTextCallback onSetSearchText;
+  final DoubleTapCallback onRowDoubleTap;
 
   const TrackTableWidget({
     Key? key,
@@ -60,6 +62,7 @@ class TrackTableWidget extends StatefulWidget {
     required this.onPlayPreviewAndMinimize,
     required this.onEditMetadata,
     required this.onSetSearchText,
+    required this.onRowDoubleTap,
   }) : super(key: key);
 
   @override
@@ -908,22 +911,35 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
                 _handleColumnResize(details, _containerWidth);
                 return true; // Indicate resize was handled
               },
-              // --- Column Resizing Handler ---
-              // onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
-              //   final columnName = details.column.columnName;
-              //   // Ensure minimum width
-              //   double newWidth = max(50.0, details.width);
+              onCellDoubleTap: (DataGridCellDoubleTapDetails details) {
+                final int rowIndex = details.rowColumnIndex.rowIndex;
+                // Ensure it's a data row (not header)
+                if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
+                  final dataRow = _trackDataSource.rows[rowIndex - 1];
+                  final idCell = dataRow.getCells().firstWhere(
+                    (cell) => cell.columnName == 'id',
+                    orElse:
+                        () => DataGridCell<int>(columnName: 'id', value: -1),
+                  );
+                  final int trackId = idCell.value as int? ?? -1;
 
-              //   // Update the width in the state map
-              //   setState(() {
-              //     _columnWidths[columnName] = newWidth;
-              //     // Rebuild columns to apply the new width and freeze layout
-              //     _freezeLayoutAndRebuildColumns(columnName);
-              //   });
-              //   // Save the configuration after resize
-              //   _saveColumnConfiguration();
-              //   return true; // Indicate resize was handled
-              // },
+                  if (trackId != -1) {
+                    try {
+                      // Find the track corresponding to the double-tapped row
+                      final track = widget.tracks.firstWhere(
+                        (t) => t.id == trackId,
+                      );
+                      // Call the callback passed from HomeScreen
+                      widget.onRowDoubleTap(track);
+                      print(
+                        "Double tapped on track: ${track.title}",
+                      ); // Optional log
+                    } catch (e) {
+                      debugPrint("Error finding track for double tap: $e");
+                    }
+                  }
+                }
+              },
               allowSorting: true,
               // --- MODIFIED: Handle cell taps for editing ---
               onCellTap: (DataGridCellTapDetails details) {

@@ -447,6 +447,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _handleTrackDoubleClick(Track track) {
+    print("Handling double click for track: ${track.title}");
+    // Use the existing method to select and play
+    _selectAndPlayTrack(track, false); // togglePlay: false ensures it plays
+  }
+
   // --- Build Method ---
   @override
   Widget build(BuildContext context) {
@@ -1560,6 +1566,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _selectAndPlayTrack, // Pass method reference
                           onEditMetadata:
                               _selectAndOpenPlayer, // Pass method reference
+                          onRowDoubleTap: _handleTrackDoubleClick,
                         )
                         : KeyboardListener(
                           focusNode: FocusNode(), // Needs a focus node
