@@ -407,8 +407,6 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                   children: [
                     _buildVolumeButton(context),
                     const SizedBox(width: 0), // Adjust spacing
-                    _buildAddTagButton(context),
-                    const SizedBox(width: 0), // Adjust spacing
                     _buildToggleButton(context),
                   ],
                 ),
@@ -533,21 +531,69 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   // Helper function for the Volume Button
   Widget _buildVolumeButton(BuildContext context) {
     final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
-    return IconButton(
-      icon: Icon(
-        _currentVolume <= 0
-            ? Icons.volume_off
-            : _currentVolume < 0.5
-            ? Icons.volume_down
-            : Icons.volume_up,
-      ),
-      iconSize: 20,
-      color: inactiveColor,
-      tooltip: 'Volume (Placeholder)',
-      onPressed: () {
-        // TODO: Implement Volume control action
-        print("Volume button pressed");
-      },
+    final activeColor =
+        Theme.of(context).colorScheme.primary; // For slider active color
+
+    return Row(
+      mainAxisSize: MainAxisSize.min, // Take only needed horizontal space
+      children: [
+        // Volume Off Icon
+        Icon(
+          Icons.volume_mute_outlined, // Or Icons.volume_off
+          size: 16,
+          color: inactiveColor,
+        ),
+        const SizedBox(width: 4), // Small space
+        // Fixed Width Container for Slider
+        SizedBox(
+          width: 100, // Fixed width for the slider
+          child: SliderTheme(
+            // Customize slider appearance
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 2.0, // Make track thinner
+              thumbShape: const RoundSliderThumbShape(
+                enabledThumbRadius: 6.0,
+              ), // Smaller knob
+              overlayShape: const RoundSliderOverlayShape(
+                overlayRadius: 12.0,
+              ), // Smaller overlay
+              activeTrackColor: activeColor.withOpacity(0.8),
+              inactiveTrackColor: inactiveColor.withOpacity(0.2),
+              thumbColor: activeColor,
+            ),
+            child: Slider(
+              value: _currentVolume,
+              min: 0.0,
+              max: 1.0,
+              onChangeStart: (value) {
+                // Use mounted check only within setState
+                _isDraggingVolume = true;
+                if (mounted) setState(() {});
+              },
+              onChanged: (value) {
+                _currentVolume =
+                    value; // Update local state immediately for visuals
+                context.read<AudioPlayerBloc>().add(
+                  SetVolume(value),
+                ); // Dispatch event
+                if (mounted) setState(() {}); // Trigger rebuild
+              },
+              onChangeEnd: (value) {
+                _isDraggingVolume = false;
+                if (mounted) setState(() {});
+                // Optional: Debounce saving the final value if needed elsewhere
+              },
+            ),
+          ),
+        ),
+        const SizedBox(width: 4), // Small space
+        // Volume On Icon
+        Icon(
+          Icons.volume_up_outlined, // Or Icons.volume_up
+          size: 16,
+          color: inactiveColor,
+        ),
+      ],
     );
   }
 
