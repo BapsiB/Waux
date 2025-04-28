@@ -2,206 +2,104 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:url_launcher/url_launcher.dart'; // Import url_launcher
-import 'package:path/path.dart' as path_lib; // Import for path manipulation
+import 'package:url_launcher/url_launcher.dart';
+import 'package:path/path.dart' as path_lib;
 
 // Import BLoCs
-import 'package:waux/blocs/track_management/track_data_bloc.dart';
-import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
-import 'package:waux/blocs/playlist/playlist_bloc.dart';
+import '../blocs/track_management/track_data_bloc.dart';
+import '../blocs/audio_player/audio_player_bloc.dart';
+import '../blocs/playlist/playlist_bloc.dart';
+// Import TrackMetadataBloc if needed for edit actions directly
+// import '../blocs/track_management/track_metadata_bloc.dart';
 
-// Import models
-import 'package:waux/services/collection_service.dart';
+// Import models and custom menu widget
+import '../services/collection_service.dart';
+import '../widgets/custom_context_menu.dart';
 
-/// Handles context menu creation and actions for tracks
 class ContextMenuHandler {
-  final BuildContext context;
+  final BuildContext context; // Context is needed for BLoC access & Dialogs
   final Set<int> selectedTrackIds;
-  final Function(int, bool) onSelectionChanged;
-  final Function(Track, bool) onPlayTrack;
+  final Function(int, bool)
+  onSelectionChanged; // Still needed to manage selection state
+  final Function(Track, bool) onPlayTrack; // Still needed to trigger play
+
+  OverlayEntry? _overlayEntry;
 
   ContextMenuHandler({
     required this.context,
     required this.selectedTrackIds,
     required this.onSelectionChanged,
     required this.onPlayTrack,
+    // REMOVED Action Callbacks: onEditDetails, onDeleteSelected, onRevealFile, onOpenUrl, onAddToPlaylist
   });
 
-  /// Shows the context menu at the tap position with options for the selected track
-  void showContextMenu(BuildContext context, Offset tapPosition, Track track) {
-    final RenderBox overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
+  bool get isMenuVisible => _overlayEntry != null;
 
-    // Ensure the right-clicked track is selected
+  void dismiss() {
+    if (_overlayEntry != null) {
+      _overlayEntry!.remove();
+      _overlayEntry = null;
+      print("CustomContextMenuHandler: Dismissed menu.");
+    }
+  }
+
+  void showContextMenu(
+    BuildContext anchorContext,
+    Offset tapPosition,
+    Track track,
+  ) {
+    print("CustomContextMenuHandler: showContextMenu called.");
+    dismiss();
+
     if (!selectedTrackIds.contains(track.id)) {
-      // Update selection to just this track
-      if (track.id != null) {
-        onSelectionChanged(track.id!, true);
-      }
+      onSelectionChanged(track.id!, true);
     }
 
-    showMenu(
-      popUpAnimationStyle: AnimationStyle.noAnimation,
-      context: context,
-      position: RelativeRect.fromRect(
-        Rect.fromLTWH(tapPosition.dx, tapPosition.dy, 0, 0), // Position at tap
-        Offset.zero & overlay.size, // Overlay boundaries
-      ),
-      items: <PopupMenuEntry>[
-        PopupMenuItem(
-          value: 'play_now',
-          enabled: selectedTrackIds.length == 1,
-          child: const ListTile(
-            leading: Icon(Icons.play_arrow),
-            title: Text('Play Now'),
+    final overlay = Overlay.of(anchorContext);
+
+    _overlayEntry = OverlayEntry(
+      builder: (ctx) {
+        // Use ctx instead of context to avoid shadowing
+        return Positioned(
+          left: _calculateHorizontalPosition(
+            tapPosition.dx,
+            overlay.context.size?.width ??
+                MediaQuery.of(anchorContext).size.width,
           ),
-        ),
-        // --- Reveal/Open Item ---
-        PopupMenuItem(
-          value: track.isUrl ? 'open_url' : 'reveal_file',
-          child: ListTile(
-            leading: Icon(
-              track.isUrl ? Icons.open_in_browser : Icons.folder_open,
-            ),
-            title: Text(
-              track.isUrl ? 'Open URL in Browser' : 'Reveal in Finder',
-            ), // Adapt text for OS if needed
+          top: _calculateVerticalPosition(
+            tapPosition.dy,
+            overlay.context.size?.height ??
+                MediaQuery.of(anchorContext).size.height,
           ),
-        ),
-        // --- >>> NEW: Open File Item <<< ---
-        // if (selectedTrackIds.length == 1 &&
-        //     !track.isUrl) // Only show for single local files
-        //   PopupMenuItem(
-        //     value: 'open_file',
-        //     child: const ListTile(
-        //       leading: Icon(Icons.audiotrack_outlined), // Or Icons.open_in_new
-        //       title: Text('Open File'),
-        //     ),
-        //   ),
-        // --- >>> END NEW <<< ---
-        // Use spread operator to add playlist items
-        ...buildAddToPlaylistItems(context),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'edit',
-          enabled: selectedTrackIds.length == 1,
-          child: const ListTile(
-            leading: Icon(Icons.edit_note),
-            title: Text('Edit Details'),
+          // Provide the handler's context to CustomContextMenu if it needs BLoC access indirectly,
+          // though it's better if CustomContextMenu just takes callbacks.
+          // For simplicity, CustomContextMenu takes onDismiss.
+          child: CustomContextMenu(
+            items: _buildContextMenuItems(track),
+            onDismiss: dismiss,
           ),
-        ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'delete',
-          child: ListTile(
-            leading: Icon(Icons.delete_outline, color: Colors.red),
-            title: Text(
-              selectedTrackIds.length > 1
-                  ? 'Delete ${selectedTrackIds.length} Items'
-                  : 'Delete from Collection',
-              style: TextStyle(color: Colors.red),
-            ),
-          ),
-        ),
-      ],
-    ).then((value) {
-      // Handle menu selection
-      _handleMenuSelection(value, track);
-    });
+        );
+      },
+    );
+
+    overlay.insert(_overlayEntry!);
+    print("CustomContextMenuHandler: Inserted new menu overlay.");
   }
 
-  /// Builds the "Add to playlist" submenu items
-  List<PopupMenuEntry<dynamic>> buildAddToPlaylistItems(BuildContext context) {
-    // ... (implementation remains the same) ...
-    final playlistState = context.read<PlaylistBloc>().state;
-    List<PopupMenuEntry<dynamic>> playlistItems = [];
+  // --- Re-implemented Action Handlers using BLoCs ---
 
-    if (playlistState is PlaylistLoaded && playlistState.playlists.isNotEmpty) {
-      // Add a header/divider for the playlist section
-      playlistItems.add(const PopupMenuDivider());
-      playlistItems.add(
-        const PopupMenuItem<dynamic>(
-          enabled: false, // Make it non-interactive
-          child: ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.symmetric(horizontal: 8.0),
-            leading: Icon(Icons.playlist_add, size: 18),
-            title: Text(
-              'Add to Playlist:',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-          ),
-        ),
-      );
-
-      // Add an item for each playlist
-      playlistItems.addAll(
-        playlistState.playlists.map((playlist) {
-          return PopupMenuItem<dynamic>(
-            // Return a map to identify the action and playlist ID
-            value: {'action': 'add_to_playlist', 'playlist_id': playlist.id},
-            child: Padding(
-              // Indent playlist names slightly
-              padding: const EdgeInsets.only(left: 24.0),
-              child: Text(playlist.name),
-            ),
-          );
-        }).toList(),
-      );
-    } else {
-      // Optionally add a disabled item if no playlists exist
-      playlistItems.add(const PopupMenuDivider());
-      playlistItems.add(
-        const PopupMenuItem<dynamic>(
-          enabled: false,
-          child: ListTile(
-            leading: Icon(Icons.playlist_add, size: 18),
-            title: Text('Add to Playlist: (None)'),
-          ),
-        ),
-      );
-    }
-
-    return playlistItems;
-  }
-
-  /// Handle context menu selection
-  void _handleMenuSelection(dynamic value, Track track) {
-    if (value != null && value is Map && value['action'] == 'add_to_playlist') {
-      _handleAddToPlaylist(value['playlist_id']);
-    } else if (value == 'play_now' && selectedTrackIds.length == 1) {
-      onPlayTrack(track, false);
-    } else if (value == 'reveal_file' && !track.isUrl) {
-      _revealFile(track.path);
-    } else if (value == 'open_url' &&
-        track.isUrl &&
-        selectedTrackIds.length == 1) {
-      _openUrl(track.path);
-      // --- >>> NEW: Handle Open File <<< ---
-    } else if (value == 'edit' && selectedTrackIds.length == 1) {
-      _handleEditTrack(track);
-    } else if (value == 'delete') {
-      confirmAndDeleteSelected();
-    }
-  }
-
-  /// Reveal File Method
-  Future<void> _revealFile(String filePath) async {
-    // ... (implementation remains the same) ...
+  Future<void> _handleRevealFile(String filePath) async {
     try {
-      // Ensure it's an absolute path before proceeding
       if (!path_lib.isAbsolute(filePath)) {
         print("Error revealing file: Path is not absolute: $filePath");
         ScaffoldMessenger.of(context).showSnackBar(
+          // Use handler's context
           SnackBar(content: Text("Cannot reveal relative path: $filePath")),
         );
         return;
       }
-
-      // Get the parent directory
       final String directoryPath = path_lib.dirname(filePath);
       final Uri directoryUri = Uri.file(directoryPath);
-
       if (await canLaunchUrl(directoryUri)) {
         await launchUrl(directoryUri);
       } else {
@@ -215,16 +113,11 @@ class ContextMenuHandler {
     }
   }
 
-  /// Open URL Method
-  Future<void> _openUrl(String url) async {
-    // ... (implementation remains the same) ...
+  Future<void> _handleOpenUrl(String url) async {
     final Uri uri = Uri.parse(url);
     try {
       if (await canLaunchUrl(uri)) {
-        await launchUrl(
-          uri,
-          mode: LaunchMode.externalApplication,
-        ); // Open in default browser
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
         throw Exception('Could not launch URL: $url');
       }
@@ -236,60 +129,43 @@ class ContextMenuHandler {
     }
   }
 
-  // --- >>> NEW: Open File Method <<< ---
-  Future<void> _openFile(String filePath) async {
-    try {
-      // Ensure it's an absolute path before proceeding
-      if (!path_lib.isAbsolute(filePath)) {
-        print("Error opening file: Path is not absolute: $filePath");
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Cannot open relative path: $filePath")),
-        );
-        return;
-      }
+  void _handleAddToPlaylist(String playlistId, Track track) {
+    final Set<int> idsToAdd = Set.from(selectedTrackIds);
+    if (!idsToAdd.contains(track.id)) idsToAdd.add(track.id!);
 
-      final Uri fileUri = Uri.file(filePath);
+    final collectionBloc = BlocProvider.of<TrackDataBloc>(context);
+    final playlistBloc = BlocProvider.of<PlaylistBloc>(context);
+    final trackDataState = collectionBloc.state;
 
-      if (await canLaunchUrl(fileUri)) {
-        // LaunchMode.externalApplication might be needed on some platforms
-        // to ensure it opens in the default app instead of trying within Flutter.
-        // Let's try default first. Add mode if needed.
-        await launchUrl(fileUri);
-      } else {
-        throw Exception('Could not launch file URI: $fileUri');
-      }
-    } catch (e) {
-      print("Error opening file: $e");
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Could not open file: $e")));
-    }
-  }
-  // --- >>> END NEW <<< ---
+    List<Track>? sourceTracks;
+    // Extract tracks from the current state (handle different states)
+    if (trackDataState is TrackDataLoaded)
+      sourceTracks = trackDataState.tracks;
+    else if (trackDataState is TrackDataProcessingNeeded)
+      sourceTracks = trackDataState.tracks;
+    else if (trackDataState is TrackDataLoading &&
+        trackDataState.previousTracks != null)
+      sourceTracks = trackDataState.previousTracks;
+    // Add other relevant states if necessary
 
-  /// Add selected tracks to a playlist
-  void _handleAddToPlaylist(String playlistId) {
-    // ... (implementation remains the same) ...
-    final addedTrackIds = Set<int>.from(selectedTrackIds); // Copy selection
-    final collectionState = context.read<TrackDataBloc>().state;
-    final playlistBloc = context.read<PlaylistBloc>();
-
-    if (collectionState is TrackDataLoaded) {
+    if (sourceTracks != null) {
       int addedCount = 0;
-      for (final trackId in addedTrackIds) {
+      for (final trackId in idsToAdd) {
         try {
-          final trackToAdd = collectionState.tracks.firstWhere(
-            (t) => t.id == trackId,
-          );
+          // Find the full track object from the current state
+          final trackToAdd = sourceTracks.firstWhere((t) => t.id == trackId);
+          // Dispatch event directly to PlaylistBloc
           playlistBloc.add(
             AddTrackToPlaylist(
               playlistId: playlistId,
-              trackPath: trackToAdd.path, // Pass the path from the track
+              trackPath: trackToAdd.path,
             ),
           );
           addedCount++;
         } catch (e) {
-          print("Couldn't find track $trackId to add to playlist $playlistId");
+          print(
+            "ContextMenuHandler: Couldn't find track $trackId to add to playlist",
+          );
         }
       }
       if (addedCount > 0) {
@@ -297,34 +173,53 @@ class ContextMenuHandler {
           SnackBar(content: Text('Added $addedCount track(s) to playlist.')),
         );
       }
+    } else {
+      print(
+        "ContextMenuHandler: Could not get track list from state to add to playlist.",
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not add tracks. Track data not ready.'),
+        ),
+      );
     }
   }
 
-  /// Handle edit track metadata
   void _handleEditTrack(Track track) {
-    // ... (implementation remains the same) ...
-    print("Edit action triggered for track: ${track.title}");
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Edit action triggered (UI not implemented)'),
-      ),
+    // For "Edit", we usually need to signal the UI to change state (e.g., show player)
+    // A common way is still to have a callback for UI actions OR
+    // dispatch an event to a BLoC that HomeScreen listens to.
+    // Simpler option: Dispatch Play event to load it, assuming player handles metadata
+    print(
+      "ContextMenuHandler: Edit action triggered for track: ${track.title}",
     );
+    // Option 1: Load track in player (doesn't guarantee UI opens player)
+    // BlocProvider.of<AudioPlayerBloc>(context).add(LoadAudio(track: track));
+
+    // Option 2: Use the onPlayTrack callback (passed from HomeScreen) but signal not to auto-play
+    // This relies on HomeScreen's _selectAndOpenPlayer logic being triggered by onPlayTrack(track, false)
+    // This requires ensuring _selectAndOpenPlayer is passed correctly. Let's revert to calling onPlayTrack(track, false) for simplicity here, assuming HomeScreen connects it to _selectAndOpenPlayer.
+    // If you truly want NO callbacks, you'd need another BLoC event HomeScreen listens for.
+    onPlayTrack(
+      track,
+      false,
+    ); // Re-using the play callback, assuming it leads to opening the player
+
+    // Option 3: If you created a dedicated `SelectTrackForEdit` event in a BLoC HomeScreen listens to:
+    // BlocProvider.of<SomeUiBloc>(context).add(SelectTrackForEdit(track));
   }
 
-  /// Show confirmation dialog and delete selected tracks
   void confirmAndDeleteSelected() {
-    // ... (implementation remains the same) ...
     if (selectedTrackIds.isEmpty) return;
     final count = selectedTrackIds.length;
 
     showDialog(
-      context: context,
+      context: context, // Use handler's context
       builder: (BuildContext dialogContext) {
         return AlertDialog(
+          // ... (dialog content remains the same) ...
           title: const Text('Confirm Delete'),
-          content: Text(
-            'Are you sure you want to remove $count item(s) from your collection? This cannot be undone.',
-          ),
+          content: Text('Are you sure you want to remove $count item(s)?'),
           actions: <Widget>[
             TextButton(
               child: const Text('Cancel'),
@@ -333,8 +228,8 @@ class ContextMenuHandler {
             TextButton(
               child: const Text('Delete', style: TextStyle(color: Colors.red)),
               onPressed: () {
-                Navigator.of(dialogContext).pop(); // Close dialog first
-                _performDelete();
+                Navigator.of(dialogContext).pop();
+                _performDelete(); // Call the delete logic below
               },
             ),
           ],
@@ -343,57 +238,135 @@ class ContextMenuHandler {
     );
   }
 
-  /// Actually delete the selected tracks
   void _performDelete() {
-    // ... (implementation remains the same) ...
-    final collectionBloc = context.read<TrackDataBloc>();
-    final audioPlayerBloc = context.read<AudioPlayerBloc>();
-    final idsToDelete = List<int>.from(selectedTrackIds); // Copy IDs for safety
+    final collectionBloc = BlocProvider.of<TrackDataBloc>(context);
+    final audioPlayerBloc = BlocProvider.of<AudioPlayerBloc>(context);
+    final idsToDelete = List<int>.from(selectedTrackIds);
 
-    // Check if we need to stop the player
-    final selectedTrack = _getSelectedTrack();
-    if (selectedTrack != null && idsToDelete.contains(selectedTrack.id)) {
-      // Also check if the currently playing track in the player bloc matches
-      final playerState = audioPlayerBloc.state;
-      if (playerState is AudioPlayerLoaded &&
-          playerState.currentSource == selectedTrack.path) {
-        print("Stopping player because deleted track was active.");
-        audioPlayerBloc.add(StopAudio());
+    // Stop player if deleted track is playing
+    Track? currentlyPlayingTrack;
+    final playerState = audioPlayerBloc.state;
+    if (playerState is AudioPlayerLoaded) {
+      final trackDataState = collectionBloc.state;
+      List<Track> currentTracks = [];
+      if (trackDataState is TrackDataLoaded)
+        currentTracks = trackDataState.tracks;
+      else if (trackDataState is TrackDataProcessingNeeded)
+        currentTracks = trackDataState.tracks;
+      // Add other states if needed
+      try {
+        currentlyPlayingTrack = currentTracks.firstWhere(
+          (t) => t.path == playerState.currentSource,
+        );
+      } catch (e) {
+        /* not found */
       }
     }
+    if (currentlyPlayingTrack != null &&
+        idsToDelete.contains(currentlyPlayingTrack.id)) {
+      audioPlayerBloc.add(StopAudio());
+    }
 
-    // Dispatch delete events
+    // Dispatch delete events to TrackDataBloc
     for (final trackId in idsToDelete) {
       collectionBloc.add(RemoveTrack(trackId));
     }
+    // Let HomeScreen clear selection based on BLoC state update
   }
 
-  /// Get the currently selected track (if single selection)
-  Track? _getSelectedTrack() {
-    // ... (implementation remains the same) ...
-    if (selectedTrackIds.length != 1) return null;
+  // --- Menu Item Building ---
+  List<CustomContextMenuItem> _buildContextMenuItems(Track track) {
+    final playlistState = BlocProvider.of<PlaylistBloc>(context).state;
+    final bool isSingleSelection =
+        selectedTrackIds.length == 1 && selectedTrackIds.contains(track.id);
 
-    final trackDataState =
-        context.read<TrackDataBloc>().state; // Or BlocProvider.of
-
-    List<Track> tracks = []; // Default to empty list
-
-    // Get tracks from the appropriate state
-    if (trackDataState is TrackDataLoaded) {
-      // If loaded, use the tracks from this state
-      tracks = trackDataState.tracks;
-    } else if (trackDataState is TrackDataLoading &&
-        trackDataState.previousTracks != null) {
-      // If loading, use the tracks from the *previous* loaded state
-      tracks = trackDataState.previousTracks!;
+    List<CustomContextMenuItem> buildPlaylistItems() {
+      List<CustomContextMenuItem> items = [];
+      if (playlistState is PlaylistLoaded &&
+          playlistState.playlists.isNotEmpty) {
+        items.add(
+          const CustomContextMenuItem(
+            label: 'Add to Playlist:',
+            enabled: false,
+            icon: Icons.playlist_add,
+          ),
+        );
+        items.addAll(
+          playlistState.playlists.map((playlist) {
+            return CustomContextMenuItem(
+              label: '  ${playlist.name}',
+              onTap:
+                  () => _handleAddToPlaylist(
+                    playlist.id,
+                    track,
+                  ), // Call internal handler
+            );
+          }),
+        );
+      } else {
+        items.add(
+          const CustomContextMenuItem(
+            label: 'Add to Playlist: (None)',
+            enabled: false,
+            icon: Icons.playlist_add,
+          ),
+        );
+      }
+      return items;
     }
 
-    if (tracks.isEmpty) return null;
+    return [
+      CustomContextMenuItem(
+        label: 'Play Now',
+        icon: Icons.play_arrow,
+        enabled: isSingleSelection,
+        onTap: () => onPlayTrack(track, false), // Use passed callback for play
+      ),
+      CustomContextMenuItem(
+        label: track.isUrl ? 'Open URL in Browser' : 'Reveal in Finder',
+        icon: track.isUrl ? Icons.open_in_browser : Icons.folder_open,
+        onTap: () {
+          // Call internal handlers
+          if (track.isUrl) {
+            _handleOpenUrl(track.path);
+          } else {
+            _handleRevealFile(track.path);
+          }
+        },
+      ),
+      ...buildPlaylistItems(),
+      CustomContextMenuItem(
+        label: 'Edit Details',
+        icon: Icons.edit_note,
+        enabled: isSingleSelection,
+        onTap: () => _handleEditTrack(track), // Call internal handler
+      ),
+      CustomContextMenuItem(
+        label:
+            selectedTrackIds.length > 1
+                ? 'Delete ${selectedTrackIds.length} Items'
+                : 'Delete from Collection',
+        icon: Icons.delete_outline,
+        color: Colors.red,
+        onTap: confirmAndDeleteSelected, // Call internal handler
+      ),
+    ];
+  }
 
-    try {
-      return tracks.firstWhere((t) => t.id == selectedTrackIds.first);
-    } catch (e) {
-      return null; // Not found
+  // Position calculation helpers remain the same
+  double _calculateHorizontalPosition(double dx, double screenWidth) {
+    const menuWidth = 200.0;
+    if (dx + menuWidth > screenWidth) {
+      return screenWidth - menuWidth - 10;
     }
+    return dx.clamp(10.0, screenWidth - menuWidth - 10);
+  }
+
+  double _calculateVerticalPosition(double dy, double screenHeight) {
+    const menuHeight = 250.0;
+    if (dy + menuHeight > screenHeight) {
+      return screenHeight - menuHeight - 10;
+    }
+    return dy.clamp(10.0, screenHeight - menuHeight - 10);
   }
 }

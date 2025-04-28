@@ -209,6 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _contextMenuHandler.dismiss();
     _focusNode.dispose();
     _searchController.dispose();
     _folderTreeViewKeysNotifier.dispose();
@@ -871,198 +872,274 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Build the main content area (Table or Tree)
   Widget _buildContentArea() {
-    return DropTarget(
-      onDragDone:
-          (detail) async => await _fileHandler.handleDroppedFiles(detail.files),
-      onDragEntered: (detail) => setState(() => _isDragging = true),
-      onDragExited: (detail) => setState(() => _isDragging = false),
-      child: Stack(
-        children: [
-          BlocBuilder<TrackDataBloc, TrackDataState>(
-            builder: (context, state) {
-              List<Track> allTracksForTree = [];
-              List<Track> displayedTracksForTable = [];
-              List<String> rootFolders = [];
-              bool isLoading =
-                  state is TrackDataInitial || state is TrackDataLoading;
-              bool hasError = state is TrackDataError;
-              String errorMessage = hasError ? (state).message : '';
+    return GestureDetector(
+      // Keep the wrapper for outside tap dismissal
+      onTap: () {
+        // Dismiss the menu using the handler's dismiss method
+        if (_contextMenuHandler.isMenuVisible) {
+          print("GestureDetector onTap - Dismissing menu via handler");
+          _contextMenuHandler.dismiss();
+        }
+      },
+      child: DropTarget(
+        onDragDone:
+            (detail) async =>
+                await _fileHandler.handleDroppedFiles(detail.files),
+        onDragEntered: (detail) => setState(() => _isDragging = true),
+        onDragExited: (detail) => setState(() => _isDragging = false),
+        child: Stack(
+          children: [
+            BlocBuilder<TrackDataBloc, TrackDataState>(
+              builder: (context, state) {
+                List<Track> allTracksForTree = [];
+                List<Track> displayedTracksForTable = [];
+                List<String> rootFolders = [];
+                bool isLoading =
+                    state is TrackDataInitial || state is TrackDataLoading;
+                bool hasError = state is TrackDataError;
+                String errorMessage = hasError ? (state).message : '';
 
-              if (state is TrackDataLoaded) {
-                displayedTracksForTable = state.tracks;
-                rootFolders = state.rootFolders;
-                allTracksForTree = state.tracks;
-              } else if (state is TrackDataLoading) {
-                displayedTracksForTable = state.previousTracks ?? [];
-                rootFolders = state.previousRootFolders ?? [];
-                allTracksForTree = state.previousTracks ?? [];
-              } else if (state is TrackDataProcessingNeeded) {
-                // Show data while processing
-                displayedTracksForTable = state.tracks;
-                rootFolders = state.rootFolders;
-                allTracksForTree = state.tracks;
-              } else if (state is TrackDataDeletingFolder) {
-                displayedTracksForTable = state.previousTracks ?? [];
-                rootFolders = state.previousRootFolders ?? [];
-                allTracksForTree = state.previousTracks ?? [];
-              }
-
-              if (isLoading &&
-                  displayedTracksForTable.isEmpty &&
-                  rootFolders.isEmpty) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              if (hasError) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Text(
-                      'Error loading tracks: $errorMessage',
-                      style: TextStyle(color: Colors.red),
-                    ),
-                  ),
-                );
-              }
-
-              final bool hasActiveFilters =
-                  (_searchController.text.isNotEmpty ||
-                      (state is TrackDataLoaded &&
-                          state.minimumRating != null &&
-                          state.minimumRating! > 0) ||
-                      (state is TrackDataLoading &&
-                          state.minimumRating != null &&
-                          state.minimumRating! > 0) ||
-                      _currentlySelectedPlaylist != null);
-
-              if (displayedTracksForTable.isEmpty && !isLoading) {
-                if (hasActiveFilters) {
-                  return Center(
-                    child: Text('No tracks match the current filters.'),
-                  );
-                } else if (rootFolders.isEmpty && allTracksForTree.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.library_music_outlined,
-                          size: 60,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.primary.withOpacity(0.5),
-                        ),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'Your collection is empty',
-                          style: TextStyle(fontSize: 18),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Add audio files or folders using the + button or drag & drop',
-                          style: TextStyle(fontSize: 14, color: Colors.grey),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  );
-                } else {
-                  return Center(child: Text('No tracks to display.'));
+                if (state is TrackDataLoaded) {
+                  displayedTracksForTable = state.tracks;
+                  rootFolders = state.rootFolders;
+                  allTracksForTree = state.tracks;
+                } else if (state is TrackDataLoading) {
+                  displayedTracksForTable = state.previousTracks ?? [];
+                  rootFolders = state.previousRootFolders ?? [];
+                  allTracksForTree = state.previousTracks ?? [];
+                } else if (state is TrackDataProcessingNeeded) {
+                  // Show data while processing
+                  displayedTracksForTable = state.tracks;
+                  rootFolders = state.rootFolders;
+                  allTracksForTree = state.tracks;
+                } else if (state is TrackDataDeletingFolder) {
+                  displayedTracksForTable = state.previousTracks ?? [];
+                  rootFolders = state.previousRootFolders ?? [];
+                  allTracksForTree = state.previousTracks ?? [];
                 }
-              }
 
-              return Container(
-                color:
-                    _currentlySelectedPlaylistId != null
-                        ? Theme.of(
-                          context,
-                        ).colorScheme.surfaceVariant.withOpacity(0.1)
-                        : null,
-                child:
-                    _viewMode == ViewMode.list
-                        ? TrackTableWidget(
-                          onSetSearchText: _handleSetSearchText,
-                          key: ValueKey(
-                            'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}',
-                          ),
-                          tracks: displayedTracksForTable,
-                          selectedTrackIds: _selectedTrackIds,
-                          audioPlayerBloc: context.read<AudioPlayerBloc>(),
-                          onSelectionChanged: _handleSelectionChanged,
-                          onShowContextMenu:
-                              _contextMenuHandler.showContextMenu,
-                          onRatingChanged: _handleRatingChanged,
-                          onSort: _handleSortChanged,
-                          initialSortColumnName: _sortColumnName,
-                          initialSortDirection: _sortDirectionSf,
-                          onPlayPreviewAndMinimize: _selectAndPlayTrack,
-                          onEditMetadata: _selectAndOpenPlayer,
-                          onRowDoubleTap: _handleTrackDoubleClick,
-                        )
-                        : KeyboardListener(
-                          focusNode: FocusNode(),
-                          onKeyEvent: (KeyEvent event) {
-                            _folderTreeViewKeysNotifier.value =
-                                HardwareKeyboard.instance.logicalKeysPressed;
-                          },
-                          child: FolderTreeView(
-                            pressedKeysNotifier: _folderTreeViewKeysNotifier,
-                            key: ValueKey(
-                              'folder-tree-${rootFolders.join('-')}',
-                            ),
-                            tracks: allTracksForTree,
-                            rootFolders: rootFolders,
-                            selectedTrack: _selectedTrackForPlayer,
-                            currentlyLoadedPath: _currentlyLoadedPathInPlayer,
-                            onTrackSelected: (track) {
-                              if (track.id != null) {
-                                _handleSelectionChanged(track.id!, true);
-                                _selectTrackForPlayer(track);
-                              }
-                            },
-                            onTrackDeleted: (trackId) {
-                              _contextMenuHandler.confirmAndDeleteSelected();
-                            },
-                            onFolderDeleted: (folderPath, folderName) {
-                              context.read<TrackDataBloc>().add(
-                                DeleteFolder(folderPath),
-                              );
-                            },
-                          ),
-                        ),
-              );
-            },
-          ),
-          if (_isDragging)
-            Container(
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.upload_file,
-                      size: 60,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.primary.withOpacity(0.5),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      "Drop files or folders here",
-                      style: TextStyle(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withOpacity(0.7),
+                if (isLoading &&
+                    displayedTracksForTable.isEmpty &&
+                    rootFolders.isEmpty) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Text(
+                        'Error loading tracks: $errorMessage',
+                        style: TextStyle(color: Colors.red),
                       ),
                     ),
-                  ],
+                  );
+                }
+
+                final bool hasActiveFilters =
+                    (_searchController.text.isNotEmpty ||
+                        (state is TrackDataLoaded &&
+                            state.minimumRating != null &&
+                            state.minimumRating! > 0) ||
+                        (state is TrackDataLoading &&
+                            state.minimumRating != null &&
+                            state.minimumRating! > 0) ||
+                        _currentlySelectedPlaylist != null);
+
+                if (displayedTracksForTable.isEmpty && !isLoading) {
+                  if (hasActiveFilters) {
+                    return Center(
+                      child: Text('No tracks match the current filters.'),
+                    );
+                  } else if (rootFolders.isEmpty && allTracksForTree.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.library_music_outlined,
+                            size: 60,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.primary.withOpacity(0.5),
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Your collection is empty',
+                            style: TextStyle(fontSize: 18),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Add audio files or folders using the + button or drag & drop',
+                            style: TextStyle(fontSize: 14, color: Colors.grey),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    );
+                  } else {
+                    return Center(child: Text('No tracks to display.'));
+                  }
+                }
+
+                return Container(
+                  color:
+                      _currentlySelectedPlaylistId != null
+                          ? Theme.of(
+                            context,
+                          ).colorScheme.surfaceVariant.withOpacity(0.1)
+                          : null,
+                  child:
+                      _viewMode == ViewMode.list
+                          ? TrackTableWidget(
+                            onSetSearchText: _handleSetSearchText,
+                            key: ValueKey(
+                              'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}',
+                            ),
+                            tracks: displayedTracksForTable,
+                            selectedTrackIds: _selectedTrackIds,
+                            audioPlayerBloc: context.read<AudioPlayerBloc>(),
+                            onSelectionChanged: _handleSelectionChanged,
+                            onShowContextMenu:
+                                _contextMenuHandler.showContextMenu,
+                            onRatingChanged: _handleRatingChanged,
+                            onSort: _handleSortChanged,
+                            initialSortColumnName: _sortColumnName,
+                            initialSortDirection: _sortDirectionSf,
+                            onPlayPreviewAndMinimize: _selectAndPlayTrack,
+                            onEditMetadata: _selectAndOpenPlayer,
+                            onRowDoubleTap: _handleTrackDoubleClick,
+                          )
+                          : KeyboardListener(
+                            focusNode: FocusNode(),
+                            onKeyEvent: (KeyEvent event) {
+                              _folderTreeViewKeysNotifier.value =
+                                  HardwareKeyboard.instance.logicalKeysPressed;
+                            },
+                            child: FolderTreeView(
+                              pressedKeysNotifier: _folderTreeViewKeysNotifier,
+                              key: ValueKey(
+                                'folder-tree-${rootFolders.join('-')}',
+                              ),
+                              tracks: allTracksForTree,
+                              rootFolders: rootFolders,
+                              selectedTrack: _selectedTrackForPlayer,
+                              currentlyLoadedPath: _currentlyLoadedPathInPlayer,
+                              onTrackSelected: (track) {
+                                if (track.id != null) {
+                                  _handleSelectionChanged(track.id!, true);
+                                  _selectTrackForPlayer(track);
+                                }
+                              },
+                              onTrackDeleted: (trackId) {
+                                _contextMenuHandler.confirmAndDeleteSelected();
+                              },
+                              onFolderDeleted: (folderPath, folderName) {
+                                context.read<TrackDataBloc>().add(
+                                  DeleteFolder(folderPath),
+                                );
+                              },
+                            ),
+                          ),
+                );
+              },
+            ),
+            if (_isDragging)
+              Container(
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.upload_file,
+                        size: 60,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withOpacity(0.5),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        "Drop files or folders here",
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.primary.withOpacity(0.7),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
+  }
+
+  void confirmAndDeleteSelected() {
+    // Should be private or public within the handler
+    if (_selectedTrackIds.isEmpty) return;
+    final count = _selectedTrackIds.length;
+
+    showDialog(
+      context: context, // Use handler's context
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Confirm Delete'),
+          content: Text('Are you sure you want to remove $count item(s)?'),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+            ),
+            TextButton(
+              child: const Text('Delete', style: TextStyle(color: Colors.red)),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                _performDelete(); // Call the delete logic below
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _performDelete() {
+    // ... implementation using BlocProvider.of(context).add(...) ...
+    final collectionBloc = BlocProvider.of<TrackDataBloc>(context);
+    final audioPlayerBloc = BlocProvider.of<AudioPlayerBloc>(context);
+    final idsToDelete = List<int>.from(_selectedTrackIds);
+
+    // Stop player if needed...
+    Track? currentlyPlayingTrack;
+    final playerState = audioPlayerBloc.state;
+    if (playerState is AudioPlayerLoaded) {
+      final trackDataState = collectionBloc.state;
+      List<Track> currentTracks = [];
+      if (trackDataState is TrackDataLoaded)
+        currentTracks = trackDataState.tracks;
+      else if (trackDataState is TrackDataProcessingNeeded)
+        currentTracks = trackDataState.tracks;
+      // Add other states if needed
+      try {
+        currentlyPlayingTrack = currentTracks.firstWhere(
+          (t) => t.path == playerState.currentSource,
+        );
+      } catch (e) {
+        /* not found */
+      }
+    }
+    if (currentlyPlayingTrack != null &&
+        idsToDelete.contains(currentlyPlayingTrack.id)) {
+      audioPlayerBloc.add(StopAudio());
+    }
+
+    // Dispatch delete events
+    for (final trackId in idsToDelete) {
+      collectionBloc.add(RemoveTrack(trackId));
+    }
   }
 
   // Build Method
@@ -1228,67 +1305,81 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Scaffold(
           // --- REMOVE AppBar ---
           // appBar: _buildAppBar(), // REMOVED
-          body: Focus(
-            focusNode: _focusNode,
-            autofocus: true,
-            onKeyEvent: _handleKeyEvent,
-            child: Row(
-              children: [
-                _buildPlaylistPanel(), // Playlist Panel (Left)
-                Expanded(
-                  // Main Content Area (Right)
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // --- MOVED: Player at the TOP ---
-                      BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
-                        builder: (context, playerState) {
-                          // bool shouldShowPlayer = false;
-                          if (_selectedTrackForPlayer != null) {
-                            if (playerState is AudioPlayerLoading &&
-                                playerState.loadingSource ==
-                                    _selectedTrackForPlayer!.path) {
-                              // shouldShowPlayer = true;
-                            } else if (playerState is AudioPlayerLoaded &&
-                                playerState.currentSource ==
-                                    _selectedTrackForPlayer!.path) {
-                              // shouldShowPlayer = true;
+          body: GestureDetector(
+            // Keep the outer GestureDetector
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) {
+              if (_contextMenuHandler.isMenuVisible) {
+                // Optional: Add logic here to check if the tap is *outside* the menu bounds
+                // before dismissing, if simple tap isn't enough.
+                print(
+                  "GestureDetector onTapDown - Dismissing menu via handler",
+                );
+                _contextMenuHandler.dismiss();
+              }
+            },
+            child: Focus(
+              focusNode: _focusNode,
+              autofocus: true,
+              onKeyEvent: _handleKeyEvent,
+              child: Row(
+                children: [
+                  _buildPlaylistPanel(), // Playlist Panel (Left)
+                  Expanded(
+                    // Main Content Area (Right)
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // --- MOVED: Player at the TOP ---
+                        BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
+                          builder: (context, playerState) {
+                            // bool shouldShowPlayer = false;
+                            if (_selectedTrackForPlayer != null) {
+                              if (playerState is AudioPlayerLoading &&
+                                  playerState.loadingSource ==
+                                      _selectedTrackForPlayer!.path) {
+                                // shouldShowPlayer = true;
+                              } else if (playerState is AudioPlayerLoaded &&
+                                  playerState.currentSource ==
+                                      _selectedTrackForPlayer!.path) {
+                                // shouldShowPlayer = true;
+                              }
                             }
-                          }
 
-                          // if (shouldShowPlayer &&
-                          //     _selectedTrackForPlayer != null) {
-                          return CombinedAudioPlayerWidget(
-                            // key: ValueKey(
-                            //   (_selectedTrackForPlayer != null)
-                            //       ? _selectedTrackForPlayer!.id
-                            //       : "",
-                            // ),
-                            // track: _selectedTrackForPlayer,
-                            isMinimized: _isMinimized,
-                            onToggle: _handlePlayerToggle,
-                            onPreviousPressed: _playPreviousTrack,
-                            onNextPressed: _playNextTrack,
-                            maxExpandedHeight: maxPlayerHeight,
-                            activeCollectionName: activeCollectionName,
-                          );
-                          // } else {
-                          //   return const SizedBox.shrink();
-                          // }
-                        },
-                      ),
-                      // --- END MOVED Player ---
-                      _buildFilterBar(), // Search, View Toggle, Rating, HOME BUTTON
-                      if (_currentlySelectedPlaylist != null)
-                        _buildPlaylistHeader(),
-                      Expanded(
-                        child: _buildContentArea(),
-                      ), // Table or Tree View
-                      // --- REMOVED Player from bottom ---
-                    ],
+                            // if (shouldShowPlayer &&
+                            //     _selectedTrackForPlayer != null) {
+                            return CombinedAudioPlayerWidget(
+                              // key: ValueKey(
+                              //   (_selectedTrackForPlayer != null)
+                              //       ? _selectedTrackForPlayer!.id
+                              //       : "",
+                              // ),
+                              // track: _selectedTrackForPlayer,
+                              isMinimized: _isMinimized,
+                              onToggle: _handlePlayerToggle,
+                              onPreviousPressed: _playPreviousTrack,
+                              onNextPressed: _playNextTrack,
+                              maxExpandedHeight: maxPlayerHeight,
+                              activeCollectionName: activeCollectionName,
+                            );
+                            // } else {
+                            //   return const SizedBox.shrink();
+                            // }
+                          },
+                        ),
+                        // --- END MOVED Player ---
+                        _buildFilterBar(), // Search, View Toggle, Rating, HOME BUTTON
+                        if (_currentlySelectedPlaylist != null)
+                          _buildPlaylistHeader(),
+                        Expanded(
+                          child: _buildContentArea(),
+                        ), // Table or Tree View
+                        // --- REMOVED Player from bottom ---
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           bottomNavigationBar: const WaveformProgressBar(),
