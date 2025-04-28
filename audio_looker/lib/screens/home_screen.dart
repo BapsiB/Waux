@@ -88,6 +88,8 @@ class _HomeScreenState extends State<HomeScreen> {
       38.0; // Approx height of playlist header + padding
   final double _waveformProgressBarHeight = 50.0; // Height of the progress bar
 
+  String? activeCollectionName;
+
   @override
   void initState() {
     super.initState();
@@ -1241,33 +1243,38 @@ class _HomeScreenState extends State<HomeScreen> {
                       // --- MOVED: Player at the TOP ---
                       BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
                         builder: (context, playerState) {
-                          bool shouldShowPlayer = false;
+                          // bool shouldShowPlayer = false;
                           if (_selectedTrackForPlayer != null) {
                             if (playerState is AudioPlayerLoading &&
                                 playerState.loadingSource ==
                                     _selectedTrackForPlayer!.path) {
-                              shouldShowPlayer = true;
+                              // shouldShowPlayer = true;
                             } else if (playerState is AudioPlayerLoaded &&
                                 playerState.currentSource ==
                                     _selectedTrackForPlayer!.path) {
-                              shouldShowPlayer = true;
+                              // shouldShowPlayer = true;
                             }
                           }
 
-                          if (shouldShowPlayer &&
-                              _selectedTrackForPlayer != null) {
-                            return CombinedAudioPlayerWidget(
-                              key: ValueKey(_selectedTrackForPlayer!.id),
-                              track: _selectedTrackForPlayer!,
-                              isMinimized: _isMinimized,
-                              onToggle: _handlePlayerToggle,
-                              onPreviousPressed: _playPreviousTrack,
-                              onNextPressed: _playNextTrack,
-                              maxExpandedHeight: maxPlayerHeight,
-                            );
-                          } else {
-                            return const SizedBox.shrink();
-                          }
+                          // if (shouldShowPlayer &&
+                          //     _selectedTrackForPlayer != null) {
+                          return CombinedAudioPlayerWidget(
+                            // key: ValueKey(
+                            //   (_selectedTrackForPlayer != null)
+                            //       ? _selectedTrackForPlayer!.id
+                            //       : "",
+                            // ),
+                            // track: _selectedTrackForPlayer,
+                            isMinimized: _isMinimized,
+                            onToggle: _handlePlayerToggle,
+                            onPreviousPressed: _playPreviousTrack,
+                            onNextPressed: _playNextTrack,
+                            maxExpandedHeight: maxPlayerHeight,
+                            activeCollectionName: activeCollectionName,
+                          );
+                          // } else {
+                          //   return const SizedBox.shrink();
+                          // }
                         },
                       ),
                       // --- END MOVED Player ---

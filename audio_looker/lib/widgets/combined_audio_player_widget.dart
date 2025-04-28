@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'dart:async'; // For Timer
 
 // Import BLoCs and Services/Models
+import '../blocs/collection_management/collection_management_bloc.dart';
 import '../blocs/audio_player/audio_player_bloc.dart';
 import '../blocs/track_management/track_data_bloc.dart';
 import '../blocs/track_management/global_tag_bloc.dart';
@@ -17,21 +18,23 @@ import '../widgets/tag_editor_popup.dart';
 import 'waveform_painter.dart';
 
 class CombinedAudioPlayerWidget extends StatefulWidget {
-  final Track track;
+  // final Track? track;
   final bool isMinimized;
   final VoidCallback onToggle;
   final VoidCallback? onPreviousPressed;
   final VoidCallback? onNextPressed;
   final double maxExpandedHeight;
+  final String? activeCollectionName;
 
   const CombinedAudioPlayerWidget({
     Key? key,
-    required this.track,
+    // required this.track,
     required this.isMinimized,
     required this.onToggle,
     this.onPreviousPressed,
     this.onNextPressed,
     this.maxExpandedHeight = 0.0,
+    this.activeCollectionName,
   }) : super(key: key);
 
   @override
@@ -67,6 +70,9 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   double _minimizedDragRatio = 0.0;
   final TextEditingController _timeMarkerController = TextEditingController();
 
+  Track? _currentTrackForDisplay;
+  String? _currentSourcePathForDisplay;
+
   @override
   void initState() {
     super.initState();
@@ -75,7 +81,6 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       duration: const Duration(milliseconds: 250),
     );
     _playerHeightAnimation = Tween<double>(
-      // Use the maxExpandedHeight passed in, ensuring a minimum reasonable height
       begin: widget.maxExpandedHeight.clamp(
         _minimizedPlayerHeight + 200,
         500.0,
@@ -91,14 +96,18 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     final initialPlayerState = context.read<AudioPlayerBloc>().state;
     if (initialPlayerState is AudioPlayerLoaded) {
       _currentVolume = initialPlayerState.volume;
+      // Initial attempt to find track data on init
+      _currentTrackForDisplay = _findTrackByPath(
+        initialPlayerState.currentSource,
+      );
+      _currentSourcePathForDisplay = initialPlayerState.currentSource;
+      _updateLocalStateFromTrack(_currentTrackForDisplay);
     }
-    _updateStateFromWidget(widget.track);
   }
 
   @override
   void didUpdateWidget(CombinedAudioPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-
     if (widget.isMinimized != oldWidget.isMinimized) {
       if (widget.isMinimized) {
         _animationController.forward();
@@ -106,10 +115,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
         _animationController.reverse();
       }
     }
-
-    // Recalculate expanded height if maxExpandedHeight changes
     if (widget.maxExpandedHeight != oldWidget.maxExpandedHeight) {
-      // Update animation tween based on the new max height
       _playerHeightAnimation = Tween<double>(
         begin: widget.maxExpandedHeight.clamp(
           _minimizedPlayerHeight + 200,
@@ -119,38 +125,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       ).animate(
         CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
       );
-      // Consider if the animation value needs reset based on isMinimized
-      // _animationController.value = widget.isMinimized ? 1.0 : 0.0;
     }
-
-    if (oldWidget.track.id != widget.track.id) {
-      _updateStateFromWidget(widget.track);
-      _isDraggingWaveform = false;
-      _dragProgress = null;
-      _isDraggingVolume = false;
-    } else {
-      if (widget.track.rating != _currentRating) {
-        _currentRating = widget.track.rating;
-      }
-      if (widget.track.comment != _notesController.text) {
-        if (!FocusScope.of(context).hasFocus ||
-            FocusScope.of(context).focusedChild != _notesController.value) {
-          _notesController.text = widget.track.comment;
-        }
-      }
-      final playerState = context.read<AudioPlayerBloc>().state;
-      if (playerState is AudioPlayerLoaded && !_isDraggingVolume) {
-        if (_currentVolume != playerState.volume) {
-          if (mounted) {
-            setState(() {
-              _currentVolume = playerState.volume;
-            });
-          } else {
-            _currentVolume = playerState.volume;
-          }
-        }
-      }
-    }
+    // No longer need to check trackForDisplay changes
   }
 
   double? _calculateMinimizedSeekRatio(Offset globalPosition) {
@@ -167,14 +143,23 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     return null;
   }
 
-  void _updateStateFromWidget(Track track) {
+  void _updateLocalStateFromTrack(Track? track) {
     if (!mounted) return;
-    _currentRating = track.rating;
-    if (_notesController.text != track.comment) {
-      _notesController.text = track.comment;
+    if (track == null) {
+      // Reset local state if no track is displayed
+      _currentRating = 0;
+      if (_notesController.text.isNotEmpty) _notesController.clear();
+      _isTimeMarkingMode = false;
+      if (_timeMarkerController.text.isNotEmpty) _timeMarkerController.clear();
+    } else {
+      // Update local state from the found track
+      if (_currentRating != track.rating) _currentRating = track.rating;
+      if (_notesController.text != track.comment)
+        _notesController.text = track.comment;
+      _isTimeMarkingMode = false; // Reset marker mode on track change
+      if (_timeMarkerController.text.isNotEmpty) _timeMarkerController.clear();
     }
-    _isTimeMarkingMode = false;
-    _timeMarkerController.clear();
+    // No setState needed here as this is usually called within the build or initState/didChangeDependencies context
   }
 
   @override
@@ -186,11 +171,101 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
     super.dispose();
   }
 
+  Track? _findTrackByPath(String path) {
+    final trackDataState = context.read<TrackDataBloc>().state;
+    List<Track> sourceList = [];
+
+    // Consolidate getting tracks from various states where they might exist
+    if (trackDataState is TrackDataLoaded) {
+      sourceList = trackDataState.tracks;
+    } else if (trackDataState is TrackDataLoading &&
+        trackDataState.previousTracks != null) {
+      sourceList = trackDataState.previousTracks!;
+    } else if (trackDataState is TrackDataProcessingNeeded) {
+      // Added state
+      sourceList = trackDataState.tracks;
+    } else if (trackDataState is TrackDataDeletingFolder &&
+        trackDataState.previousTracks != null) {
+      // Added state
+      sourceList = trackDataState.previousTracks!;
+    }
+    // Add other relevant states if they hold track data
+
+    if (sourceList.isEmpty) {
+      print(
+        "CombinedAudioPlayerWidget: Track list is empty in TrackDataBloc state.",
+      );
+      return null;
+    }
+
+    try {
+      // Find track by path matching the player's currentSource
+      return sourceList.firstWhere((t) => t.path == path);
+    } catch (e) {
+      print(
+        "CombinedAudioPlayerWidget: Could not find track with path '$path' in TrackDataBloc state.",
+      );
+      return null; // Not found
+    }
+  }
+
+  Widget _buildMinimizedLoadingIndicator(Track? trackBeingLoaded) {
+    final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Container(
+      height: _minimizedPlayerHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withOpacity(0.95),
+        border: Border(
+          top: BorderSide(color: Theme.of(context).dividerColor, width: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          _buildHomeButton(context), // Keep home button consistent
+          const SizedBox(width: 8),
+          const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              trackBeingLoaded?.title ?? "Loading...",
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: inactiveColor),
+            ),
+          ),
+          const Spacer(), // Push toggle button to the right
+          _buildToggleButton(context), // Keep toggle button consistent
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMinimizedPlayerContent(
+    AudioPlayerState playerState,
+    Track? trackForDisplay,
+  ) {
+    if (playerState is AudioPlayerLoaded && trackForDisplay != null) {
+      // Pass the loaded state AND the found track data
+      return _buildMinimizedPlayerControls(playerState, trackForDisplay);
+    } else if (playerState is AudioPlayerLoading) {
+      // Pass the track being loaded (if found) to the loading indicator
+      return _buildMinimizedLoadingIndicator(trackForDisplay);
+    } else {
+      // Handle Initial, Error, or Loaded state where track data wasn't found
+      return _buildMinimizedPlayerContentEmpty();
+    }
+  }
+
   Widget _buildMinimizedPlayerControls(
     AudioPlayerLoaded playerState,
-    Track track,
+    Track trackForDisplay,
   ) {
-    // State variables remain the same
     final isPlaying = playerState.isPlaying;
     final position = playerState.position;
     final duration = playerState.duration;
@@ -200,27 +275,31 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
             : (duration > Duration.zero
                 ? (position.inMilliseconds / duration.inMilliseconds).clamp(
                   0.0,
+
                   1.0,
                 )
                 : 0.0);
+
     final bool canInteract = duration > Duration.zero;
     final controlsEnabled = canInteract; // Use this for enabling controls
-
-    // Theme colors
     final activeColor = Theme.of(context).colorScheme.primary;
     final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
 
     // --- Use LayoutBuilder to get width ---
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final double totalWidth = constraints.maxWidth;
+
         const double homeButtonWidth =
             50.0; // Adjusted width for icon button + padding
         const double playerControlsWidth = 150.0;
         final double timelineWidth = totalWidth * 0.25;
         final double timelineStart = (totalWidth - timelineWidth) / 2;
         final double spaceForPlayerControls = timelineStart - homeButtonWidth;
+
         // Ensure space is not negative if layout is too tight
+
         final double playerControlsStart =
             homeButtonWidth +
             (spaceForPlayerControls > playerControlsWidth
@@ -228,34 +307,45 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 : 0); // Center if space allows, else align left after home btn
 
         // Calculate width for the right-side buttons (approximate)
+
         const double rightButtonsWidth =
             120.0; // Sum of Vol + Tag + Toggle + padding
 
         return Container(
           height: _minimizedPlayerHeight,
+
           padding: const EdgeInsets.symmetric(
             horizontal: 8.0,
           ), // Overall horizontal padding
+
           decoration: BoxDecoration(
             /* ... border/color ... */
             color: Theme.of(context).colorScheme.surface.withOpacity(0.95),
+
             border: Border(
               top: BorderSide(
                 color: Theme.of(context).dividerColor,
+
                 width: 0.5,
               ),
             ),
           ),
+
           // --- Use Stack for positioned layout ---
           child: Stack(
             alignment: Alignment.center, // Base alignment
+
             children: [
               // --- Positioned Home Button ---
               Positioned(
                 left: 0, // Align to far left of padding
+
                 top: 0,
+
                 bottom: 0,
+
                 width: homeButtonWidth,
+
                 child: Center(
                   child: _buildHomeButton(context),
                 ), // Center within its space
@@ -264,12 +354,18 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               // --- Positioned Player Controls ---
               Positioned(
                 left: playerControlsStart,
+
                 top: 0,
+
                 bottom: 0,
+
                 width: playerControlsWidth,
+
                 child: _buildPlayerControls(
                   context,
+
                   playerState,
+
                   controlsEnabled,
                 ),
               ),
@@ -277,91 +373,129 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               // --- Positioned Timeline ---
               Positioned(
                 left: timelineStart,
+
                 width: timelineWidth,
+
                 top: 0,
+
                 bottom: 0,
+
                 child: Column(
                   // Keep the column for progress + time
                   mainAxisAlignment: MainAxisAlignment.center,
+
                   children: [
                     GestureDetector(
                       // Keep GestureDetector and its contents
                       key: _minimizedProgressBarKey,
+
                       behavior: HitTestBehavior.opaque,
+
                       onTapDown: (details) {
                         /* ... seek logic ... */
+
                         if (!canInteract) return;
+
                         final seekRatio = _calculateMinimizedSeekRatio(
                           details.globalPosition,
                         );
+
                         if (seekRatio != null) {
                           final bloc = context.read<AudioPlayerBloc>();
+
                           final seekPosition = duration * seekRatio;
+
                           bloc.add(SeekAudio(position: seekPosition));
+
                           if (!isPlaying) {
                             bloc.add(PlayAudio());
                           }
                         }
                       },
+
                       onHorizontalDragStart: (details) {
                         /* ... drag start logic ... */
+
                         if (!canInteract) return;
+
                         final seekRatio = _calculateMinimizedSeekRatio(
                           details.globalPosition,
                         );
+
                         if (seekRatio != null) {
                           setState(() {
                             _isDraggingMinimizedBar = true;
+
                             _minimizedDragRatio = seekRatio;
                           });
                         }
                       },
+
                       onHorizontalDragUpdate: (details) {
                         /* ... drag update logic ... */
+
                         if (!_isDraggingMinimizedBar || !canInteract) return;
+
                         final seekRatio = _calculateMinimizedSeekRatio(
                           details.globalPosition,
                         );
+
                         if (seekRatio != null) {
                           setState(() {
                             _minimizedDragRatio = seekRatio;
                           });
+
                           context.read<AudioPlayerBloc>().add(
                             SeekAudio(position: duration * seekRatio),
                           );
                         }
                       },
+
                       onHorizontalDragEnd: (details) {
                         /* ... drag end logic ... */
+
                         if (!_isDraggingMinimizedBar || !canInteract) return;
+
                         setState(() {
                           _isDraggingMinimizedBar = false;
                         });
+
                         final bloc = context.read<AudioPlayerBloc>();
+
                         if (!isPlaying) {
                           bloc.add(PlayAudio());
                         }
                       },
+
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8.0),
+
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
+
                           children: [
                             SizedBox(
                               height: 4,
+
                               child: LinearProgressIndicator(
                                 value: displayProgress,
+
                                 backgroundColor: inactiveColor.withOpacity(0.1),
+
                                 valueColor: AlwaysStoppedAnimation<Color>(
                                   activeColor,
                                 ),
+
                                 borderRadius: BorderRadius.circular(2),
                               ),
                             ),
+
                             const SizedBox(height: 4),
+
                             Row(
                               // Time indicators
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
+
                               children: [
                                 Text(
                                   _formatDuration(
@@ -369,19 +503,24 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                         ? (duration * _minimizedDragRatio)
                                         : position,
                                   ),
+
                                   style: Theme.of(
                                     context,
                                   ).textTheme.bodySmall?.copyWith(
                                     fontSize: 10,
+
                                     color: inactiveColor,
                                   ),
                                 ),
+
                                 Text(
                                   _formatDuration(duration),
+
                                   style: Theme.of(
                                     context,
                                   ).textTheme.bodySmall?.copyWith(
                                     fontSize: 10,
+
                                     color: inactiveColor,
                                   ),
                                 ),
@@ -398,15 +537,21 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
               // --- Positioned Right-Side Buttons ---
               Positioned(
                 right: 0, // Align to far right of padding
+
                 top: 0,
+
                 bottom: 0,
+
                 // width: rightButtonsWidth, // Optional: Set width
                 child: Row(
                   // Keep these buttons together
                   mainAxisSize: MainAxisSize.min, // Take only needed space
+
                   children: [
                     _buildVolumeButton(context),
+
                     const SizedBox(width: 0), // Adjust spacing
+
                     _buildToggleButton(context),
                   ],
                 ),
@@ -415,6 +560,72 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildMinimizedPlayerContentEmpty() {
+    final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    final collectionName = widget.activeCollectionName ?? "No Collection";
+
+    return Container(
+      height: _minimizedPlayerHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withOpacity(0.95),
+        border: Border(
+          top: BorderSide(color: Theme.of(context).dividerColor, width: 0.5),
+        ),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // --- Home Button (Left) ---
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Center(child: _buildHomeButton(context)),
+          ),
+
+          // --- Collection Name (Center) ---
+          // Listen to CollectionManagementBloc for the name
+          BlocBuilder<CollectionManagementBloc, CollectionManagementState>(
+            builder: (context, colState) {
+              String nameToShow = "No Active Collection";
+              if (colState is CollectionManagementLoaded) {
+                nameToShow =
+                    colState.activeCollectionDefinition?.name ?? nameToShow;
+              } else if (colState is CollectionManagementLoading) {
+                nameToShow =
+                    colState.activeCollectionDefinition?.name ?? "Loading...";
+              }
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 50,
+                  ), // Avoid overlap
+                  child: Text(
+                    nameToShow,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: inactiveColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              );
+            },
+          ),
+
+          // --- Toggle Button (Right) ---
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            child: Center(child: _buildToggleButton(context)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -633,6 +844,14 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   }
 
   void _openTagEditor(BuildContext buildContext) {
+    final currentTrack = _currentTrackForDisplay; // Use the state variable
+    if (currentTrack == null || currentTrack.id == null) {
+      ScaffoldMessenger.of(buildContext).showSnackBar(
+        const SnackBar(content: Text('No track loaded to edit tags for.')),
+      );
+      return;
+    }
+
     final trackDataBloc = BlocProvider.of<TrackDataBloc>(buildContext);
     final globalTagBloc = BlocProvider.of<GlobalTagBloc>(buildContext);
     final trackMetadataBloc = BlocProvider.of<TrackMetadataBloc>(buildContext);
@@ -641,17 +860,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
 
     if (trackDataState is TrackDataLoaded &&
         globalTagState is GlobalTagLoaded) {
-      List<String> currentTrackTags = [];
-      try {
-        final currentTrackFromBloc = trackDataState.tracks.firstWhere(
-          (t) => t.id == widget.track.id,
-          orElse: () => widget.track,
-        );
-        currentTrackTags = currentTrackFromBloc.generalTags;
-      } catch (e) {
-        print('Error finding track ${widget.track.id} for tag editor: $e');
-        currentTrackTags = widget.track.generalTags;
-      }
+      final currentTrackTags = currentTrack.generalTags;
       showDialog(
         context: buildContext,
         builder:
@@ -661,7 +870,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 BlocProvider.value(value: trackMetadataBloc),
               ],
               child: TagEditorPopup(
-                trackId: widget.track.id!,
+                trackId: currentTrack.id!, // Use ID from the displayed track
                 currentTrackTags: currentTrackTags,
               ),
             ),
@@ -681,7 +890,17 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   }
 
   // Build method for the expanded player UI (Modified Layout)
-  Widget _buildExpandedPlayerUI(AudioPlayerLoaded playerState, Track track) {
+  Widget _buildExpandedPlayerUI(
+    AudioPlayerLoaded playerState,
+    Track trackForDisplay,
+  ) {
+    final Track? track = trackForDisplay;
+
+    if (track == null) {
+      // Should ideally not be called if track is null, but handle defensively
+      return const Center(child: Text("No track selected."));
+    }
+
     // State variables remain the same
     final isPlaying = playerState.isPlaying;
     final duration = playerState.duration;
@@ -1097,7 +1316,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                                     Text(
                                       _formatDuration(
                                         Duration(
-                                          milliseconds: widget.track.duration,
+                                          milliseconds:
+                                              trackForDisplay!.duration,
                                         ),
                                       ),
                                       style: const TextStyle(fontSize: 10),
@@ -1218,6 +1438,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
 
   // --- Build Rating Bar (adjusted size) ---
   Widget _buildRatingBar(int trackId) {
+    if (_currentTrackForDisplay == null) return const SizedBox.shrink();
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1254,11 +1476,13 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
 
   // --- Build Notes Section (remains the same) ---
   Widget _buildNotesSection() {
+    if (_currentTrackForDisplay == null) return const SizedBox.shrink();
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       elevation: 1,
       child: ExpansionTile(
-        key: ValueKey('notes_expansion_${widget.track.id}'),
+        key: ValueKey('notes_expansion_${_currentTrackForDisplay!.id}'),
         initiallyExpanded: _isNoteExpanded,
         onExpansionChanged: (expanded) {
           if (mounted) {
@@ -1288,7 +1512,10 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
             onEditingComplete: () {
               if (mounted) {
                 context.read<TrackMetadataBloc>().add(
-                  UpdateTrackComment(widget.track.id!, _notesController.text),
+                  UpdateTrackComment(
+                    _currentTrackForDisplay!.id!,
+                    _notesController.text,
+                  ),
                 );
                 FocusScope.of(context).unfocus();
               }
@@ -1307,14 +1534,15 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   }
 
   void _addMarkerAtCurrentTime(AudioPlayerLoaded playerState) {
+    if (_currentTrackForDisplay == null) return;
     if (_timeMarkerController.text.isNotEmpty &&
         playerState.duration > Duration.zero) {
       final bloc = context.read<AudioPlayerBloc>();
       final position = playerState.position;
       bloc.add(
         AddTimeMarker(
-          trackId: widget.track.id!,
-          source: widget.track.path,
+          trackId: _currentTrackForDisplay!.id!,
+          source: _currentTrackForDisplay!.path,
           position: (position.inMilliseconds /
                   playerState.duration.inMilliseconds)
               .clamp(0.0, 1.0),
@@ -1347,121 +1575,144 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   // Main build method
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<AudioPlayerBloc, AudioPlayerState>(
-      builder: (context, playerState) {
-        bool isCorrectTrackLoaded =
-            playerState is AudioPlayerLoaded &&
-            playerState.currentSource == widget.track.path;
-        bool isErrorForThisTrack =
-            playerState is AudioPlayerError &&
-            playerState.source == widget.track.path;
-        bool isLoadingThisTrack =
-            (playerState is AudioPlayerInitial ||
-                playerState is AudioPlayerLoading) &&
-            !isCorrectTrackLoaded;
-
-        if (isLoadingThisTrack) {
-          return Container(
-            height: _minimizedPlayerHeight,
-            alignment: Alignment.center,
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                SizedBox(width: 16),
-                Text("Loading..."),
-              ],
-            ),
-          );
-        } else if (isErrorForThisTrack) {
-          return Container(
-            height: _minimizedPlayerHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            alignment: Alignment.center,
-            color: Colors.red.withOpacity(0.1),
-            child: Row(
-              children: [
-                const Icon(Icons.error_outline, color: Colors.red),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Error: ${playerState.message}',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed:
-                      () => context.read<AudioPlayerBloc>().add(
-                        LoadAudio(track: widget.track),
-                      ),
-                ),
-              ],
-            ),
-          );
-        } else if (isCorrectTrackLoaded) {
-          return AnimatedBuilder(
-            animation: _playerHeightAnimation,
-            builder: (context, child) {
-              return Container(
-                height: _playerHeightAnimation.value,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
-                      blurRadius: 8,
-                      spreadRadius: 1,
-                      offset: const Offset(0, -2),
-                    ),
-                  ],
-                  border: Border(
-                    top: BorderSide(
-                      color: Theme.of(context).dividerColor,
-                      width: 0.5,
-                    ),
-                  ),
-                ),
-                clipBehavior: Clip.hardEdge,
-                child: child,
-              );
-            },
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: AnimatedOpacity(
-                    opacity: 1.0 - _animationController.value,
-                    duration: const Duration(milliseconds: 150),
-                    child: IgnorePointer(
-                      ignoring: widget.isMinimized,
-                      // Pass the player state down
-                      child: _buildExpandedPlayerUI(playerState, widget.track),
-                    ),
-                  ),
-                ),
-                Positioned.fill(
-                  child: AnimatedOpacity(
-                    opacity: _animationController.value,
-                    duration: const Duration(milliseconds: 150),
-                    child: IgnorePointer(
-                      ignoring: !widget.isMinimized,
-                      child: _buildMinimizedPlayerControls(
-                        playerState,
-                        widget.track,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        } else {
-          return const SizedBox.shrink();
+    return BlocConsumer<AudioPlayerBloc, AudioPlayerState>(
+      // Use BlocConsumer
+      listener: (context, playerState) {
+        // Listen for changes in the loaded source and update local state if necessary
+        if (playerState is AudioPlayerLoaded) {
+          if (playerState.currentSource != _currentSourcePathForDisplay) {
+            print(
+              "Player source changed to: ${playerState.currentSource}. Finding new track data.",
+            );
+            final newTrack = _findTrackByPath(playerState.currentSource);
+            setState(() {
+              // Update state variables based on the new track
+              _currentTrackForDisplay = newTrack;
+              _currentSourcePathForDisplay = playerState.currentSource;
+              _updateLocalStateFromTrack(newTrack);
+              // Reset drag states when track changes
+              _isDraggingWaveform = false;
+              _dragProgress = null;
+              _isDraggingVolume = false;
+              _isDraggingMinimizedBar = false;
+            });
+          } else if (_currentTrackForDisplay == null) {
+            // Case: Player loaded but we previously couldn't find the track data. Try again.
+            final track = _findTrackByPath(playerState.currentSource);
+            if (track != null) {
+              setState(() {
+                _currentTrackForDisplay = track;
+                _updateLocalStateFromTrack(track);
+              });
+            }
+          }
+          // Update volume if it changed in the state and we aren't dragging
+          if (!_isDraggingVolume && _currentVolume != playerState.volume) {
+            setState(() {
+              _currentVolume = playerState.volume;
+            });
+          }
+        } else if (playerState is! AudioPlayerLoading) {
+          // If state is Initial or Error, clear the displayed track
+          if (_currentSourcePathForDisplay != null) {
+            setState(() {
+              _currentTrackForDisplay = null;
+              _currentSourcePathForDisplay = null;
+              _updateLocalStateFromTrack(null);
+              // Reset drag states
+              _isDraggingWaveform = false;
+              _dragProgress = null;
+              _isDraggingVolume = false;
+              _isDraggingMinimizedBar = false;
+            });
+          }
         }
+        // Also listen for metadata updates affecting the *currently displayed* track
+        // (This requires listening to TrackMetadataBloc as well, potentially outside this builder)
+      },
+      builder: (context, playerState) {
+        // Use the state variable _currentTrackForDisplay which is updated by the listener
+        final trackForDisplay = _currentTrackForDisplay;
+        bool showPlayer =
+            trackForDisplay != null && playerState is AudioPlayerLoaded;
+        bool isLoading = playerState is AudioPlayerLoading;
+        String? loadingTitle;
+        if (isLoading && playerState.loadingSource != null) {
+          // Attempt to show title while loading
+          final loadingTrack = _findTrackByPath(playerState.loadingSource!);
+          loadingTitle = loadingTrack?.title ?? "Loading...";
+        }
+
+        // Build the player UI structure (AnimatedBuilder, Stack, etc.)
+        return AnimatedBuilder(
+          animation: _playerHeightAnimation,
+          builder: (context, child) {
+            return Container(
+              height: _playerHeightAnimation.value,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+                border: Border(
+                  top: BorderSide(
+                    color: Theme.of(context).dividerColor,
+                    width: 0.5,
+                  ),
+                ),
+              ),
+              clipBehavior: Clip.hardEdge, // Use Clip.hardEdge
+              child: child,
+            );
+          },
+          child: Stack(
+            children: [
+              // --- Expanded View ---
+              Positioned.fill(
+                child: AnimatedOpacity(
+                  opacity:
+                      (!widget.isMinimized && showPlayer && !isLoading)
+                          ? 1.0
+                          : 0.0,
+                  duration: const Duration(milliseconds: 150),
+                  child: IgnorePointer(
+                    ignoring: widget.isMinimized || !showPlayer || isLoading,
+                    child:
+                        (showPlayer && playerState is AudioPlayerLoaded)
+                            ? _buildExpandedPlayerUI(
+                              playerState,
+                              trackForDisplay!,
+                            ) // Pass non-null track
+                            : const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+
+              // --- Minimized View ---
+              Positioned.fill(
+                child: AnimatedOpacity(
+                  opacity:
+                      _animationController
+                          .value, // Controlled by minimize toggle
+                  duration: const Duration(milliseconds: 150),
+                  child: IgnorePointer(
+                    ignoring: !widget.isMinimized,
+                    // Pass the actual player state and track data found
+                    child: _buildMinimizedPlayerContent(
+                      playerState,
+                      _currentTrackForDisplay,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
       },
     );
   }
