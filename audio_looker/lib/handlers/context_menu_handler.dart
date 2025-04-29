@@ -9,19 +9,16 @@ import 'package:path/path.dart' as path_lib;
 import '../blocs/track_management/track_data_bloc.dart';
 import '../blocs/audio_player/audio_player_bloc.dart';
 import '../blocs/playlist/playlist_bloc.dart';
-// Import TrackMetadataBloc if needed for edit actions directly
-// import '../blocs/track_management/track_metadata_bloc.dart';
 
 // Import models and custom menu widget
 import '../services/collection_service.dart';
 import '../widgets/custom_context_menu.dart';
 
 class ContextMenuHandler {
-  final BuildContext context; // Context is needed for BLoC access & Dialogs
+  final BuildContext context; // Context for BLoC access
   final Set<int> selectedTrackIds;
-  final Function(int, bool)
-  onSelectionChanged; // Still needed to manage selection state
-  final Function(Track, bool) onPlayTrack; // Still needed to trigger play
+  final Function(int, bool) onSelectionChanged;
+  final Function(Track, bool) onPlayTrack;
 
   OverlayEntry? _overlayEntry;
 
@@ -30,7 +27,6 @@ class ContextMenuHandler {
     required this.selectedTrackIds,
     required this.onSelectionChanged,
     required this.onPlayTrack,
-    // REMOVED Action Callbacks: onEditDetails, onDeleteSelected, onRevealFile, onOpenUrl, onAddToPlaylist
   });
 
   bool get isMenuVisible => _overlayEntry != null;
@@ -43,6 +39,7 @@ class ContextMenuHandler {
     }
   }
 
+  /// Shows the context menu at the tap position. Dismisses any existing menu first.
   void showContextMenu(
     BuildContext anchorContext,
     Offset tapPosition,
@@ -56,27 +53,23 @@ class ContextMenuHandler {
     }
 
     final overlay = Overlay.of(anchorContext);
+    // --- FIX: Get screen size *before* OverlayEntry builder ---
+    final screenSize = MediaQuery.of(anchorContext).size;
+    final screenWidth = screenSize.width;
+    final screenHeight = screenSize.height;
+    // --- END FIX ---
 
     _overlayEntry = OverlayEntry(
       builder: (ctx) {
         // Use ctx instead of context to avoid shadowing
         return Positioned(
-          left: _calculateHorizontalPosition(
-            tapPosition.dx,
-            overlay.context.size?.width ??
-                MediaQuery.of(anchorContext).size.width,
-          ),
-          top: _calculateVerticalPosition(
-            tapPosition.dy,
-            overlay.context.size?.height ??
-                MediaQuery.of(anchorContext).size.height,
-          ),
-          // Provide the handler's context to CustomContextMenu if it needs BLoC access indirectly,
-          // though it's better if CustomContextMenu just takes callbacks.
-          // For simplicity, CustomContextMenu takes onDismiss.
+          // --- FIX: Use pre-calculated screen dimensions ---
+          left: _calculateHorizontalPosition(tapPosition.dx, screenWidth),
+          top: _calculateVerticalPosition(tapPosition.dy, screenHeight),
+          // --- END FIX ---
           child: CustomContextMenu(
-            items: _buildContextMenuItems(track),
-            onDismiss: dismiss,
+            items: _buildContextMenuItems(track), // Build items dynamically
+            onDismiss: dismiss, // Menu dismisses itself on item tap
           ),
         );
       },
@@ -86,8 +79,7 @@ class ContextMenuHandler {
     print("CustomContextMenuHandler: Inserted new menu overlay.");
   }
 
-  // --- Re-implemented Action Handlers using BLoCs ---
-
+  // --- Action Handlers remain the same ---
   Future<void> _handleRevealFile(String filePath) async {
     try {
       if (!path_lib.isAbsolute(filePath)) {
@@ -138,7 +130,6 @@ class ContextMenuHandler {
     final trackDataState = collectionBloc.state;
 
     List<Track>? sourceTracks;
-    // Extract tracks from the current state (handle different states)
     if (trackDataState is TrackDataLoaded)
       sourceTracks = trackDataState.tracks;
     else if (trackDataState is TrackDataProcessingNeeded)
@@ -146,15 +137,12 @@ class ContextMenuHandler {
     else if (trackDataState is TrackDataLoading &&
         trackDataState.previousTracks != null)
       sourceTracks = trackDataState.previousTracks;
-    // Add other relevant states if necessary
 
     if (sourceTracks != null) {
       int addedCount = 0;
       for (final trackId in idsToAdd) {
         try {
-          // Find the full track object from the current state
           final trackToAdd = sourceTracks.firstWhere((t) => t.id == trackId);
-          // Dispatch event directly to PlaylistBloc
           playlistBloc.add(
             AddTrackToPlaylist(
               playlistId: playlistId,
@@ -186,27 +174,11 @@ class ContextMenuHandler {
   }
 
   void _handleEditTrack(Track track) {
-    // For "Edit", we usually need to signal the UI to change state (e.g., show player)
-    // A common way is still to have a callback for UI actions OR
-    // dispatch an event to a BLoC that HomeScreen listens to.
-    // Simpler option: Dispatch Play event to load it, assuming player handles metadata
     print(
       "ContextMenuHandler: Edit action triggered for track: ${track.title}",
     );
-    // Option 1: Load track in player (doesn't guarantee UI opens player)
-    // BlocProvider.of<AudioPlayerBloc>(context).add(LoadAudio(track: track));
-
-    // Option 2: Use the onPlayTrack callback (passed from HomeScreen) but signal not to auto-play
-    // This relies on HomeScreen's _selectAndOpenPlayer logic being triggered by onPlayTrack(track, false)
-    // This requires ensuring _selectAndOpenPlayer is passed correctly. Let's revert to calling onPlayTrack(track, false) for simplicity here, assuming HomeScreen connects it to _selectAndOpenPlayer.
-    // If you truly want NO callbacks, you'd need another BLoC event HomeScreen listens for.
-    onPlayTrack(
-      track,
-      false,
-    ); // Re-using the play callback, assuming it leads to opening the player
-
-    // Option 3: If you created a dedicated `SelectTrackForEdit` event in a BLoC HomeScreen listens to:
-    // BlocProvider.of<SomeUiBloc>(context).add(SelectTrackForEdit(track));
+    // Use the onPlayTrack callback to signal HomeScreen to handle opening the player
+    onPlayTrack(track, false);
   }
 
   void confirmAndDeleteSelected() {
@@ -214,10 +186,9 @@ class ContextMenuHandler {
     final count = selectedTrackIds.length;
 
     showDialog(
-      context: context, // Use handler's context
+      context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
-          // ... (dialog content remains the same) ...
           title: const Text('Confirm Delete'),
           content: Text('Are you sure you want to remove $count item(s)?'),
           actions: <Widget>[
@@ -229,7 +200,7 @@ class ContextMenuHandler {
               child: const Text('Delete', style: TextStyle(color: Colors.red)),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
-                _performDelete(); // Call the delete logic below
+                _performDelete();
               },
             ),
           ],
@@ -243,7 +214,6 @@ class ContextMenuHandler {
     final audioPlayerBloc = BlocProvider.of<AudioPlayerBloc>(context);
     final idsToDelete = List<int>.from(selectedTrackIds);
 
-    // Stop player if deleted track is playing
     Track? currentlyPlayingTrack;
     final playerState = audioPlayerBloc.state;
     if (playerState is AudioPlayerLoaded) {
@@ -253,7 +223,6 @@ class ContextMenuHandler {
         currentTracks = trackDataState.tracks;
       else if (trackDataState is TrackDataProcessingNeeded)
         currentTracks = trackDataState.tracks;
-      // Add other states if needed
       try {
         currentlyPlayingTrack = currentTracks.firstWhere(
           (t) => t.path == playerState.currentSource,
@@ -267,14 +236,12 @@ class ContextMenuHandler {
       audioPlayerBloc.add(StopAudio());
     }
 
-    // Dispatch delete events to TrackDataBloc
     for (final trackId in idsToDelete) {
       collectionBloc.add(RemoveTrack(trackId));
     }
-    // Let HomeScreen clear selection based on BLoC state update
   }
 
-  // --- Menu Item Building ---
+  // --- Menu Item Building remains the same ---
   List<CustomContextMenuItem> _buildContextMenuItems(Track track) {
     final playlistState = BlocProvider.of<PlaylistBloc>(context).state;
     final bool isSingleSelection =
@@ -295,11 +262,7 @@ class ContextMenuHandler {
           playlistState.playlists.map((playlist) {
             return CustomContextMenuItem(
               label: '  ${playlist.name}',
-              onTap:
-                  () => _handleAddToPlaylist(
-                    playlist.id,
-                    track,
-                  ), // Call internal handler
+              onTap: () => _handleAddToPlaylist(playlist.id, track),
             );
           }),
         );
@@ -320,13 +283,12 @@ class ContextMenuHandler {
         label: 'Play Now',
         icon: Icons.play_arrow,
         enabled: isSingleSelection,
-        onTap: () => onPlayTrack(track, false), // Use passed callback for play
+        onTap: () => onPlayTrack(track, false),
       ),
       CustomContextMenuItem(
         label: track.isUrl ? 'Open URL in Browser' : 'Reveal in Finder',
         icon: track.isUrl ? Icons.open_in_browser : Icons.folder_open,
         onTap: () {
-          // Call internal handlers
           if (track.isUrl) {
             _handleOpenUrl(track.path);
           } else {
@@ -339,7 +301,7 @@ class ContextMenuHandler {
         label: 'Edit Details',
         icon: Icons.edit_note,
         enabled: isSingleSelection,
-        onTap: () => _handleEditTrack(track), // Call internal handler
+        onTap: () => _handleEditTrack(track),
       ),
       CustomContextMenuItem(
         label:
@@ -348,24 +310,24 @@ class ContextMenuHandler {
                 : 'Delete from Collection',
         icon: Icons.delete_outline,
         color: Colors.red,
-        onTap: confirmAndDeleteSelected, // Call internal handler
+        onTap: confirmAndDeleteSelected,
       ),
     ];
   }
 
   // Position calculation helpers remain the same
   double _calculateHorizontalPosition(double dx, double screenWidth) {
-    const menuWidth = 200.0;
+    const menuWidth = 200.0; // Estimate
     if (dx + menuWidth > screenWidth) {
-      return screenWidth - menuWidth - 10;
+      return screenWidth - menuWidth - 10; // Adjust if overflows right
     }
     return dx.clamp(10.0, screenWidth - menuWidth - 10);
   }
 
   double _calculateVerticalPosition(double dy, double screenHeight) {
-    const menuHeight = 250.0;
+    const menuHeight = 250.0; // Estimate
     if (dy + menuHeight > screenHeight) {
-      return screenHeight - menuHeight - 10;
+      return screenHeight - menuHeight - 10; // Adjust if overflows bottom
     }
     return dy.clamp(10.0, screenHeight - menuHeight - 10);
   }
