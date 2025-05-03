@@ -23,7 +23,7 @@ class CombinedAudioPlayerWidget extends StatefulWidget {
   final VoidCallback onToggle;
   final VoidCallback? onPreviousPressed;
   final VoidCallback? onNextPressed;
-  final double maxExpandedHeight;
+  // final double maxExpandedHeight;
   final String? activeCollectionName;
 
   const CombinedAudioPlayerWidget({
@@ -33,7 +33,7 @@ class CombinedAudioPlayerWidget extends StatefulWidget {
     required this.onToggle,
     this.onPreviousPressed,
     this.onNextPressed,
-    this.maxExpandedHeight = 0.0,
+    // this.maxExpandedHeight = 100.0,
     this.activeCollectionName,
   }) : super(key: key);
 
@@ -49,6 +49,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   double _currentVolume = 1.0;
   bool _isDraggingVolume = false;
   final double _minimizedPlayerHeight = 60.0;
+  final double _maximalPlayerHeight = 170.0;
 
   final TextEditingController _notesController = TextEditingController();
   bool _isNoteExpanded = false;
@@ -81,10 +82,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       duration: const Duration(milliseconds: 250),
     );
     _playerHeightAnimation = Tween<double>(
-      begin: widget.maxExpandedHeight.clamp(
-        _minimizedPlayerHeight + 200,
-        500.0,
-      ),
+      begin: _maximalPlayerHeight,
       end: _minimizedPlayerHeight,
     ).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
@@ -114,17 +112,6 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
       } else {
         _animationController.reverse();
       }
-    }
-    if (widget.maxExpandedHeight != oldWidget.maxExpandedHeight) {
-      _playerHeightAnimation = Tween<double>(
-        begin: widget.maxExpandedHeight.clamp(
-          _minimizedPlayerHeight + 200,
-          500.0,
-        ),
-        end: _minimizedPlayerHeight,
-      ).animate(
-        CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
-      );
     }
     // No longer need to check trackForDisplay changes
   }
@@ -941,16 +928,44 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // --- Top Section: Title & Artist (Combined & Left Aligned) ---
-                Text(
-                  '${track.title} - ${track.artist}',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 12,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                Row(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.center, // Vertically align items
+                  children: [
+                    // Wrap Title and Rating in Expanded to push button to the right
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        // Prevent title pushing rating too far if very long
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Use Flexible for the Text to allow shrinking/ellipsis
+                          Flexible(
+                            child: Text(
+                              '${track.title} - ${track.artist}',
+                              style: Theme.of(
+                                context,
+                              ).textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w500,
+                                fontSize: 12,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          // Rating bar - Removed Align wrapper as Row's crossAxisAlignment handles it
+                          _buildRatingBar(track.id!),
+                        ],
+                      ),
+                    ),
+                    // const Spacer(), // Alternative: use Spacer instead of Expanded wrapper above
+
+                    // --- MOVED TOGGLE BUTTON HERE ---
+                    _buildToggleButton(context),
+                  ],
                 ),
+
                 const SizedBox(height: 10),
 
                 // --- Main Interactive Row ---
@@ -963,13 +978,24 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       // --- Call Helper Functions ---
-                      _buildHomeButton(context),
-                      const SizedBox(width: 8),
-                      _buildPlayerControls(
-                        context,
-                        playerState,
-                        controlsEnabled,
-                      ), // Pass state and enabled flag
+                      // _buildHomeButton(context),
+                      // const SizedBox(width: 8),
+                      Column(
+                        mainAxisAlignment:
+                            MainAxisAlignment.center, // Adjust alignment
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start, // Adjust alignment
+                        children: [
+                          _buildPlayerControls(
+                            // Playback controls on top
+                            context,
+                            playerState,
+                            controlsEnabled,
+                          ),
+                          const SizedBox(height: 8), // Add spacing
+                          _buildVolumeButton(context), // Volume button below
+                        ],
+                      ),
                       const SizedBox(width: 12),
 
                       // --- Waveform (Specific to expanded view) ---
@@ -1330,52 +1356,40 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                       ),
                       const SizedBox(width: 12), // Spacer
                       // --- Call Helper Functions ---
-                      _buildVolumeButton(context),
-                      const SizedBox(width: 4),
-                      _buildToggleButton(
-                        context,
-                      ), // Always "up" arrow here implicitly
+                      // _buildVolumeButton(context),
+                      // const SizedBox(width: 4),
+                      _buildAddTagButton(context),
                     ],
                   ),
                 ), // End ConstrainedBox for Main Row
-                // --- Rating Section ---
-                Padding(
-                  /* ... Rating section ... */
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _buildRatingBar(track.id!),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _buildAddTagButton(context),
+
                 const SizedBox(width: 4),
 
                 // --- Marker Button (Specific to expanded) ---
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.bookmark_add_outlined),
-                      tooltip: 'Add Time Marker',
-                      iconSize: 24,
-                      color:
-                          canInteract
-                              ? Theme.of(context).colorScheme.secondary
-                              : disabledColor,
-                      onPressed:
-                          canInteract
-                              ? () {
-                                if (mounted) {
-                                  setState(() {
-                                    _isTimeMarkingMode = true;
-                                  });
-                                }
-                              }
-                              : null,
-                    ),
-                  ],
-                ),
+                // Row(
+                //   mainAxisAlignment: MainAxisAlignment.end,
+                //   children: [
+                //     IconButton(
+                //       icon: const Icon(Icons.bookmark_add_outlined),
+                //       tooltip: 'Add Time Marker',
+                //       iconSize: 24,
+                //       color:
+                //           canInteract
+                //               ? Theme.of(context).colorScheme.secondary
+                //               : disabledColor,
+                //       onPressed:
+                //           canInteract
+                //               ? () {
+                //                 if (mounted) {
+                //                   setState(() {
+                //                     _isTimeMarkingMode = true;
+                //                   });
+                //                 }
+                //               }
+                //               : null,
+                //     ),
+                //   ],
+                // ),
 
                 // --- Time Tag Input Row ---
                 Padding(
@@ -1427,7 +1441,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 ),
 
                 // --- Notes Section ---
-                _buildNotesSection(), // Keep existing notes section
+                // _buildNotesSection(), // Keep existing notes section
               ],
             ),
           ),
@@ -1446,7 +1460,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
         ...List.generate(5, (index) {
           final ratingValue = index + 1;
           return IconButton(
-            iconSize: 20, // Smaller stars
+            iconSize: 15, // Smaller stars
             padding: const EdgeInsets.symmetric(
               horizontal: 1,
             ), // Tighter padding

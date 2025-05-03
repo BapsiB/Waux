@@ -1155,10 +1155,10 @@ class _HomeScreenState extends State<HomeScreen> {
         (_currentlySelectedPlaylist != null ? _playlistHeaderHeight : 0) -
         MediaQuery.of(context).padding.top - // Account for status bar
         MediaQuery.of(context).padding.bottom; // Account for bottom system bars
-    final maxPlayerHeight = (availableHeight * 0.6).clamp(
-      200.0,
-      250.0,
-    ); // Example: 80% of remaining height
+    // final maxPlayerHeight = (availableHeight * 0.6).clamp(
+    //   200.0,
+    //   250.0,
+    // ); // Example: 80% of remaining height
 
     return MultiBlocListener(
       listeners: [
@@ -1359,7 +1359,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               onToggle: _handlePlayerToggle,
                               onPreviousPressed: _playPreviousTrack,
                               onNextPressed: _playNextTrack,
-                              maxExpandedHeight: maxPlayerHeight,
+                              // maxExpandedHeight: maxPlayerHeight,
                               activeCollectionName: activeCollectionName,
                             );
                             // } else {
