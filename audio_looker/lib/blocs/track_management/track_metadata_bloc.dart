@@ -28,6 +28,13 @@ class TrackMetadataBloc extends Bloc<TrackMetadataEvent, TrackMetadataState> {
     on<UpdateTrackTitle>(_onUpdateTrackTitle); // Add this
     on<UpdateTrackArtist>(_onUpdateTrackArtist); // Add this
     on<UpdateTrackAlbum>(_onUpdateTrackAlbum); // Add this
+    on<UpdateTrackAlbumArtist>(_onUpdateTrackAlbumArtist);
+    on<UpdateTrackComposer>(_onUpdateTrackComposer);
+    on<UpdateTrackGenre>(_onUpdateTrackGenre);
+    on<UpdateTrackYear>(_onUpdateTrackYear);
+    on<UpdateTrackNumber>(_onUpdateTrackNumber);
+    on<UpdateTrackDiscNumber>(_onUpdateTrackDiscNumber);
+    on<UpdateTrackBpm>(_onUpdateTrackBpm);
   }
 
   Future<void> _onUpdateTrackTitle(
@@ -90,6 +97,156 @@ class TrackMetadataBloc extends Bloc<TrackMetadataEvent, TrackMetadataState> {
         TrackMetadataUpdateError(
           trackId: event.trackId,
           message: "Failed to update album: ${e.toString()}",
+        ),
+      );
+    }
+  }
+
+  Future<void> _onUpdateTrackAlbumArtist(
+    UpdateTrackAlbumArtist event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      await _collectionService.updateTrackAlbumArtist(
+        event.trackId,
+        event.value,
+      );
+      print(
+        "TrackMetadataBloc: Updated albumArtist for track ${event.trackId}",
+      );
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating albumArtist: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update album artist: ${e.toString()}",
+        ),
+      );
+    }
+  }
+
+  Future<void> _onUpdateTrackComposer(
+    UpdateTrackComposer event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      await _collectionService.updateTrackComposer(event.trackId, event.value);
+      print("TrackMetadataBloc: Updated composer for track ${event.trackId}");
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating composer: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update composer: ${e.toString()}",
+        ),
+      );
+    }
+  }
+
+  Future<void> _onUpdateTrackGenre(
+    UpdateTrackGenre event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      await _collectionService.updateTrackGenre(event.trackId, event.value);
+      print("TrackMetadataBloc: Updated genre for track ${event.trackId}");
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating genre: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update genre: ${e.toString()}",
+        ),
+      );
+    }
+  }
+
+  Future<void> _onUpdateTrackYear(
+    UpdateTrackYear event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      await _collectionService.updateTrackYear(event.trackId, event.value);
+      print("TrackMetadataBloc: Updated year for track ${event.trackId}");
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating year: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update year: ${e.toString()}",
+        ),
+      );
+    }
+  }
+
+  Future<void> _onUpdateTrackNumber(
+    UpdateTrackNumber event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      await _collectionService.updateTrackNumber(event.trackId, event.value);
+      print(
+        "TrackMetadataBloc: Updated trackNumber for track ${event.trackId}",
+      );
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating trackNumber: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update track number: ${e.toString()}",
+        ),
+      );
+    }
+  }
+
+  Future<void> _onUpdateTrackDiscNumber(
+    UpdateTrackDiscNumber event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      await _collectionService.updateTrackDiscNumber(
+        event.trackId,
+        event.value,
+      );
+      print("TrackMetadataBloc: Updated discNumber for track ${event.trackId}");
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating discNumber: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update disc number: ${e.toString()}",
+        ),
+      );
+    }
+  }
+
+  Future<void> _onUpdateTrackBpm(
+    UpdateTrackBpm event,
+    Emitter<TrackMetadataState> emit,
+  ) async {
+    emit(TrackMetadataUpdating(trackId: event.trackId));
+    try {
+      await _collectionService.updateTrackBpm(event.trackId, event.value);
+      print("TrackMetadataBloc: Updated bpm for track ${event.trackId}");
+      emit(TrackMetadataUpdateSuccess(trackId: event.trackId));
+    } catch (e) {
+      print('TrackMetadataBloc Error updating bpm: $e');
+      emit(
+        TrackMetadataUpdateError(
+          trackId: event.trackId,
+          message: "Failed to update BPM: ${e.toString()}",
         ),
       );
     }

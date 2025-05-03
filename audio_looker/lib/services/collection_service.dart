@@ -33,12 +33,27 @@ class Track {
   final int rating; // 0-5 stars
   final String comment; // User comments
   final List<String> generalTags; // General tags for the whole track
+  final String? albumArtist;
+  final String? composer;
+  final String? genre;
+  final int? year;
+  final int? trackNumber;
+  final int? discNumber;
+  final int? bpm;
 
   Track({
     this.id,
     required this.title,
     required this.artist,
     required this.album,
+    this.albumArtist,
+    this.composer,
+    this.genre,
+    this.year,
+    this.trackNumber,
+    this.discNumber,
+    this.bpm,
+
     required this.path,
     required this.isUrl,
     required this.duration,
@@ -55,6 +70,13 @@ class Track {
       title: json['title'],
       artist: json['artist'],
       album: json['album'],
+      albumArtist: json['albumArtist'],
+      composer: json['composer'],
+      genre: json['genre'],
+      year: json['year'],
+      trackNumber: json['trackNumber'],
+      discNumber: json['discNumber'],
+      bpm: json['bpm'],
       path: json['path'],
       isUrl:
           json['isUrl'] is bool
@@ -119,6 +141,13 @@ class Track {
       'title': title,
       'artist': artist,
       'album': album,
+      'albumArtist': albumArtist,
+      'composer': composer,
+      'genre': genre,
+      'year': year,
+      'trackNumber': trackNumber,
+      'discNumber': discNumber,
+      'bpm': bpm,
       'path': path,
       'isUrl': isUrl ? 1 : 0,
       'duration': duration,
@@ -137,6 +166,13 @@ class Track {
     String? title,
     String? artist,
     String? album,
+    String? albumArtist,
+    String? composer,
+    String? genre,
+    int? year,
+    int? trackNumber,
+    int? discNumber,
+    int? bpm,
     String? path,
     bool? isUrl,
     int? duration,
@@ -151,6 +187,13 @@ class Track {
       title: title ?? this.title,
       artist: artist ?? this.artist,
       album: album ?? this.album,
+      albumArtist: albumArtist ?? this.albumArtist,
+      composer: composer ?? this.composer,
+      genre: genre ?? this.genre,
+      year: year ?? this.year,
+      trackNumber: trackNumber ?? this.trackNumber,
+      discNumber: discNumber ?? this.discNumber,
+      bpm: bpm ?? this.bpm,
       path: path ?? this.path,
       isUrl: isUrl ?? this.isUrl,
       duration: duration ?? this.duration,
@@ -236,7 +279,7 @@ class CollectionDefinition {
 
 class CollectionService {
   // --- Constants ---
-  static const int _databaseVersion = 4; // <<< INCREMENTED DB VERSION
+  static const int _databaseVersion = 5; // <<< INCREMENTED DB VERSION
   static const String tableMusic = 'music';
   static const String tablePlaylists = 'playlists';
   static const String tablePlaylistTracks = 'playlist_tracks';
@@ -248,6 +291,13 @@ class CollectionService {
   static const String columnTitle = 'title';
   static const String columnArtist = 'artist';
   static const String columnAlbum = 'album';
+  static const String columnAlbumArtist = 'albumArtist';
+  static const String columnComposer = 'composer';
+  static const String columnGenre = 'genre';
+  static const String columnYear = 'year';
+  static const String columnTrackNumber = 'trackNumber';
+  static const String columnDiscNumber = 'discNumber';
+  static const String columnBpm = 'bpm';
   static const String columnPath = 'path';
   static const String columnIsUrl = 'isUrl';
   static const String columnDuration = 'duration';
@@ -459,6 +509,10 @@ class CollectionService {
       CREATE TABLE IF NOT EXISTS $tableMusic (
         $columnId INTEGER PRIMARY KEY, $columnTitle TEXT NOT NULL,
         $columnArtist TEXT NOT NULL, $columnAlbum TEXT NOT NULL,
+        $columnAlbumArtist TEXT, $columnComposer TEXT,
+        $columnGenre TEXT, $columnYear INTEGER,
+        $columnTrackNumber INTEGER, $columnDiscNumber INTEGER,
+        $columnBpm INTEGER,
         $columnPath TEXT NOT NULL, $columnIsUrl INTEGER NOT NULL,
         $columnDuration INTEGER NOT NULL, $columnTimeMarkers TEXT,
         $columnWaveformData TEXT, $columnRating INTEGER DEFAULT 0,
@@ -586,6 +640,32 @@ class CollectionService {
         print("Error adding '$tableUiSettings' table: $e");
       }
     }
+    // --- NEW: v4 -> v5 upgrade (Add new metadata columns to music table) ---
+    if (oldVersion < 5) {
+      print("Applying v4 -> v5 upgrades (Adding metadata columns)...");
+      Future<void> addColumn(String name, String type) async {
+        try {
+          await db.execute('ALTER TABLE $tableMusic ADD COLUMN $name $type');
+          print("Added column '$name' to '$tableMusic'.");
+        } catch (e) {
+          // Ignore error if column already exists (common in development)
+          if (e.toString().contains('duplicate column name')) {
+            print("Column '$name' already exists.");
+          } else {
+            print("Error adding column '$name': $e");
+            // Consider rethrowing if it's a critical error
+          }
+        }
+      }
+
+      await addColumn(columnAlbumArtist, 'TEXT');
+      await addColumn(columnComposer, 'TEXT');
+      await addColumn(columnGenre, 'TEXT');
+      await addColumn(columnYear, 'INTEGER');
+      await addColumn(columnTrackNumber, 'INTEGER');
+      await addColumn(columnDiscNumber, 'INTEGER');
+      await addColumn(columnBpm, 'INTEGER');
+    }
   }
 
   // --- Root Folder Management ---
@@ -686,6 +766,92 @@ class CollectionService {
       rethrow; // Re-throw to be caught by BLoC
     }
   }
+
+  // --- ADDED: Update methods for new metadata ---
+  Future<void> updateTrackAlbumArtist(int trackId, String? value) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnAlbumArtist: value},
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated albumArtist for track $trackId");
+  }
+
+  Future<void> updateTrackComposer(int trackId, String? value) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnComposer: value},
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated composer for track $trackId");
+  }
+
+  Future<void> updateTrackGenre(int trackId, String? value) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnGenre: value},
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated genre for track $trackId");
+  }
+
+  Future<void> updateTrackYear(int trackId, int? value) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnYear: value},
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated year for track $trackId");
+  }
+
+  Future<void> updateTrackNumber(int trackId, int? value) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnTrackNumber: value},
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated trackNumber for track $trackId");
+  }
+
+  Future<void> updateTrackDiscNumber(int trackId, int? value) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnDiscNumber: value},
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated discNumber for track $trackId");
+  }
+
+  Future<void> updateTrackBpm(int trackId, int? value) async {
+    if (_database == null || !_database!.isOpen)
+      throw Exception("Database not open");
+    await _database!.update(
+      tableMusic,
+      {columnBpm: value},
+      where: '$columnId = ?',
+      whereArgs: [trackId],
+    );
+    print("CollectionService: Updated bpm for track $trackId");
+  }
+  // --- END ADDED Update methods ---
 
   List<String> getRootFolders() {
     if (_activeCollectionDefinition?.type == CollectionType.shared) {

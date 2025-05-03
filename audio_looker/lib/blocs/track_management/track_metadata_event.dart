@@ -34,6 +34,62 @@ class UpdateTrackAlbum extends TrackMetadataEvent {
   List<Object?> get props => [trackId, album];
 }
 
+class UpdateTrackAlbumArtist extends TrackMetadataEvent {
+  final int trackId;
+  final String? value; // Nullable string
+  const UpdateTrackAlbumArtist(this.trackId, this.value);
+  @override
+  List<Object?> get props => [trackId, value];
+}
+
+class UpdateTrackComposer extends TrackMetadataEvent {
+  final int trackId;
+  final String? value; // Nullable string
+  const UpdateTrackComposer(this.trackId, this.value);
+  @override
+  List<Object?> get props => [trackId, value];
+}
+
+class UpdateTrackGenre extends TrackMetadataEvent {
+  final int trackId;
+  final String? value; // Nullable string
+  const UpdateTrackGenre(this.trackId, this.value);
+  @override
+  List<Object?> get props => [trackId, value];
+}
+
+class UpdateTrackYear extends TrackMetadataEvent {
+  final int trackId;
+  final int? value; // Nullable int
+  const UpdateTrackYear(this.trackId, this.value);
+  @override
+  List<Object?> get props => [trackId, value];
+}
+
+class UpdateTrackNumber extends TrackMetadataEvent {
+  final int trackId;
+  final int? value; // Nullable int
+  const UpdateTrackNumber(this.trackId, this.value);
+  @override
+  List<Object?> get props => [trackId, value];
+}
+
+class UpdateTrackDiscNumber extends TrackMetadataEvent {
+  final int trackId;
+  final int? value; // Nullable int
+  const UpdateTrackDiscNumber(this.trackId, this.value);
+  @override
+  List<Object?> get props => [trackId, value];
+}
+
+class UpdateTrackBpm extends TrackMetadataEvent {
+  final int trackId;
+  final int? value; // Nullable int
+  const UpdateTrackBpm(this.trackId, this.value);
+  @override
+  List<Object?> get props => [trackId, value];
+}
+
 /// Event to update the rating of a specific track.
 class UpdateTrackRating extends TrackMetadataEvent {
   final int trackId;
