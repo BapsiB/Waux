@@ -286,6 +286,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _anchorTrackId = newAnchorId;
       _selectedTrackForPlayer = newSelectedTrackForPlayer;
     });
+
+    _initializeHandlers();
   }
 
   void _selectTrackForPlayer(Track track) {

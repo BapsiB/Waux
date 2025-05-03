@@ -692,13 +692,16 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         );
       }
     }
-    // --- END MODIFICATION ---
 
     if (mounted && (addedRows.isNotEmpty || removedRows.isNotEmpty)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) FocusScope.of(context).requestFocus(_focusNode);
       });
     }
+
+    print(
+      "SelectionChange: Shift=$isShiftPressed, Ctrl/Meta=$isCtrlPressed. Added: ${addedRows.length}, Removed: ${removedRows.length}",
+    );
   }
 
   // Updated method to handle resize logic
