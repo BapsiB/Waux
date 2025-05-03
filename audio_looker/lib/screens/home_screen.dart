@@ -1382,12 +1382,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-          bottomNavigationBar: const WaveformProgressBar(),
-          floatingActionButton: FloatingActionButton.small(
-            onPressed: _showAddMenu,
-            tooltip: 'Add...',
-            child: const Icon(Icons.add),
-          ),
         ),
       ),
     );
