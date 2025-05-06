@@ -136,13 +136,11 @@ class TrackDataSource extends DataGridSource {
     _dataGridRows =
         _trackData.map<DataGridRow>((track) {
           final trackId = track.id ?? -1;
-          // --- Keep this structure based on ACTUAL track data ---
+          // Cells are created for all fields that *might* be columns,
+          // but only those in _currentColumnOrder will be rendered by buildRow.
           return DataGridRow(
             cells: [
-              DataGridCell<int>(
-                columnName: 'id',
-                value: trackId,
-              ), // Keep id cell
+              DataGridCell<int>(columnName: 'id', value: trackId),
               DataGridCell<Track>(columnName: 'preview', value: track),
               DataGridCell<String>(columnName: 'title', value: track.title),
               DataGridCell<String>(columnName: 'artist', value: track.artist),
@@ -151,6 +149,20 @@ class TrackDataSource extends DataGridSource {
               DataGridCell<Track>(columnName: 'tags', value: track),
               DataGridCell<int>(columnName: 'duration', value: track.duration),
               DataGridCell<Track>(columnName: 'source', value: track),
+              // Add cells for other potential metadata if they can be columns
+              DataGridCell<String?>(
+                columnName: 'albumArtist',
+                value: track.albumArtist,
+              ),
+              DataGridCell<String?>(
+                columnName: 'composer',
+                value: track.composer,
+              ),
+              DataGridCell<String?>(columnName: 'genre', value: track.genre),
+              DataGridCell<int?>(columnName: 'year', value: track.year),
+              DataGridCell<int?>(columnName: 'bpm', value: track.bpm),
+              // Fields like discNumber, trackNumber, path (as display), timeMarkers, comment
+              // are NOT included here as cells for displayable columns.
             ],
           );
         }).toList();
@@ -237,6 +249,11 @@ class TrackDataSource extends DataGridSource {
           case 'title':
           case 'artist':
           case 'album':
+          case 'albumArtist':
+          case 'composer':
+          case 'genre':
+          case 'year':
+          case 'bpm':
             if (isEditing) {
               // --- Show TextField for editing ---
               // Wrap with Builder to get context for Theme
@@ -319,9 +336,13 @@ class TrackDataSource extends DataGridSource {
                     child: textWidget,
                   ),
                 );
-              } else {
-                // For Artist/Album, add hover filter icon logic
-                final String fieldName = columnName;
+              } else if ([
+                'artist',
+                'album',
+                'albumArtist',
+                'composer',
+                'genre',
+              ].contains(columnName)) {
                 cellContent = Row(
                   children: [
                     Expanded(child: textWidget),
@@ -335,15 +356,19 @@ class TrackDataSource extends DataGridSource {
                               cellValue.contains(' ')
                                   ? '"$cellValue"'
                                   : cellValue;
-
-                          final filterString = '$fieldName:$filterValue';
+                          final filterString = '$columnName:$filterValue';
                           onSetSearchText(filterString);
                         },
                       )
                     else
-                      const SizedBox(width: 30), // Placeholder
+                      const SizedBox(
+                        width: 30,
+                      ), // Placeholder to maintain row height consistency
                   ],
                 );
+              } else {
+                cellContent =
+                    textWidget; // For year, bpm - no filter icon for now
               }
             }
             break;

@@ -149,15 +149,15 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       'width': 150.0,
       'visible': true,
       'label': 'Tags',
-      'allowSorting': false,
+      'allowSorting': false, // Sorting for tags can be complex
       'isNumeric': false,
     },
     'duration': {
-      'width': 80.0, // Adjust width as needed
-      'visible': true, // Make it visible by default
+      'width': 80.0,
+      'visible': true,
       'label': 'Duration',
-      'allowSorting': true, // Allow sorting by duration
-      'isNumeric': true, // Important for sorting
+      'allowSorting': true,
+      'isNumeric': true,
     },
     'source': {
       'width': 60.0,
@@ -166,7 +166,46 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       'allowSorting': false,
       'isNumeric': false,
     },
-    // Add other potential columns like 'duration' if needed
+    // Other potential columns (not visible by default unless saved in config)
+    // These could be added by the user via a column picker UI in the future.
+    'albumArtist': {
+      'width': 150.0,
+      'visible': false, // Not visible by default
+      'label': 'Album Artist',
+      'allowSorting': true,
+      'isNumeric': false,
+    },
+    'composer': {
+      'width': 150.0,
+      'visible': false, // Not visible by default
+      'label': 'Composer',
+      'allowSorting': true,
+      'isNumeric': false,
+    },
+    'genre': {
+      'width': 100.0,
+      'visible': false, // Not visible by default
+      'label': 'Genre',
+      'allowSorting': true,
+      'isNumeric': false,
+    },
+    'year': {
+      'width': 70.0,
+      'visible': false, // Not visible by default
+      'label': 'Year',
+      'allowSorting': true,
+      'isNumeric': true,
+    },
+    'bpm': {
+      'width': 70.0,
+      'visible': false, // Not visible by default
+      'label': 'BPM',
+      'allowSorting': true,
+      'isNumeric': true,
+    },
+    // Fields explicitly EXCLUDED from being columns as per user request:
+    // 'discNumber', 'trackNumber', 'path', 'timeMarkers', 'comment'
+    // These are not included in _defaultColumnConfig, so they won't appear.
   };
 
   @override
@@ -217,7 +256,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         try {
           originalTrack = widget.tracks.firstWhere((t) => t.id == trackId);
         } catch (e) {
-          /* Handle error */
+          print("Error finding track for editing: $e");
         }
         final originalValue =
             originalTrack != null
@@ -232,16 +271,34 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
             final metadataBloc = context.read<TrackMetadataBloc>();
             switch (columnName) {
               case 'title':
-                // *** DISPATCH ACTUAL EVENT ***
                 metadataBloc.add(UpdateTrackTitle(trackId, newValue));
                 break;
               case 'artist':
-                // *** DISPATCH ACTUAL EVENT ***
                 metadataBloc.add(UpdateTrackArtist(trackId, newValue));
                 break;
               case 'album':
-                // *** DISPATCH ACTUAL EVENT ***
                 metadataBloc.add(UpdateTrackAlbum(trackId, newValue));
+                break;
+              // Add cases for other editable columns if they are added
+              // e.g., 'albumArtist', 'composer', 'genre', 'year', 'bpm'
+              case 'albumArtist':
+                metadataBloc.add(UpdateTrackAlbumArtist(trackId, newValue));
+                break;
+              case 'composer':
+                metadataBloc.add(UpdateTrackComposer(trackId, newValue));
+                break;
+              case 'genre':
+                metadataBloc.add(UpdateTrackGenre(trackId, newValue));
+                break;
+              case 'year':
+                metadataBloc.add(
+                  UpdateTrackYear(trackId, int.tryParse(newValue)),
+                );
+                break;
+              case 'bpm':
+                metadataBloc.add(
+                  UpdateTrackBpm(trackId, int.tryParse(newValue)),
+                );
                 break;
               default:
                 print("Warning: Tried to save unhandled column: $columnName");
@@ -279,7 +336,18 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         return track.artist;
       case 'album':
         return track.album;
-      // Add other cases if needed
+      case 'albumArtist':
+        return track.albumArtist ?? '';
+      case 'composer':
+        return track.composer ?? '';
+      case 'genre':
+        return track.genre ?? '';
+      case 'year':
+        return track.year?.toString() ?? '';
+      case 'bpm':
+        return track.bpm?.toString() ?? '';
+      // Note: 'rating', 'tags', 'duration', 'preview', 'source' are handled by custom widgets
+      // or different data types and are not directly text-editable in this generic way.
       default:
         return '';
     }
@@ -317,7 +385,14 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
         return;
 
       final String columnName = _gridColumns[columnIndex].columnName;
-      final List<String> editableColumns = ['title', 'artist', 'album'];
+      final List<String> editableColumns = [
+        'title', 'artist', 'album',
+        'albumArtist',
+        'composer',
+        'genre',
+        'year',
+        'bpm', // Add new editable fields
+      ];
 
       if (editableColumns.contains(columnName)) {
         final dataRow =
@@ -1027,9 +1102,12 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
                   final String tappedColumnName =
                       _gridColumns[columnIndex].columnName;
                   final List<String> editableColumns = [
-                    'title',
-                    'artist',
-                    'album',
+                    'title', 'artist', 'album',
+                    'albumArtist',
+                    'composer',
+                    'genre',
+                    'year',
+                    'bpm', // Added new editable fields
                   ];
                   final bool isTappedCellEditable = editableColumns.contains(
                     tappedColumnName,
