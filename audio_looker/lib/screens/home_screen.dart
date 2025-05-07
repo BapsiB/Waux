@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
+import 'package:collection/collection.dart';
 
 // Import BLoCs
 import '../blocs/collection_management/collection_management_bloc.dart';
@@ -90,6 +91,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String? activeCollectionName;
 
+  // For managing track table column visibility menu
+  final GlobalKey<TrackTableWidgetState> _trackTableKey =
+      GlobalKey<TrackTableWidgetState>();
+  Map<String, dynamic> _trackTableDefaultConfig = {};
+  Set<String> _trackTableVisibleColumns = {};
+  bool _isTrackTableConfigLoaded = false;
+
   @override
   void initState() {
     super.initState();
@@ -98,6 +106,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _searchController.addListener(_onSearchChanged);
     _setupAudioPlayerListener();
     _setupCollectionListener();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _handleTrackTableConfigChange();
+    });
   }
 
   @override
@@ -201,6 +212,9 @@ class _HomeScreenState extends State<HomeScreen> {
           _currentlySelectedPlaylistId = null;
           _currentlySelectedPlaylist = null;
           _searchController.clear();
+          _trackTableDefaultConfig = {};
+          _trackTableVisibleColumns = {};
+          _isTrackTableConfigLoaded = false;
         });
         _initializeHandlers();
       }
@@ -214,6 +228,17 @@ class _HomeScreenState extends State<HomeScreen> {
     _searchController.dispose();
     _folderTreeViewKeysNotifier.dispose();
     super.dispose();
+  }
+
+  void _toggleColumnVisibility(String columnName) {
+    final TrackTableWidgetState? trackTableState = _trackTableKey.currentState;
+    if (trackTableState != null) {
+      trackTableState.toggleColumnVisibilityAndUpdate(columnName);
+    } else {
+      print(
+        "HomeScreen: Cannot toggle column visibility, _trackTableKey.currentState is null.",
+      );
+    }
   }
 
   void _handlePlayerToggle() {
@@ -230,6 +255,41 @@ class _HomeScreenState extends State<HomeScreen> {
       _anchorTrackId = null;
     });
     _initializeHandlers();
+  }
+
+  void _handleTrackTableConfigChange() {
+    if (!mounted) return;
+    final TrackTableWidgetState? trackTableState = _trackTableKey.currentState;
+    if (trackTableState != null && trackTableState.isConfigLoadedInternal) {
+      bool configChanged =
+          !const MapEquality().equals(
+            _trackTableDefaultConfig,
+            trackTableState.defaultColumnConfigInternal,
+          ) ||
+          !const SetEquality().equals(
+            _trackTableVisibleColumns,
+            trackTableState.visibleColumnsInternal,
+          );
+
+      if (configChanged || !_isTrackTableConfigLoaded) {
+        setState(() {
+          _trackTableDefaultConfig = Map<String, dynamic>.from(
+            trackTableState.defaultColumnConfigInternal,
+          );
+          _trackTableVisibleColumns = Set<String>.from(
+            trackTableState.visibleColumnsInternal,
+          );
+          _isTrackTableConfigLoaded = true;
+          print(
+            "HomeScreen: Track table config updated. Visible: $_trackTableVisibleColumns",
+          );
+        });
+      }
+    } else {
+      print(
+        "HomeScreen: _handleTrackTableConfigChange called, but TrackTableWidget state or config not ready.",
+      );
+    }
   }
 
   void _togglePlaylistPanel() {
@@ -716,15 +776,9 @@ class _HomeScreenState extends State<HomeScreen> {
   // Build the filter bar (Search, View Toggle, Rating Filter)
   Widget _buildFilterBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        8.0,
-        8.0,
-        16.0,
-        8.0,
-      ), // Adjusted padding
+      padding: const EdgeInsets.fromLTRB(8.0, 8.0, 16.0, 8.0),
       child: Row(
         children: [
-          // Home Button (Moved from AppBar)
           IconButton(
             icon: const Icon(Icons.home),
             tooltip: 'Manage Collections',
@@ -750,18 +804,70 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? 'Switch to folder view'
                     : 'Switch to table view',
           ),
+          // New PopupMenuButton for column visibility
+          if (_viewMode == ViewMode.list && _isTrackTableConfigLoaded)
+            PopupMenuButton<String>(
+              icon: Icon(
+                Icons.view_column_outlined,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              tooltip: "Select Columns",
+              onSelected: (String columnName) {
+                _toggleColumnVisibility(columnName);
+              },
+              itemBuilder: (BuildContext context) {
+                if (!_isTrackTableConfigLoaded ||
+                    _trackTableDefaultConfig.isEmpty) {
+                  return [
+                    const PopupMenuItem(
+                      value: "_loading",
+                      enabled: false,
+                      child: Text("Loading columns..."),
+                    ),
+                  ];
+                }
 
-          // --- MODIFICATION START ---
-          // Spacer pushes subsequent widgets to the right
+                final List<PopupMenuEntry<String>> items = [];
+                final sortedColumnEntries =
+                    _trackTableDefaultConfig.entries.toList()..sort((a, b) {
+                      final String labelA =
+                          (a.value is Map && a.value['label'] is String)
+                              ? a.value['label']
+                              : a.key;
+                      final String labelB =
+                          (b.value is Map && b.value['label'] is String)
+                              ? b.value['label']
+                              : b.key;
+                      return labelA.compareTo(labelB);
+                    });
+
+                for (var entry in sortedColumnEntries) {
+                  final columnName = entry.key;
+                  final columnConfig = entry.value as Map<String, dynamic>;
+                  final String columnLabel =
+                      columnConfig['label'] as String? ?? columnName;
+
+                  if (columnName == 'preview')
+                    continue; // Skip the 'preview' column
+
+                  items.add(
+                    CheckedPopupMenuItem<String>(
+                      value: columnName,
+                      checked: _trackTableVisibleColumns.contains(columnName),
+                      child: Text(columnLabel),
+                    ),
+                  );
+                }
+                return items;
+              },
+            ),
           const Spacer(),
-
-          // Wrap TextField in SizedBox for specific width
           SizedBox(
-            width: MediaQuery.of(context).size.width * 0.2, // Approx 25% width
+            width: MediaQuery.of(context).size.width * 0.2,
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search...', // Shortened hint text
+                hintText: 'Search...',
                 prefixIcon: const Icon(Icons.search, size: 20),
                 suffixIcon:
                     _searchController.text.isNotEmpty
@@ -774,26 +880,19 @@ class _HomeScreenState extends State<HomeScreen> {
                               const SearchTracks(''),
                             );
                           },
-                          padding: EdgeInsets.zero, // Minimize padding
-                          constraints:
-                              const BoxConstraints(), // Minimize constraints
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                         )
                         : null,
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 8,
                   vertical: 0,
-                ), // Adjust padding
+                ),
               ),
-              style:
-                  Theme.of(
-                    context,
-                  ).textTheme.bodyMedium, // Ensure text isn't too large
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
           ),
-
-          // --- MODIFICATION END ---
-          const SizedBox(width: 16), // Keep space before rating filter
-          // Rating Filter Widget
+          const SizedBox(width: 16),
           BlocBuilder<TrackDataBloc, TrackDataState>(
             builder: (context, state) {
               int? currentFilterValue;
@@ -802,10 +901,8 @@ class _HomeScreenState extends State<HomeScreen> {
               } else if (state is TrackDataLoading) {
                 currentFilterValue = state.minimumRating;
               } else if (state is TrackDataProcessingNeeded) {
-                // Added state
                 currentFilterValue = state.minimumRating;
               } else if (state is TrackDataDeletingFolder) {
-                // Added state
                 currentFilterValue = state.minimumRating;
               }
 
@@ -995,9 +1092,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       _viewMode == ViewMode.list
                           ? TrackTableWidget(
                             onSetSearchText: _handleSetSearchText,
-                            key: ValueKey(
-                              'track-table-${_currentlySelectedPlaylistId ?? 'all'}-${_sortColumnName}-${_sortDirectionSf.name}',
-                            ),
+                            onColumnConfigChanged:
+                                _handleTrackTableConfigChange,
+                            key: _trackTableKey,
                             tracks: displayedTracksForTable,
                             selectedTrackIds: _selectedTrackIds,
                             audioPlayerBloc: context.read<AudioPlayerBloc>(),
@@ -1179,6 +1276,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 state.folderName,
                 state.trackCount,
               );
+            }
+            if (state is TrackDataLoaded ||
+                state is TrackDataProcessingNeeded) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _handleTrackTableConfigChange();
+              });
             }
           },
         ),

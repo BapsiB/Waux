@@ -32,6 +32,7 @@ typedef SortCallback =
 typedef PlayAndMinimizeCallback = void Function(Track track, bool togglePlay);
 typedef SelectAndOpenPlayerCallback = void Function(Track track);
 typedef DoubleTapCallback = void Function(Track track);
+typedef ColumnConfigChangedCallback = void Function();
 
 class TrackTableWidget extends StatefulWidget {
   final List<Track> tracks;
@@ -47,6 +48,7 @@ class TrackTableWidget extends StatefulWidget {
   final SelectAndOpenPlayerCallback onEditMetadata;
   final SetSearchTextCallback onSetSearchText;
   final DoubleTapCallback onRowDoubleTap;
+  final ColumnConfigChangedCallback? onColumnConfigChanged;
 
   const TrackTableWidget({
     Key? key,
@@ -63,13 +65,14 @@ class TrackTableWidget extends StatefulWidget {
     required this.onEditMetadata,
     required this.onSetSearchText,
     required this.onRowDoubleTap,
+    this.onColumnConfigChanged,
   }) : super(key: key);
 
   @override
-  _TrackTableWidgetState createState() => _TrackTableWidgetState();
+  TrackTableWidgetState createState() => TrackTableWidgetState();
 }
 
-class _TrackTableWidgetState extends State<TrackTableWidget> {
+class TrackTableWidgetState extends State<TrackTableWidget> {
   final GlobalKey<SfDataGridState> _sfDataGridKey =
       GlobalKey<SfDataGridState>();
   final FocusNode _focusNode = FocusNode();
@@ -207,6 +210,10 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     // 'discNumber', 'trackNumber', 'path', 'timeMarkers', 'comment'
     // These are not included in _defaultColumnConfig, so they won't appear.
   };
+
+  Map<String, dynamic> get defaultColumnConfigInternal => _defaultColumnConfig;
+  Set<String> get visibleColumnsInternal => _visibleColumns;
+  bool get isConfigLoadedInternal => !_isLoadingConfig;
 
   @override
   void initState() {
@@ -499,35 +506,49 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     _ensureDefaultConfigApplied(); // Ensure completeness and consistency
   }
 
-  // Ensures all required columns have settings and order is consistent
   void _ensureDefaultConfigApplied() {
-    // Ensure all default columns have at least a default width if not saved
     for (var key in _defaultColumnConfig.keys) {
       _columnWidths.putIfAbsent(
         key,
         () => (_defaultColumnConfig[key]['width'] as num).toDouble(),
       );
-    }
-    // Ensure all default visible columns are in the visible set if not saved
-    for (var key in _defaultColumnConfig.keys) {
-      if (_defaultColumnConfig[key]['visible'] as bool) {
-        _visibleColumns.add(key);
+      if (_defaultColumnConfig[key]['visible'] as bool? ?? true) {
+        // Ensure 'preview' is always visible and cannot be hidden by user config
+        if (key == 'preview') {
+          _visibleColumns.add(key);
+        } else if (!_visibleColumns.contains(key) &&
+            (_defaultColumnConfig[key]['visible'] as bool? ?? false)) {
+          // Add if default is visible and not already in _visibleColumns (e.g. from saved config)
+          _visibleColumns.add(key);
+        }
       }
     }
-    // Ensure order contains all visible columns, add missing ones at the end
-    final currentVisibleSet = Set<String>.from(_visibleColumns);
-    // Filter _columnOrder to only contain currently visible columns, preserving their order
-    List<String> finalOrder =
-        _columnOrder.where((c) => currentVisibleSet.contains(c)).toList();
-    // Add any visible columns that were missing from the saved order to the end
-    for (var col in currentVisibleSet) {
-      if (!finalOrder.contains(col)) {
-        finalOrder.add(col);
-      }
+    // Ensure 'preview' is always first if it's visible
+    if (_visibleColumns.contains('preview')) {
+      _columnOrder.remove('preview');
+      _columnOrder.insert(0, 'preview');
     }
-    _columnOrder = finalOrder;
 
-    // Ensure _visibleColumns only contains columns that actually exist in defaults
+    final currentVisibleSet = Set<String>.from(_visibleColumns);
+    List<String> finalOrder =
+        _columnOrder
+            .where(
+              (c) =>
+                  currentVisibleSet.contains(c) &&
+                  _defaultColumnConfig.containsKey(c),
+            )
+            .toList();
+
+    // Add any visible columns that were missing from _columnOrder, respecting _defaultColumnConfig order
+    List<String> defaultOrderKeys = _defaultColumnConfig.keys.toList();
+    for (String colNameFromDefault in defaultOrderKeys) {
+      if (_visibleColumns.contains(colNameFromDefault) &&
+          !finalOrder.contains(colNameFromDefault)) {
+        finalOrder.add(colNameFromDefault);
+      }
+    }
+
+    _columnOrder = finalOrder;
     _visibleColumns.removeWhere(
       (colName) => !_defaultColumnConfig.containsKey(colName),
     );
@@ -565,33 +586,51 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
 
   // Builds the GridColumn list based on the current state (_columnOrder, _visibleColumns, _columnWidths)
   void _buildGridColumnsFromState() {
-    if (!mounted) return; // Ensure widget is mounted
-
+    if (!mounted) return;
     final textTheme = Theme.of(context).textTheme;
 
-    // Ensure order reflects visibility changes
-    List<String> currentVisibleOrder =
-        _columnOrder.where((name) => _visibleColumns.contains(name)).toList();
-    for (var visibleCol in _visibleColumns) {
-      if (!currentVisibleOrder.contains(visibleCol)) {
-        currentVisibleOrder.add(visibleCol);
-      }
+    // 1. Determine the final order of VISIBLE columns based on current _columnOrder and _visibleColumns
+    // _columnOrder should ideally already be filtered by visibility by the time this is called,
+    // but we ensure it here.
+    List<String> finalVisibleOrder =
+        _columnOrder
+            .where(
+              (name) =>
+                  _visibleColumns.contains(name) &&
+                  _defaultColumnConfig.containsKey(name),
+            )
+            .toList();
+
+    // If _columnOrder somehow became empty or didn't respect _visibleColumns, rebuild it.
+    if (finalVisibleOrder.isEmpty && _visibleColumns.isNotEmpty) {
+      finalVisibleOrder =
+          _defaultColumnConfig.keys
+              .where((key) => _visibleColumns.contains(key))
+              .toList();
     }
-    _columnOrder = currentVisibleOrder; // Update the state variable
+    // Ensure 'preview' is always first if it's visible
+    if (_visibleColumns.contains('preview')) {
+      finalVisibleOrder.remove('preview');
+      finalVisibleOrder.insert(0, 'preview');
+    }
 
+    // Update the internal _columnOrder to this definitive list
+    _columnOrder = finalVisibleOrder;
+
+    // 2. Update the TrackDataSource with this exact order
+    // This is crucial for keeping SfDataGrid.columns and DataGridRowAdapter.cells in sync.
+    _trackDataSource.updateColumnOrder(_columnOrder);
+
+    // 3. Build GridColumn objects based on this final visible order
     final List<GridColumn> newColumns = [];
-
-    // Add visible columns based on the current order and visibility
-    for (final columnName in _columnOrder) {
+    for (final String columnName in _columnOrder) {
       if (_defaultColumnConfig.containsKey(columnName)) {
+        // Should always be true due to above filtering
         final config = _defaultColumnConfig[columnName];
         final width =
             _columnWidths[columnName] ?? (config['width'] as num).toDouble();
-        // Use 'none' mode after initial load/resize for stability
         final widthMode =
-            _isLayoutFrozen
-                ? ColumnWidthMode.none
-                : ColumnWidthMode.auto; // Or adjust logic
+            _isLayoutFrozen ? ColumnWidthMode.none : ColumnWidthMode.auto;
 
         Widget headerLabel;
         Alignment headerAlignment = Alignment.centerLeft;
@@ -609,10 +648,8 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
           headerLabel = Text(
             config['label'],
             style: textTheme.titleSmall,
-            overflow: TextOverflow.ellipsis, // Add this line
-            maxLines:
-                1, // Add this line (optional, but good practice with ellipsis)
-            // softWrap: false, // Alternative to maxLines: 1 if needed
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
           );
         }
 
@@ -627,16 +664,20 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
               child: headerLabel,
             ),
-            visible: true, // Columns added here are implicitly visible
+            visible: true,
           ),
         );
       }
     }
 
-    // Update the state to apply the new column list
+    // 4. Update state and notify HomeScreen
     if (mounted) {
       setState(() {
-        _gridColumns = newColumns;
+        _gridColumns =
+            newColumns; // This list's length now matches _trackDataSource._currentColumnOrder.length
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onColumnConfigChanged?.call();
       });
     } else {
       _gridColumns = newColumns;
@@ -710,6 +751,16 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _updateControllerSelection();
       });
+    }
+
+    if (widget.onColumnConfigChanged != oldWidget.onColumnConfigChanged) {
+      // If the callback itself changes, we might want to call it immediately
+      // if the config is already loaded.
+      if (isConfigLoadedInternal) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onColumnConfigChanged?.call();
+        });
+      }
     }
   }
 
@@ -904,6 +955,54 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
     _buildGridColumnsFromState(); // Rebuild columns using the updated widths
   }
 
+  // This method is public and can be called from HomeScreen
+  void toggleColumnVisibilityAndUpdate(String columnName) {
+    if (_isLoadingConfig) {
+      print(
+        "TrackTableWidget: Config still loading, cannot toggle column visibility yet.",
+      );
+      return;
+    }
+
+    setState(() {
+      if (_visibleColumns.contains(columnName)) {
+        _visibleColumns.remove(columnName);
+        print(
+          "TrackTableWidget: Hiding column $columnName. Visible: $_visibleColumns",
+        );
+      } else {
+        _visibleColumns.add(columnName);
+        print(
+          "TrackTableWidget: Showing column $columnName. Visible: $_visibleColumns",
+        );
+      }
+
+      // Rebuild _columnOrder to only include visible columns, maintaining original relative order
+      // and adding newly visible columns according to _defaultColumnConfig order.
+      List<String> newOrder =
+          _defaultColumnConfig.keys
+              .where((key) => _visibleColumns.contains(key))
+              .toList();
+
+      // Sort newOrder based on the original _columnOrder for existing visible columns
+      // This preserves the user's preferred order for columns that remain visible.
+      newOrder.sort((a, b) {
+        int indexA = _columnOrder.indexOf(a);
+        int indexB = _columnOrder.indexOf(b);
+        if (indexA != -1 && indexB != -1) return indexA.compareTo(indexB);
+        if (indexA != -1) return -1; // a was in old order, b was not
+        if (indexB != -1) return 1; // b was in old order, a was not
+        // If neither were in the old order, maintain default config order (already handled by initial creation of newOrder)
+        return 0;
+      });
+      _columnOrder = newOrder;
+      print("TrackTableWidget: Updated column order: $_columnOrder");
+    });
+
+    _saveColumnConfiguration();
+    _buildGridColumnsFromState();
+  }
+
   @override
   Widget build(BuildContext context) {
     // Show loading indicator while config is loading
@@ -976,6 +1075,7 @@ class _TrackTableWidgetState extends State<TrackTableWidget> {
 
                       // Save the new configuration
                       _saveColumnConfiguration();
+                      widget.onColumnConfigChanged?.call();
                     } else {
                       print(
                         "Column drag index out of bounds or invalid: from $fromIndex, to $toIndex",
