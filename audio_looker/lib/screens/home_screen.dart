@@ -13,6 +13,7 @@ import '../blocs/audio_player/audio_player_bloc.dart';
 import '../blocs/playlist/playlist_bloc.dart';
 import '../blocs/track_management/track_data_bloc.dart';
 import '../blocs/track_management/track_metadata_bloc.dart';
+import '../blocs/track_management/global_tag_bloc.dart';
 
 // Import Services and Models
 import '../services/collection_service.dart';
@@ -24,7 +25,7 @@ import '../widgets/folder_tree_view.dart';
 import '../widgets/track_table_widget.dart';
 import '../widgets/combined_audio_player_widget.dart';
 import '../widgets/rating_filter_widget.dart';
-import '../widgets/waveform_progress_bar.dart';
+import '../widgets/multi_metadata_editor.dart';
 
 // Import Handlers
 import '../handlers/track_selection_handler.dart';
@@ -147,6 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
       selectedTrackIds: _selectedTrackIds,
       onSelectionChanged: _handleSelectionChanged,
       onPlayTrack: _selectAndPlayTrack,
+      onShowMultiEditDialog: _showMultiEditDialog,
     );
 
     _fileHandler = FileHandler(
@@ -190,6 +192,73 @@ class _HomeScreenState extends State<HomeScreen> {
         _initializeHandlers();
       }
     });
+  }
+
+  void _showMultiEditDialog(Set<int> trackIds) {
+    if (trackIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("No tracks selected for editing.")),
+      );
+      return;
+    }
+
+    // Fetch track data from TrackDataBloc state
+    final trackDataState = context.read<TrackDataBloc>().state;
+    List<Track> tracksToEdit = [];
+
+    List<Track> sourceTracks = [];
+    if (trackDataState is TrackDataLoaded) {
+      sourceTracks = trackDataState.tracks;
+    } else if (trackDataState is TrackDataLoading &&
+        trackDataState.previousTracks != null) {
+      sourceTracks = trackDataState.previousTracks!;
+    } else if (trackDataState is TrackDataProcessingNeeded) {
+      sourceTracks = trackDataState.tracks;
+    } else if (trackDataState is TrackDataDeletingFolder &&
+        trackDataState.previousTracks != null) {
+      sourceTracks = trackDataState.previousTracks!;
+    }
+    // Add other relevant states if they might hold the tracks
+
+    if (sourceTracks.isNotEmpty) {
+      for (int id in trackIds) {
+        try {
+          tracksToEdit.add(sourceTracks.firstWhere((track) => track.id == id));
+        } catch (e) {
+          print("Could not find track with ID $id for multi-edit.");
+        }
+      }
+    }
+
+    if (tracksToEdit.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Could not load details for selected tracks."),
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false, // User must explicitly save or cancel
+      builder: (dialogContext) {
+        // Provide necessary BLoCs to the dialog
+        return MultiBlocProvider(
+          providers: [
+            BlocProvider.value(
+              value: BlocProvider.of<TrackMetadataBloc>(context),
+            ),
+            BlocProvider.value(value: BlocProvider.of<GlobalTagBloc>(context)),
+            // TrackDataBloc is not directly needed by the editor for *fetching*,
+            // as we pass the tracks directly. But it might be needed if the editor
+            // itself wants to re-fetch or react to general data changes,
+            // though typically it acts on the passed data and dispatches updates.
+          ],
+          child: MultiMetadataEditor(selectedTracks: tracksToEdit),
+        );
+      },
+    );
   }
 
   void _setupCollectionListener() {

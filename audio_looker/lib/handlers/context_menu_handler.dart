@@ -13,11 +13,15 @@ import '../blocs/playlist/playlist_bloc.dart';
 // Import models and custom menu widget
 import '../services/collection_service.dart';
 import '../widgets/custom_context_menu.dart';
+// Import the (yet to be created) multi-edit dialog
+// import '../widgets/multi_metadata_editor.dart'; // <-- Add this later
 
 class ContextMenuHandler {
   final BuildContext context; // Context for BLoC access
   final Set<int> selectedTrackIds;
   final Function(int, bool) onSelectionChanged;
+  // Modified: Let's use a callback for opening the editor
+  final Function(Set<int> trackIds) onShowMultiEditDialog;
   final Function(Track, bool) onPlayTrack;
 
   OverlayEntry? _overlayEntry;
@@ -26,6 +30,7 @@ class ContextMenuHandler {
     required this.context,
     required this.selectedTrackIds,
     required this.onSelectionChanged,
+    required this.onShowMultiEditDialog, // <-- ADDED callback
     required this.onPlayTrack,
   });
 
@@ -39,7 +44,6 @@ class ContextMenuHandler {
     }
   }
 
-  /// Shows the context menu at the tap position. Dismisses any existing menu first.
   void showContextMenu(
     BuildContext anchorContext,
     Offset tapPosition,
@@ -48,28 +52,28 @@ class ContextMenuHandler {
     print("CustomContextMenuHandler: showContextMenu called.");
     dismiss();
 
+    // Ensure the right-clicked track is part of the selection
     if (!selectedTrackIds.contains(track.id)) {
+      // Select ONLY the clicked track if it wasn't part of the selection
+      selectedTrackIds.clear();
+      selectedTrackIds.add(track.id!);
+      // Notify the parent about the selection change
       onSelectionChanged(track.id!, true);
     }
 
     final overlay = Overlay.of(anchorContext);
-    // --- FIX: Get screen size *before* OverlayEntry builder ---
     final screenSize = MediaQuery.of(anchorContext).size;
     final screenWidth = screenSize.width;
     final screenHeight = screenSize.height;
-    // --- END FIX ---
 
     _overlayEntry = OverlayEntry(
       builder: (ctx) {
-        // Use ctx instead of context to avoid shadowing
         return Positioned(
-          // --- FIX: Use pre-calculated screen dimensions ---
           left: _calculateHorizontalPosition(tapPosition.dx, screenWidth),
           top: _calculateVerticalPosition(tapPosition.dy, screenHeight),
-          // --- END FIX ---
           child: CustomContextMenu(
             items: _buildContextMenuItems(track), // Build items dynamically
-            onDismiss: dismiss, // Menu dismisses itself on item tap
+            onDismiss: dismiss,
           ),
         );
       },
@@ -79,8 +83,9 @@ class ContextMenuHandler {
     print("CustomContextMenuHandler: Inserted new menu overlay.");
   }
 
-  // --- Action Handlers remain the same ---
+  // --- Action Handlers ---
   Future<void> _handleRevealFile(String filePath) async {
+    // ... (implementation remains the same)
     try {
       if (!path_lib.isAbsolute(filePath)) {
         print("Error revealing file: Path is not absolute: $filePath");
@@ -106,6 +111,7 @@ class ContextMenuHandler {
   }
 
   Future<void> _handleOpenUrl(String url) async {
+    // ... (implementation remains the same)
     final Uri uri = Uri.parse(url);
     try {
       if (await canLaunchUrl(uri)) {
@@ -121,14 +127,20 @@ class ContextMenuHandler {
     }
   }
 
-  void _handleAddToPlaylist(String playlistId, Track track) {
+  void _handleAddToPlaylist(String playlistId) {
+    // Removed 'track' parameter
+    // Use the selectedTrackIds set directly
     final Set<int> idsToAdd = Set.from(selectedTrackIds);
-    if (!idsToAdd.contains(track.id)) idsToAdd.add(track.id!);
+    if (idsToAdd.isEmpty) {
+      print("ContextMenuHandler: No tracks selected to add to playlist.");
+      return;
+    }
 
     final collectionBloc = BlocProvider.of<TrackDataBloc>(context);
     final playlistBloc = BlocProvider.of<PlaylistBloc>(context);
     final trackDataState = collectionBloc.state;
 
+    // --- Get source tracks based on current state ---
     List<Track>? sourceTracks;
     if (trackDataState is TrackDataLoaded)
       sourceTracks = trackDataState.tracks;
@@ -137,28 +149,46 @@ class ContextMenuHandler {
     else if (trackDataState is TrackDataLoading &&
         trackDataState.previousTracks != null)
       sourceTracks = trackDataState.previousTracks;
+    else if (trackDataState is TrackDataDeletingFolder &&
+        trackDataState.previousTracks != null)
+      sourceTracks = trackDataState.previousTracks;
+    // Add other states if necessary
 
     if (sourceTracks != null) {
       int addedCount = 0;
+      int skippedCount = 0;
       for (final trackId in idsToAdd) {
         try {
+          // Find the track object using its ID
           final trackToAdd = sourceTracks.firstWhere((t) => t.id == trackId);
           playlistBloc.add(
             AddTrackToPlaylist(
               playlistId: playlistId,
-              trackPath: trackToAdd.path,
+              trackPath: trackToAdd.path, // Use the path from the found track
             ),
           );
           addedCount++;
         } catch (e) {
+          skippedCount++;
           print(
-            "ContextMenuHandler: Couldn't find track $trackId to add to playlist",
+            "ContextMenuHandler: Couldn't find track with ID $trackId to add to playlist. Skipping.",
           );
         }
       }
       if (addedCount > 0) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added $addedCount track(s) to playlist.')),
+          SnackBar(
+            content: Text(
+              'Added $addedCount track(s) to playlist.' +
+                  (skippedCount > 0 ? ' ($skippedCount skipped)' : ''),
+            ),
+          ),
+        );
+      } else if (skippedCount > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not find selected tracks to add.'),
+          ),
         );
       }
     } else {
@@ -173,15 +203,10 @@ class ContextMenuHandler {
     }
   }
 
-  void _handleEditTrack(Track track) {
-    print(
-      "ContextMenuHandler: Edit action triggered for track: ${track.title}",
-    );
-    // Use the onPlayTrack callback to signal HomeScreen to handle opening the player
-    onPlayTrack(track, false);
-  }
+  // REMOVED: _handleEditTrack is replaced by triggering the multi-edit dialog
 
   void confirmAndDeleteSelected() {
+    // ... (implementation remains the same)
     if (selectedTrackIds.isEmpty) return;
     final count = selectedTrackIds.length;
 
@@ -210,6 +235,7 @@ class ContextMenuHandler {
   }
 
   void _performDelete() {
+    // ... (implementation remains the same)
     final collectionBloc = BlocProvider.of<TrackDataBloc>(context);
     final audioPlayerBloc = BlocProvider.of<AudioPlayerBloc>(context);
     final idsToDelete = List<int>.from(selectedTrackIds);
@@ -241,11 +267,13 @@ class ContextMenuHandler {
     }
   }
 
-  // --- Menu Item Building remains the same ---
-  List<CustomContextMenuItem> _buildContextMenuItems(Track track) {
+  // --- Menu Item Building ---
+  List<CustomContextMenuItem> _buildContextMenuItems(Track rightClickedTrack) {
     final playlistState = BlocProvider.of<PlaylistBloc>(context).state;
-    final bool isSingleSelection =
-        selectedTrackIds.length == 1 && selectedTrackIds.contains(track.id);
+    final bool isSingleSelection = selectedTrackIds.length == 1;
+    // Determine if the specifically right-clicked track is the *only* selected track
+    final bool isOnlyThisTrackSelected =
+        isSingleSelection && selectedTrackIds.contains(rightClickedTrack.id);
 
     List<CustomContextMenuItem> buildPlaylistItems() {
       List<CustomContextMenuItem> items = [];
@@ -253,8 +281,8 @@ class ContextMenuHandler {
           playlistState.playlists.isNotEmpty) {
         items.add(
           const CustomContextMenuItem(
-            label: 'Add to Playlist:',
-            enabled: false,
+            label: 'Add Selection to Playlist:', // Clarify "Selection"
+            enabled: false, // Header is not enabled
             icon: Icons.playlist_add,
           ),
         );
@@ -262,16 +290,27 @@ class ContextMenuHandler {
           playlistState.playlists.map((playlist) {
             return CustomContextMenuItem(
               label: '  ${playlist.name}',
-              onTap: () => _handleAddToPlaylist(playlist.id, track),
+              // Enabled only if there's a selection
+              enabled: selectedTrackIds.isNotEmpty,
+              onTap:
+                  () => _handleAddToPlaylist(
+                    playlist.id,
+                  ), // Pass only playlist ID
             );
           }),
         );
       } else {
         items.add(
           const CustomContextMenuItem(
-            label: 'Add to Playlist: (None)',
+            label: 'Add Selection to Playlist:',
             enabled: false,
             icon: Icons.playlist_add,
+          ),
+        );
+        items.add(
+          const CustomContextMenuItem(
+            label: '  (No playlists created)',
+            enabled: false,
           ),
         );
       }
@@ -282,34 +321,60 @@ class ContextMenuHandler {
       CustomContextMenuItem(
         label: 'Play Now',
         icon: Icons.play_arrow,
-        enabled: isSingleSelection,
-        onTap: () => onPlayTrack(track, false),
+        // Enabled only if exactly one track (the right-clicked one) is selected
+        enabled: isOnlyThisTrackSelected,
+        onTap: () => onPlayTrack(rightClickedTrack, false),
       ),
+      // --- ADDED: Edit Metadata Item ---
       CustomContextMenuItem(
-        label: track.isUrl ? 'Open URL in Browser' : 'Reveal in Finder',
-        icon: track.isUrl ? Icons.open_in_browser : Icons.folder_open,
+        label: 'Edit Metadata',
+        icon: Icons.edit_note,
+        // Enabled if one or more tracks are selected
+        enabled: selectedTrackIds.isNotEmpty,
+        onTap:
+            () => onShowMultiEditDialog(
+              selectedTrackIds,
+            ), // Call the new callback
+      ),
+      // --- END ADDED ---
+      CustomContextMenuItem(
+        label:
+            rightClickedTrack.isUrl
+                ? 'Open URL in Browser'
+                : 'Reveal in Finder',
+        icon:
+            rightClickedTrack.isUrl ? Icons.open_in_browser : Icons.folder_open,
+        // This action usually applies to the right-clicked item, regardless of multi-selection
+        enabled: true,
         onTap: () {
-          if (track.isUrl) {
-            _handleOpenUrl(track.path);
+          if (rightClickedTrack.isUrl) {
+            _handleOpenUrl(rightClickedTrack.path);
           } else {
-            _handleRevealFile(track.path);
+            _handleRevealFile(rightClickedTrack.path);
           }
         },
       ),
-      ...buildPlaylistItems(),
-      CustomContextMenuItem(
-        label: 'Edit Details',
-        icon: Icons.edit_note,
-        enabled: isSingleSelection,
-        onTap: () => _handleEditTrack(track),
-      ),
+      ...buildPlaylistItems(), // Add playlist items
+      // REMOVED: Redundant 'Edit Details' - covered by 'Edit Metadata'
+      // CustomContextMenuItem(
+      //   label: 'Edit Details',
+      //   icon: Icons.edit_note,
+      //   enabled: isOnlyThisTrackSelected, // Only for single selection
+      //   onTap: () => _handleEditTrack(rightClickedTrack),
+      // ),
+      const CustomContextMenuItem(
+        label: '',
+        enabled: false,
+      ), // Divider visually
       CustomContextMenuItem(
         label:
             selectedTrackIds.length > 1
                 ? 'Delete ${selectedTrackIds.length} Items'
-                : 'Delete from Collection',
+                : 'Delete Item', // Label adjusts based on selection count
         icon: Icons.delete_outline,
         color: Colors.red,
+        // Enabled if there's any selection
+        enabled: selectedTrackIds.isNotEmpty,
         onTap: confirmAndDeleteSelected,
       ),
     ];
@@ -317,17 +382,19 @@ class ContextMenuHandler {
 
   // Position calculation helpers remain the same
   double _calculateHorizontalPosition(double dx, double screenWidth) {
-    const menuWidth = 200.0; // Estimate
+    // ... (implementation remains the same)
+    const menuWidth = 250.0; // Adjusted estimate for potentially longer text
     if (dx + menuWidth > screenWidth) {
-      return screenWidth - menuWidth - 10; // Adjust if overflows right
+      return screenWidth - menuWidth - 10;
     }
     return dx.clamp(10.0, screenWidth - menuWidth - 10);
   }
 
   double _calculateVerticalPosition(double dy, double screenHeight) {
-    const menuHeight = 250.0; // Estimate
+    // ... (implementation remains the same)
+    const menuHeight = 280.0; // Adjusted estimate
     if (dy + menuHeight > screenHeight) {
-      return screenHeight - menuHeight - 10; // Adjust if overflows bottom
+      return screenHeight - menuHeight - 10;
     }
     return dy.clamp(10.0, screenHeight - menuHeight - 10);
   }
