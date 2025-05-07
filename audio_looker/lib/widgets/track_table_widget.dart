@@ -685,28 +685,130 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
   }
 
   // Updates the SfDataGrid controller's selection based on widget.selectedTrackIds
+  // Inside TrackTableWidgetState class in lib/widgets/track_table_widget.dart
+
+  // 1. Add the helper method:
+  /// Checks if a given DataGridRow should be part of the current selection
+  /// based on widget.selectedTrackIds.
+  bool _shouldSelectRow(DataGridRow row) {
+    // Find the cell containing the ID, safely using firstWhereOrNull.
+    final idCell = row.getCells().firstWhereOrNull((c) => c.columnName == 'id');
+
+    // --- Validation Step 1: Check if ID cell exists and has a value ---
+    if (idCell?.value == null) {
+      // This row cannot be selected if it doesn't have a valid ID cell.
+      // This situation *shouldn't* occur based on how TrackDataSource is built,
+      // but checking makes the code more robust.
+      // print("[LOG] _shouldSelectRow: Skipping row - ID cell or value is null."); // Debug log (optional)
+      return false;
+    }
+
+    // --- Validation Step 2: Verify the value is an integer ---
+    // Although TrackDataSource defines it as DataGridCell<int>,
+    // an extra check prevents runtime errors if something unexpected happened.
+    if (idCell?.value is! int) {
+      print(
+        "[LOG] _shouldSelectRow: Skipping row - ID cell value is not type int (Type: ${idCell?.value.runtimeType}). Value: ${idCell?.value}",
+      ); // More detailed log
+      return false;
+    }
+
+    // --- Cast and Check Selection ---
+    final trackId = idCell?.value as int; // Safe to cast now
+    final isSelected = widget.selectedTrackIds.contains(trackId);
+
+    // print("[LOG] _shouldSelectRow: Checking Row ID $trackId -> In selection set? $isSelected"); // Verbose log (optional)
+    return isSelected;
+  }
+
+  // 2. Modify _updateControllerSelection to use the helper:
   void _updateControllerSelection() {
-    if (_isLoadingConfig || !_isColumnsInitialized)
-      return; // Don't update if loading/not ready
+    // ... (existing initial checks: mounted, loading, grid context etc.) ...
+    print("[LOG] TrackTableWidget: Running _updateControllerSelection.");
+    print(
+      "[LOG]   Target selected IDs (widget.selectedTrackIds): ${widget.selectedTrackIds}",
+    );
+
     try {
-      _dataGridController.selectedRows =
-          _trackDataSource.rows.where((row) {
-            final idCell = row.getCells().firstWhere(
-              (c) =>
-                  c.columnName ==
-                  'id', // Assumes 'id' cell exists even if not visible column
-              orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
+      final currentRows = _trackDataSource.rows;
+      print("[LOG]   Current DataSource rows count: ${currentRows.length}");
+
+      if (currentRows.isEmpty) {
+        // ... (handle empty rows) ...
+        return;
+      }
+
+      // --- Calculate the new selection using the helper function ---
+      print(
+        "[LOG]   Filtering current rows using _shouldSelectRow predicate...",
+      );
+      // Use the extracted helper method directly in the 'where' clause.
+      final List<DataGridRow> newSelectedRows =
+          currentRows.where(_shouldSelectRow).toList();
+      // --- End Calculation ---
+
+      // --- Logging the result (as before) ---
+      final List<int?> newSelectedRowIds =
+          newSelectedRows.map((r) {
+            final idCell = r.getCells().firstWhereOrNull(
+              (c) => c.columnName == 'id',
             );
-            return idCell.value != null &&
-                widget.selectedTrackIds.contains(idCell.value as int);
+            return idCell?.value as int?;
           }).toList();
-      _dataGridController.selectedRow =
-          _dataGridController.selectedRows.firstOrNull;
-    } catch (e) {
+      print(
+        "[LOG]   Calculated newSelectedRows count: ${newSelectedRows.length}",
+      );
+      print("[LOG]   Calculated newSelectedRows IDs: $newSelectedRowIds");
+      // ---
+
+      // --- Compare and Apply the selection (as before) ---
+      final currentControllerSelectedIds =
+          _dataGridController.selectedRows
+              .map((row) {
+                final idCell = row.getCells().firstWhereOrNull(
+                  (c) => c.columnName == 'id',
+                );
+                return idCell?.value as int?;
+              })
+              .whereNotNull()
+              .toSet();
+      print(
+        "[LOG]   Current Controller Selected IDs: $currentControllerSelectedIds",
+      );
+
+      final targetSelectedIds = widget.selectedTrackIds;
+
+      bool needsUpdate =
+          !const SetEquality<int>().equals(
+            currentControllerSelectedIds,
+            targetSelectedIds,
+          );
+
+      if (needsUpdate) {
+        // Optional check (as before)
+        // if (newSelectedRows.length != targetSelectedIds.length) { ... }
+
+        print(
+          "[LOG]   Applying new selection to controller: ${newSelectedRows.length} rows.",
+        );
+        _dataGridController.selectedRows = newSelectedRows; // THE ASSIGNMENT
+        _dataGridController.selectedRow = newSelectedRows.firstOrNull;
+
+        print(
+          "[LOG]   Controller selectedRows count after update: ${_dataGridController.selectedRows.length}",
+        );
+      } else {
+        print(
+          "[LOG]   Controller selection already matches target IDs. Skipping update.",
+        );
+      }
+      // ---
+    } catch (e, stackTrace) {
       debugPrint(
-        "Error updating controller selection (might be temporary): $e",
+        "TrackTableWidget: Error in _updateControllerSelection: $e\n$stackTrace",
       );
     }
+    print("[LOG] TrackTableWidget: Finished _updateControllerSelection.");
   }
 
   @override
