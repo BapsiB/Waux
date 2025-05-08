@@ -520,9 +520,44 @@ class _HomeScreenState extends State<HomeScreen> {
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.space) {
-      _playerControlHandler.togglePlayPause();
-      return KeyEventResult.handled;
+      // --- Check if a text input field has focus ---
+      final FocusNode? primaryFocus = FocusManager.instance.primaryFocus;
+      bool textInputHasFocus = false;
+
+      if (primaryFocus != null && primaryFocus.context != null) {
+        // Find the EditableText widget associated with the primary focus.
+        // EditableText is the core widget used by TextField and TextFormField.
+        final EditableText? editableText =
+            primaryFocus.context!
+                .findAncestorWidgetOfExactType<
+                  EditableText
+                >(); // <<< Keep this check
+
+        // We consider a text input focused if EditableText is found
+        textInputHasFocus = (editableText != null);
+
+        print(
+          "Space pressed. Primary focus context: ${primaryFocus.context}, EditableText found: ${editableText != null}",
+        );
+      } else {
+        print("Space pressed. No primary focus or context found.");
+      }
+      // --- End Focus Check ---
+
+      if (textInputHasFocus) {
+        print("Space ignored by global handler (Text input focused).");
+        // Let the focused text input handle the spacebar
+        return KeyEventResult.ignored;
+      } else {
+        print("Space handled by global handler (Toggling play/pause).");
+        // No text input focused, handle as play/pause toggle
+        _playerControlHandler.togglePlayPause();
+        return KeyEventResult.handled;
+      }
     }
+    // --- Pass other key events down ---
+    _folderTreeViewKeysNotifier.value =
+        HardwareKeyboard.instance.logicalKeysPressed;
     return KeyEventResult.ignored;
   }
 
