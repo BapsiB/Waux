@@ -1,12 +1,42 @@
 import '../services/collection_service.dart';
+import 'package:path/path.dart' as pathLib;
 
 List<Track> applyFilters({
   required List<Track> allTracks,
   required String searchQuery,
   required int? minRating,
+  Set<String>? playlistTrackPaths, // <<< Keep this
 }) {
   List<Track> filtered = allTracks;
 
+  // --- Playlist Filter (Apply FIRST) ---
+  if (playlistTrackPaths != null) {
+    print(
+      "Applying playlist filter: ${playlistTrackPaths.length} tracks in playlist set",
+    );
+    // Normalize paths in the playlist set ONCE for efficiency
+    // *** FIX: Explicitly cast the result of toSet() to Set<String> ***
+    final Set<String> normalizedPlaylistPaths =
+        playlistTrackPaths.map(pathLib.normalize).toSet().cast<String>();
+    filtered =
+        filtered.where((track) {
+          // Normalize the track's path for comparison
+          // Handle potential errors during normalization (e.g., invalid characters)
+          try {
+            final normalizedTrackPath = pathLib.normalize(track.path);
+            return normalizedPlaylistPaths.contains(normalizedTrackPath);
+          } catch (e) {
+            print(
+              "Warning: Could not normalize track path '${track.path}': $e",
+            );
+            return false; // Exclude tracks with paths that cannot be normalized
+          }
+        }).toList();
+    print("Playlist filter result count: ${filtered.length}");
+  }
+  // --- END Playlist Filter ---
+
+  // --- Field-Specific Filtering Logic ---
   final fieldFilterRegex = RegExp(r'^(\w+):(.+)$'); // Matches "field:value"
   final match = fieldFilterRegex.firstMatch(searchQuery);
   bool fieldFilterApplied = false;
@@ -45,13 +75,13 @@ List<Track> applyFilters({
                 );
               case 'path':
                 return track.path.toLowerCase().contains(value!);
-              // Add other filterable fields here (e.g., year, genre)
-              // case 'year': return track.year?.toString() == value; // Example: Exact match for year
+              // Add other filterable fields here if needed
               default:
-                return false; // Unknown field, don't match
+                return false; // Unknown field
             }
           }).toList();
       fieldFilterApplied = true;
+      print("Field filter result count: ${filtered.length}");
     }
   }
   // --- END: Field-Specific Filtering Logic ---
@@ -71,13 +101,15 @@ List<Track> applyFilters({
               ) ||
               track.path.toLowerCase().contains(lowerCaseQuery);
         }).toList();
+    print("Global filter result count: ${filtered.length}");
   }
   // --- End Global Search ---
 
-  // Apply Rating Filter (remains the same)
+  // Apply Rating Filter
   if (minRating != null && minRating > 0) {
     print("Applying rating filter: >= $minRating"); // Log rating filter
     filtered = filtered.where((track) => track.rating >= minRating).toList();
+    print("Rating filter result count: ${filtered.length}");
   }
 
   print(

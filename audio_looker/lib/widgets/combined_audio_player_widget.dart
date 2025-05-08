@@ -1700,7 +1700,7 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                         (showPlayer && playerState is AudioPlayerLoaded)
                             ? _buildExpandedPlayerUI(
                               playerState,
-                              trackForDisplay!,
+                              trackForDisplay,
                             ) // Pass non-null track
                             : const SizedBox.shrink(),
                   ),

@@ -13,17 +13,18 @@ class TrackDataInitial extends TrackDataState {}
 
 /// State while loading tracks or root folders.
 class TrackDataLoading extends TrackDataState {
-  // Carry over previous state data for smoother transitions
   final List<Track>? previousTracks;
   final List<String>? previousRootFolders;
-  final String? searchQuery; // Preserve search query during loading
-  final int? minimumRating; // Preserve rating filter during loading
+  final String? searchQuery;
+  final int? minimumRating;
+  final String? selectedPlaylistId; // <<< ADDED
 
   const TrackDataLoading({
     this.previousTracks,
     this.previousRootFolders,
     this.searchQuery,
     this.minimumRating,
+    this.selectedPlaylistId, // <<< ADDED
   });
 
   @override
@@ -32,45 +33,38 @@ class TrackDataLoading extends TrackDataState {
     previousRootFolders,
     searchQuery,
     minimumRating,
+    selectedPlaylistId, // <<< ADDED
   ];
 }
 
 /// State when tracks and root folders for the active collection are loaded.
 class TrackDataLoaded extends TrackDataState {
-  /// The list of tracks matching current filters (search, rating).
   final List<Track> tracks;
-
-  /// The list of root folders for the active collection.
   final List<String> rootFolders;
-
-  /// The current search query, if any.
   final String? searchQuery;
-
-  /// The current minimum rating filter, if any.
   final int? minimumRating;
+  final String? selectedPlaylistId; // <<< ADDED
 
   const TrackDataLoaded({
     required this.tracks,
     required this.rootFolders,
     this.searchQuery,
     this.minimumRating,
+    this.selectedPlaylistId, // <<< ADDED
   });
 
   /// Creates a new instance of TrackDataLoaded with updated fields.
-  ///
-  /// Provide values for the fields you want to change. Fields left as null
-  /// will retain their current values from this instance.
   TrackDataLoaded copyWith({
     List<Track>? tracks,
     List<String>? rootFolders,
     String? searchQuery,
     int? minimumRating,
+    String? selectedPlaylistId, // <<< ADDED
+    bool? forceSearchQueryToNull,
+    bool? forceMinimumRatingToNull,
     bool?
-    forceSearchQueryToNull, // Helper to explicitly set searchQuery to null
-    bool?
-    forceMinimumRatingToNull, // Helper to explicitly set minimumRating to null
+    forceSelectedPlaylistIdToNull, // <<< ADDED helper for nulling playlist
   }) {
-    // Handle explicit null setting for nullable fields
     final effectiveSearchQuery =
         forceSearchQueryToNull ?? false
             ? null
@@ -79,43 +73,68 @@ class TrackDataLoaded extends TrackDataState {
         forceMinimumRatingToNull ?? false
             ? null
             : (minimumRating ?? this.minimumRating);
+    // <<< ADDED logic for playlist ID >>>
+    final effectiveSelectedPlaylistId =
+        forceSelectedPlaylistIdToNull ?? false
+            ? null
+            : (selectedPlaylistId ?? this.selectedPlaylistId);
 
     return TrackDataLoaded(
       tracks: tracks ?? this.tracks,
       rootFolders: rootFolders ?? this.rootFolders,
       searchQuery: effectiveSearchQuery,
       minimumRating: effectiveMinimumRating,
+      selectedPlaylistId: effectiveSelectedPlaylistId, // <<< Use effective ID
     );
   }
 
   @override
-  List<Object?> get props => [tracks, rootFolders, searchQuery, minimumRating];
+  List<Object?> get props => [
+    tracks,
+    rootFolders,
+    searchQuery,
+    minimumRating,
+    selectedPlaylistId, // <<< ADDED
+  ];
 }
 
 // In track_data_state.dart
 class NewFilesDetected extends TrackDataState {
   final List<String> newFilePaths;
-  // Include other necessary data to maintain UI state
   final List<Track> currentTracks;
   final List<String> rootFolders;
+  // Optionally add filters/playlist ID if needed to restore state after handling
+  final String? searchQuery;
+  final int? minimumRating;
+  final String? selectedPlaylistId;
 
   const NewFilesDetected({
     required this.newFilePaths,
     required this.currentTracks,
     required this.rootFolders,
+    this.searchQuery,
+    this.minimumRating,
+    this.selectedPlaylistId,
   });
 
   @override
-  List<Object> get props => [newFilePaths, currentTracks, rootFolders];
+  List<Object?> get props => [
+    newFilePaths,
+    currentTracks,
+    rootFolders,
+    searchQuery,
+    minimumRating,
+    selectedPlaylistId,
+  ];
 }
 
 class TrackDataProcessingNeeded extends TrackDataState {
-  final List<Track> addedTracks; // Tracks needing waveform processing
-  // Include fields from TrackDataLoaded to maintain UI state
+  final List<Track> addedTracks;
   final List<Track> tracks;
   final List<String> rootFolders;
   final String? searchQuery;
   final int? minimumRating;
+  final String? selectedPlaylistId; // <<< ADDED
 
   const TrackDataProcessingNeeded({
     required this.addedTracks,
@@ -123,6 +142,7 @@ class TrackDataProcessingNeeded extends TrackDataState {
     required this.rootFolders,
     this.searchQuery,
     this.minimumRating,
+    this.selectedPlaylistId, // <<< ADDED
   });
 
   @override
@@ -132,46 +152,82 @@ class TrackDataProcessingNeeded extends TrackDataState {
     rootFolders,
     searchQuery,
     minimumRating,
+    selectedPlaylistId, // <<< ADDED
   ];
 }
 
 /// State representing an error during track/folder loading or operations.
 class TrackDataError extends TrackDataState {
   final String message;
+  // Optionally preserve previous state info on error
+  final List<Track>? previousTracks;
+  final List<String>? previousRootFolders;
+  final String? searchQuery;
+  final int? minimumRating;
+  final String? selectedPlaylistId;
 
-  const TrackDataError(this.message);
+  const TrackDataError(
+    this.message, {
+    this.previousTracks,
+    this.previousRootFolders,
+    this.searchQuery,
+    this.minimumRating,
+    this.selectedPlaylistId,
+  });
 
   @override
-  List<Object?> get props => [message];
+  List<Object?> get props => [
+    message,
+    previousTracks,
+    previousRootFolders,
+    searchQuery,
+    minimumRating,
+    selectedPlaylistId,
+  ];
 }
 
 class FolderDeletionConfirmationNeeded extends TrackDataState {
   final String folderPath;
-  final String folderName; // Display name for the dialog
-  final int trackCount; // Number of tracks within
+  final String folderName;
+  final int trackCount;
+  // Optionally add filters/playlist ID if needed to restore state after handling
+  final String? searchQuery;
+  final int? minimumRating;
+  final String? selectedPlaylistId;
 
   const FolderDeletionConfirmationNeeded({
     required this.folderPath,
     required this.folderName,
     required this.trackCount,
+    this.searchQuery,
+    this.minimumRating,
+    this.selectedPlaylistId,
   });
 
   @override
-  List<Object?> get props => [folderPath, folderName, trackCount];
+  List<Object?> get props => [
+    folderPath,
+    folderName,
+    trackCount,
+    searchQuery,
+    minimumRating,
+    selectedPlaylistId,
+  ];
 }
 
 class TrackDataDeletingFolder extends TrackDataState {
-  // Optionally carry over previous data like TrackDataLoading
   final List<Track>? previousTracks;
   final List<String>? previousRootFolders;
   final String? searchQuery;
   final int? minimumRating;
+  final String? selectedPlaylistId; // <<< ADDED
 
   const TrackDataDeletingFolder({
     this.previousTracks,
     this.previousRootFolders,
     this.searchQuery,
     this.minimumRating,
+    this.selectedPlaylistId, // <<< ADDED
   });
 
   @override
@@ -180,5 +236,6 @@ class TrackDataDeletingFolder extends TrackDataState {
     previousRootFolders,
     searchQuery,
     minimumRating,
+    selectedPlaylistId, // <<< ADDED
   ];
 }

@@ -11,6 +11,7 @@ import 'package:path/path.dart' as pathLib; // Use alias
 // Import Services and Models
 import '../../services/collection_service.dart'; // For Track, CollectionService, CollectionDefinition, CollectionType
 import '../../services/waveform_processing_service.dart';
+import '../../services/playlist_service.dart'; // For PlaylistService
 import '../../utils/track_filtering.dart'; // For applyFilters
 // import '../waveform_processing/waveform_processing_event.dart';
 
@@ -21,6 +22,7 @@ part 'track_data_state.dart';
 /// the list of tracks and root folders for the active collection.
 class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
   final CollectionService _collectionService;
+  final PlaylistService _playlistService;
   final WaveformProcessingService _waveformProcessingService;
   // final WaveformProcessingBloc _waveformProcessingBloc; // Removed direct dependency
   // Define supported extensions (consider making this configurable later)
@@ -37,16 +39,15 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
   String _lastSearchQuery = '';
   int? _lastMinimumRating;
   bool _isCheckingFiles = false;
+  String? _selectedPlaylistId;
 
   TrackDataBloc({
     required CollectionService collectionService,
-    // Add waveform dependencies
+    required PlaylistService playlistService,
     required WaveformProcessingService waveformProcessingService,
-    // required WaveformProcessingBloc waveformProcessingBloc, // Removed
   }) : _collectionService = collectionService,
-       // Store waveform dependencies
+       _playlistService = playlistService,
        _waveformProcessingService = waveformProcessingService,
-       //  _waveformProcessingBloc = waveformProcessingBloc, // Removed
        super(TrackDataInitial()) {
     on<LoadTracks>(_onLoadTracks);
     on<SearchTracks>(_onSearchTracks);
@@ -61,8 +62,9 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     on<DeleteFolder>(_onDeleteFolder);
     on<ConfirmDeleteFolderFiles>(_onConfirmDeleteFolderFiles);
     on<UpdateTrackWaveform>(_onUpdateTrackWaveform);
-    on<CheckForNewFiles>(_onCheckForNewFiles); // Add handler
-    on<AddDetectedFiles>(_onAddDetectedFiles); // Add handler
+    on<CheckForNewFiles>(_onCheckForNewFiles);
+    on<AddDetectedFiles>(_onAddDetectedFiles);
+    on<SetPlaylistFilter>(_onSetPlaylistFilter);
     on<SkipDetectedFiles>(_onSkipDetectedFiles);
   }
 
@@ -75,7 +77,92 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       (index) => (0.3 + 0.7 * (index % 10) / 10), // Specific formula
     );
   }
-  // --- End Helper ---
+
+  Future<void> _onSetPlaylistFilter(
+    SetPlaylistFilter event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    print("TrackDataBloc: Setting playlist filter to ID: ${event.playlistId}");
+    _selectedPlaylistId = event.playlistId; // Store the new playlist ID
+
+    // Re-apply filters, similar to search/rating changes
+    final activeDefinition = _collectionService.getActiveCollection();
+    if (activeDefinition == null) {
+      emit(
+        TrackDataLoaded(
+          tracks: const [],
+          rootFolders: const [],
+          searchQuery: _lastSearchQuery,
+          minimumRating: _lastMinimumRating,
+          selectedPlaylistId: _selectedPlaylistId,
+        ),
+      );
+      return;
+    }
+
+    emit(
+      TrackDataLoading(
+        // Emit loading while filtering
+        previousTracks: _getTracksFromState(),
+        previousRootFolders: _getRootFoldersFromState(),
+        searchQuery: _lastSearchQuery,
+        minimumRating: _lastMinimumRating,
+        selectedPlaylistId: _selectedPlaylistId, // <<< Pass ID to state
+      ),
+    );
+
+    try {
+      // 1. Get all tracks
+      final allTracks = await _collectionService.getAllTracks();
+
+      // 2. Get track paths for the selected playlist (if any)
+      Set<String>? playlistTrackPaths;
+      if (_selectedPlaylistId != null) {
+        // Fetch all playlists and find the selected one
+        // Note: This might be inefficient if you have many playlists.
+        // Consider adding a PlaylistService method like `getPlaylistTrackPaths(id)`.
+        final allPlaylists = await _playlistService.loadPlaylists(
+          _collectionService,
+        );
+        try {
+          final selectedPlaylist = allPlaylists.firstWhere(
+            (p) => p.id == _selectedPlaylistId,
+          );
+          playlistTrackPaths = Set<String>.from(selectedPlaylist.trackPaths);
+        } catch (e) {
+          print(
+            "TrackDataBloc: Error finding selected playlist '$_selectedPlaylistId' - clearing filter.",
+          );
+          _selectedPlaylistId = null; // Clear filter if playlist not found
+        }
+      }
+
+      // 3. Apply all filters
+      final filteredTracks = applyFilters(
+        allTracks: allTracks, // Pass the full list
+        searchQuery: _lastSearchQuery,
+        minRating: _lastMinimumRating,
+        playlistTrackPaths: playlistTrackPaths, // Pass the paths (or null)
+      );
+
+      // 4. Emit the final loaded state
+      emit(
+        TrackDataLoaded(
+          tracks: filteredTracks,
+          rootFolders: _getRootFoldersFromState(), // Preserve root folders
+          searchQuery: _lastSearchQuery.isEmpty ? null : _lastSearchQuery,
+          minimumRating: _lastMinimumRating,
+          selectedPlaylistId:
+              _selectedPlaylistId, // <<< Include the ID in the final state
+        ),
+      );
+    } catch (e, stackTrace) {
+      print("TrackDataBloc: ERROR applying playlist filter: $e\n$stackTrace");
+      emit(TrackDataError("Failed to apply playlist filter: ${e.toString()}"));
+      // Optionally reload all tracks without the failed filter
+      add(LoadTracks());
+    }
+  }
 
   // --- Modified _onLoadTracks ---
   Future<void> _onLoadTracks(
@@ -135,12 +222,30 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
         }
       }
 
+      Set<String>? playlistTrackPaths;
+      if (_selectedPlaylistId != null) {
+        final allPlaylists = await _playlistService.loadPlaylists(
+          _collectionService,
+        );
+        try {
+          final selectedPlaylist = allPlaylists.firstWhere(
+            (p) => p.id == _selectedPlaylistId,
+          );
+          playlistTrackPaths = Set<String>.from(selectedPlaylist.trackPaths);
+        } catch (e) {
+          print(
+            "TrackDataBloc: Error finding selected playlist '$_selectedPlaylistId' during load.",
+          );
+          _selectedPlaylistId = null; // Clear invalid ID
+        }
+      }
+
       // Apply existing filters *after* potential placeholder generation
       final filteredTracksForState = applyFilters(
-        allTracks:
-            tracksForState, // Filter the list potentially containing placeholders
+        allTracks: tracksForState, // Use the list potentially with placeholders
         searchQuery: _lastSearchQuery,
         minRating: _lastMinimumRating,
+        playlistTrackPaths: playlistTrackPaths, // <<< Pass playlist paths
       );
 
       if (tracksNeedingProcessing.isNotEmpty) {
@@ -393,46 +498,115 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     SearchTracks event,
     Emitter<TrackDataState> emit,
   ) async {
-    _lastSearchQuery = event.query; // Store the latest query
+    _lastSearchQuery = event.query; // Store the new search query
+    print(
+      "TrackDataBloc: Handling search: '$_lastSearchQuery'. Current selected playlist ID: $_selectedPlaylistId",
+    ); // Log
 
     final activeDefinition = _collectionService.getActiveCollection();
-    if (activeDefinition == null) return; // Should have data if loaded
-
-    List<Track> allTracks = [];
-    try {
-      allTracks = await _collectionService.getAllTracks();
-    } catch (e) {
-      print("TrackDataBloc: Error getting all tracks for search: $e");
-      emit(TrackDataError("Failed to search: ${e.toString()}"));
+    if (activeDefinition == null) {
+      // Handle case where no collection is active (e.g., emit empty loaded state)
+      emit(
+        TrackDataLoaded(
+          tracks: const [],
+          rootFolders: const [],
+          searchQuery:
+              _lastSearchQuery.isEmpty
+                  ? null
+                  : _lastSearchQuery, // Reflect search query
+          minimumRating: _lastMinimumRating,
+          selectedPlaylistId: _selectedPlaylistId, // Keep playlist ID
+        ),
+      );
       return;
     }
 
-    // --- Add placeholders before filtering ---
-    final allTracksWithPlaceholders =
-        allTracks.map((track) {
-          bool waveformMissing =
-              track.waveformData == null || track.waveformData!.isEmpty;
-          if (track.sourceType == TrackSource.youtube && waveformMissing) {
-            return track.copyWith(waveformData: _generatePlaceholderWaveform());
-          }
-          return track;
-        }).toList();
-    // --- End Add placeholders ---
-
-    final filteredTracks = applyFilters(
-      allTracks: allTracksWithPlaceholders, // <<< Filter list with placeholders
-      searchQuery: _lastSearchQuery,
-      minRating: _lastMinimumRating,
-    );
-
+    // Emit loading state, preserving all current filters
     emit(
-      TrackDataLoaded(
-        tracks: filteredTracks,
-        rootFolders: _getRootFoldersFromState(), // Preserve root folders
+      TrackDataLoading(
+        previousTracks: _getTracksFromState(),
+        previousRootFolders: _getRootFoldersFromState(),
         searchQuery: _lastSearchQuery.isEmpty ? null : _lastSearchQuery,
         minimumRating: _lastMinimumRating,
+        selectedPlaylistId: _selectedPlaylistId, // <<< Pass current playlist ID
       ),
     );
+
+    try {
+      // 1. Get all tracks from the collection service
+      final allTracks = await _collectionService.getAllTracks();
+      print(
+        "TrackDataBloc: Fetched ${allTracks.length} total tracks for search.",
+      );
+
+      // 2. Fetch playlist track paths based on the currently stored _selectedPlaylistId
+      Set<String>? playlistTrackPaths;
+      if (_selectedPlaylistId != null) {
+        // Use the injected PlaylistService to get playlist details
+        final allPlaylists = await _playlistService.loadPlaylists(
+          _collectionService,
+        );
+        try {
+          final selectedPlaylist = allPlaylists.firstWhere(
+            (p) => p.id == _selectedPlaylistId,
+          );
+          playlistTrackPaths = Set<String>.from(selectedPlaylist.trackPaths);
+          print(
+            "TrackDataBloc: Fetched ${playlistTrackPaths.length} track paths for playlist ID: $_selectedPlaylistId",
+          );
+        } catch (e) {
+          print(
+            "TrackDataBloc: Error finding playlist '$_selectedPlaylistId' during search. Clearing playlist filter.",
+          );
+          _selectedPlaylistId = null; // Clear invalid ID if playlist vanished
+        }
+      } else {
+        print("TrackDataBloc: No playlist selected for search filter.");
+      }
+
+      // 3. Apply ALL filters (including the new search query and existing rating/playlist)
+      // Note: Placeholder generation logic might be needed here if not done in getAllTracks
+      final allTracksWithPlaceholders =
+          allTracks.map((track) {
+            bool waveformMissing =
+                track.waveformData == null || track.waveformData!.isEmpty;
+            if (track.sourceType == TrackSource.youtube && waveformMissing) {
+              return track.copyWith(
+                waveformData: _generatePlaceholderWaveform(),
+              );
+            }
+            return track;
+          }).toList();
+
+      final filteredTracks = applyFilters(
+        allTracks:
+            allTracksWithPlaceholders, // Use the list (potentially with placeholders)
+        searchQuery: _lastSearchQuery, // Use the *new* search query
+        minRating: _lastMinimumRating, // Use the *existing* rating filter
+        playlistTrackPaths:
+            playlistTrackPaths, // Use the fetched playlist paths
+      );
+      print(
+        "TrackDataBloc: Emitting search results. Filtered count: ${filteredTracks.length}",
+      );
+
+      // 4. Emit the final loaded state
+      emit(
+        TrackDataLoaded(
+          tracks: filteredTracks,
+          rootFolders: _getRootFoldersFromState(), // Preserve root folders
+          searchQuery: _lastSearchQuery.isEmpty ? null : _lastSearchQuery,
+          minimumRating: _lastMinimumRating,
+          selectedPlaylistId:
+              _selectedPlaylistId, // <<< Include the playlist ID
+        ),
+      );
+    } catch (e, stackTrace) {
+      print("TrackDataBloc: ERROR during search: $e\n$stackTrace");
+      emit(TrackDataError("Failed to search: ${e.toString()}"));
+      // Optionally reload data without filters on error
+      add(ReloadDataPreservingFilters());
+    }
   }
 
   Future<void> _onSetRatingFilter(

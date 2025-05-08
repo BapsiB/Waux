@@ -78,6 +78,7 @@ class MyApp extends StatelessWidget {
                   collectionService: context.read<CollectionService>(),
                   waveformProcessingService:
                       context.read<WaveformProcessingService>(),
+                  playlistService: context.read<PlaylistService>(),
                   // IMPORTANT: Defer accessing WaveformProcessingBloc here if possible,
                   // or ensure it's handled safely within TrackDataBloc.
                   // For this specific error, the issue is the other way around.
@@ -136,7 +137,7 @@ class MyApp extends StatelessWidget {
                 (context) => PlaylistBloc(
                   playlistService: context.read<PlaylistService>(),
                   collectionService: context.read<CollectionService>(),
-                )..add(LoadPlaylists()), // Load playlists initially
+                )..add(LoadPlaylists()),
           ),
         ],
         child: MaterialApp(

@@ -399,9 +399,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() {
       _currentlySelectedPlaylist = newSelectedPlaylist;
+      _currentlySelectedPlaylistId =
+          newSelectedPlaylist?.id; // Update ID based on selection/deselection
       _selectedTrackIds.clear();
       _anchorTrackId = null;
     });
+
+    context.read<TrackDataBloc>().add(
+      SetPlaylistFilter(_currentlySelectedPlaylistId),
+    );
+
     _initializeHandlers();
   }
 

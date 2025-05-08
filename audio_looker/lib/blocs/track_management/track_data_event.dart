@@ -65,6 +65,13 @@ class AddTracks extends TrackDataEvent {
   List<Object> get props => [filePaths];
 }
 
+class SetPlaylistFilter extends TrackDataEvent {
+  final String? playlistId; // Nullable to clear the filter
+  const SetPlaylistFilter(this.playlistId);
+  @override
+  List<Object?> get props => [playlistId];
+}
+
 /// Event to add a track from a URL.
 class AddTrackUrl extends TrackDataEvent {
   final String url;
