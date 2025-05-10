@@ -3,10 +3,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'dart:async'; // For Timer
-
-// Import BLoCs and Services/Models
-import '../blocs/collection_management/collection_management_bloc.dart';
+import 'package:just_audio/just_audio.dart';
 import '../blocs/audio_player/audio_player_bloc.dart';
+import '../blocs/collection_management/collection_management_bloc.dart';
+import '../screens/collection_manager_screen.dart';
 import '../blocs/track_management/track_data_bloc.dart';
 import '../blocs/track_management/global_tag_bloc.dart';
 import '../blocs/track_management/track_metadata_bloc.dart';
@@ -620,13 +620,17 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
   Widget _buildHomeButton(BuildContext context) {
     final inactiveColor = Theme.of(context).colorScheme.onSurfaceVariant;
     return IconButton(
-      icon: const Icon(Icons.home_outlined),
+      icon: const Icon(Icons.home),
       iconSize: 22,
-      tooltip: 'Show Collections (Placeholder)',
+      tooltip: 'Manage Collections',
       color: inactiveColor,
       onPressed: () {
-        // TODO: Implement Home/Collection view navigation or action
-        print("Home button pressed");
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const CollectionManagerScreen(),
+          ),
+        );
       },
     );
   }

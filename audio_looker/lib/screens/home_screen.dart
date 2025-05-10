@@ -447,7 +447,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // Expand if track changed or already expanded
       } else {
         // Expand if minimized and same track is re-played
-        _isMinimized = false;
+        // _isMinimized = false;
       }
     });
     _initializeHandlers();
@@ -890,17 +890,17 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.fromLTRB(8.0, 8.0, 16.0, 8.0),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.home),
-            tooltip: 'Manage Collections',
-            onPressed:
-                () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const CollectionManagerScreen(),
-                  ),
-                ),
-          ),
+          // IconButton(
+          //   icon: const Icon(Icons.home),
+          //   tooltip: 'Manage Collections',
+          //   onPressed:
+          //       () => Navigator.push(
+          //         context,
+          //         MaterialPageRoute(
+          //           builder: (context) => const CollectionManagerScreen(),
+          //         ),
+          //       ),
+          // ),
           // View Mode Toggle Button
           IconButton(
             icon: Icon(
