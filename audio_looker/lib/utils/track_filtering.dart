@@ -94,27 +94,35 @@ List<Token> tokenize(String query) {
   final List<Token> tokens = [];
   int currentPosition = 0;
 
-  // Regex:
-  // 1: Logical operators (AND, OR, NOT)
-  // 2: Field names (word followed by :) - field name is group 3
-  // 4: Quoted strings (content in group 5)
-  // 6: Left parenthesis
-  // 7: Right parenthesis
-  // 8: Simple words (potential values or global search terms)
-  // 9: Colon (standalone)
-  // 10: Any other non-whitespace (error/unknown)
+  // MODIFIED Regex:
+  // Group 1: Logical operators (AND, OR, NOT)
+  // Group 2: Field names (word followed by :) - field name is group 3.
+  //          Field name regex ([a-zA-Z_][\w\.]*) allows letters, numbers, underscore, dot, must start with letter or underscore.
+  // Group 4: Quoted strings (content in group 5)
+  // Group 6: Left parenthesis
+  // Group 7: Right parenthesis
+  // Group 8: Unquoted words/values - MODIFIED to (\w[\w\.]*) to allow starting with a number. \w is [a-zA-Z0-9_].
+  // Group 9: Colon (standalone) - should ideally be an error or handled carefully.
+  // Group 10: Any other sequence of one or more non-whitespace, non-parenthesis, non-colon, non-quote characters - This will catch Unicode words and other values.
   final RegExp pattern = RegExp(
     r'\s*(?:' // Optional whitespace
-    r'(\b(?:AND|OR|NOT)\b)|' // 1: Logical operators
-    r'(([a-zA-Z_][\w\.]*)\s*:)|' // 2: Field names (word, possibly with dots) followed by colon (field name in group 3)
+    r'(\b(?:AND|OR|NOT)\b)|' // 1: Logical operators (case insensitive for keywords)
+    r'(([a-zA-Z_][\w\.-]*)\s*:)|' // 2: Field names (word, dots, hyphens) followed by colon (field name in group 3)
     r'("([^"]*)")|' // 4: Quoted strings (content in group 5)
     r'(\()|' // 6: Left parenthesis
     r'(\))|' // 7: Right parenthesis
-    r'([a-zA-Z_][\w\.]*)|' // 8: Unquoted words/values (can include dots)
-    r'(:)|' // 9: Colon (standalone)
-    r'(\S+)' // 10: Any other non-whitespace
+    // MODIFIED Group 8: General words/values (alphanumeric, underscore, dot, hyphen). Order is important.
+    // This needs to come AFTER specific operators and field name syntax.
+    r'(\w[\w\.-]*)|'
+    r'(:)|' // 9: Standalone Colon
+    // MODIFIED Group 10: Catch-all for other sequences of characters that are not structural (space, quotes, parens, colon)
+    // This is intended to pick up Unicode words or other unquoted multi-character values.
+    r'([^\s:"\(\)]+)'
     r')\s*', // Optional trailing whitespace
-    caseSensitive: false,
+    caseSensitive:
+        false, // Operators (AND,OR,NOT) will be matched case-insensitively
+    // Field names and values will retain their case from the query for the token text
+    // but field names are converted toLowerCased when creating FIELD_NAME token.
   );
 
   for (final Match m in pattern.allMatches(query)) {
@@ -122,7 +130,7 @@ List<Token> tokenize(String query) {
 
     if (m.group(1) != null) {
       // Logical operator
-      final opText = m.group(1)!.toUpperCase();
+      final opText = m.group(1)!.toUpperCase(); // Normalize to uppercase
       if (opText == 'AND')
         tokens.add(Token(TokenType.AND, opText, matchStart));
       else if (opText == 'OR')
@@ -130,13 +138,11 @@ List<Token> tokenize(String query) {
       else if (opText == 'NOT')
         tokens.add(Token(TokenType.NOT, opText, matchStart));
     } else if (m.group(2) != null) {
-      // Field name with colon (e.g., "artist:")
+      // Field name with colon
       tokens.add(
         Token(TokenType.FIELD_NAME, m.group(3)!.toLowerCase(), matchStart),
-      ); // group 3 is the field name
-      tokens.add(
-        Token(TokenType.COLON, ":", m.start + m.group(3)!.length),
-      ); // Position of the colon
+      ); // field name (group 3) to lowercase
+      tokens.add(Token(TokenType.COLON, ":", m.start + m.group(3)!.length));
     } else if (m.group(4) != null) {
       // Quoted string
       tokens.add(
@@ -149,27 +155,36 @@ List<Token> tokenize(String query) {
       // Right parenthesis
       tokens.add(Token(TokenType.RPAREN, ")", matchStart));
     } else if (m.group(8) != null) {
-      // Unquoted word/value
+      // WORD (Alphanumeric, _, ., - starting with \w)
       tokens.add(Token(TokenType.WORD, m.group(8)!, matchStart));
     } else if (m.group(9) != null) {
       // Standalone Colon
-      tokens.add(
-        Token(TokenType.COLON, ":", matchStart),
-      ); // Could be an error or part of a more complex syntax
+      // Depending on desired strictness, this could be an UNKNOWN/error
+      // For now, let's treat it as a WORD if it's not part of a field identifier.
+      // However, the regex should make this group less likely to hit if a field was intended.
+      tokens.add(Token(TokenType.COLON, ":", matchStart));
+      // Consider if this should be UNKNOWN or if parser should handle it as an error.
+      // print("Warning: Standalone colon tokenized at $matchStart");
     } else if (m.group(10) != null) {
-      // Other non-whitespace
-      tokens.add(Token(TokenType.UNKNOWN, m.group(10)!, matchStart));
+      // Other non-whitespace, non-structural characters (e.g. Unicode words for values)
+      tokens.add(Token(TokenType.WORD, m.group(10)!, matchStart));
     }
     currentPosition = m.end;
   }
 
-  if (currentPosition < query.length) {
+  // This check is if the regex didn't consume the whole string, implying characters the regex couldn't categorize.
+  // With the wide Group 10, this should be less common unless query has truly unsupported structures.
+  if (currentPosition < query.length &&
+      query.substring(currentPosition).trim().isNotEmpty) {
     tokens.add(
       Token(
         TokenType.UNKNOWN,
-        query.substring(currentPosition),
+        query.substring(currentPosition).trim(),
         currentPosition,
       ),
+    );
+    print(
+      "Warning: Trailing unknown characters found: ${query.substring(currentPosition).trim()}",
     );
   }
 
@@ -192,23 +207,20 @@ class FieldConditionNode implements QueryNode {
 
   FieldConditionNode(this.field, this.value, {this.isExactPhrase = false});
 
-  @override
   bool evaluate(Track track) {
     final fieldValue = _getFieldValue(track, field.toLowerCase());
     final lowerValue = value.toLowerCase();
 
     if (fieldValue == null) return false;
 
-    // If isExactPhrase is true, it means the value came from a quoted string
-    // and should be an exact match for the field.
-    // Otherwise, for unquoted values in field search, 'contains' is often expected.
-    if (isExactPhrase) {
-      return fieldValue.toLowerCase() == lowerValue;
-    } else {
-      return fieldValue.toLowerCase().contains(lowerValue);
-    }
+    // For both quoted (exact phrase) and unquoted (single word),
+    // a 'contains' check is typically more user-friendly for search.
+    // The distinction of isExactPhrase is more about *how the value was tokenized*
+    // (as a single unit vs. potentially multiple terms to be ANDed).
+    return fieldValue.toLowerCase().contains(lowerValue);
   }
 
+  // In lib/utils/track_filtering.dart, inside FieldConditionNode
   String? _getFieldValue(Track track, String fieldName) {
     switch (fieldName) {
       case 'title':
@@ -224,6 +236,8 @@ class FieldConditionNode implements QueryNode {
         return track.generalTags.join(' ').toLowerCase();
       case 'path':
         return track.path;
+      case 'rating': // <<< ADD THIS CASE
+        return track.rating.toString();
       default:
         return null;
     }
@@ -466,24 +480,29 @@ QueryNode _parseAtom(TokenStream tokens) {
     tokens.consume(); // Consume )
     return node;
   } else if (currentToken.type == TokenType.FIELD_NAME) {
-    final fieldToken = tokens.consume();
+    final fieldToken =
+        tokens.consume(); // Consumes the field name (e.g., "comment")
     if (tokens.peek().type != TokenType.COLON) {
       throw Exception(
         "Expected ':' after field name '${fieldToken.text}' at ${fieldToken.position} but found ${tokens.peek()}",
       );
     }
-    tokens.consume(); // Consume COLON
+    tokens.consume(); // Consume COLON (":")
 
-    final valueToken = tokens.peek();
+    final valueToken = tokens.peek(); // Look at the token for the value
+
     if (valueToken.type == TokenType.QUOTED_STRING) {
-      tokens.consume();
+      // <<<< KEY PART HERE
+      tokens
+          .consume(); // Consumes the entire quoted string (e.g., "test comment")
+      // Creates a FieldConditionNode with isExactPhrase: true
       return FieldConditionNode(
-        fieldToken.text,
-        valueToken.text,
+        fieldToken.text, // e.g., "comment"
+        valueToken.text, // e.g., "test comment"
         isExactPhrase: true,
       );
     } else if (valueToken.type == TokenType.WORD) {
-      tokens.consume();
+      tokens.consume(); // Consumes a single unquoted word
       return FieldConditionNode(fieldToken.text, valueToken.text);
     } else {
       throw Exception(
