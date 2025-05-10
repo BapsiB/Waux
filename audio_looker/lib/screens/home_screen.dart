@@ -1394,6 +1394,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 _handleTrackTableConfigChange();
               });
             }
+            if (state is FilesystemChangesDetected && state.hasChanges) {
+              // Check if there are actual changes
+              // It's important to ensure this dialog is not shown if one is already visible
+              // or if the BLoC is currently processing other critical updates.
+              // A simple flag in HomeScreen's state can manage this.
+              // For now, assuming it's safe to show:
+              _showFileChangesDialog(
+                context,
+                state.newFilePaths,
+                state.deletedTracks,
+                state.movedFileUpdates,
+              );
+            }
           },
         ),
         BlocListener<PlaylistBloc, PlaylistState>(
@@ -1600,6 +1613,370 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  void _showFileChangesDialog(
+    BuildContext context, // HomeScreen's context
+    List<String> newFilePaths,
+    List<Track> deletedTracks, // These are Track objects
+    List<MovedFileUpdate> movedFileUpdates,
+  ) {
+    Map<String, bool> newFilesSelection = {
+      for (var path in newFilePaths) path: true,
+    };
+    Map<int, bool> deletedTracksSelection = {
+      for (var track in deletedTracks) track.id!: true,
+    };
+
+    bool? selectAllNewFiles =
+        newFilePaths.isNotEmpty
+            ? (newFilesSelection.values.every((v) => v)
+                ? true
+                : (newFilesSelection.values.any((v) => v) ? null : false))
+            : false;
+    bool? selectAllDeletedTracks =
+        deletedTracks.isNotEmpty
+            ? (deletedTracksSelection.values.every((v) => v)
+                ? true
+                : (deletedTracksSelection.values.any((v) => v) ? null : false))
+            : false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (stfContext, stfSetState) {
+            if (newFilePaths.isNotEmpty) {
+              final allNewSelected = newFilesSelection.values.every((v) => v);
+              final noNewSelected = newFilesSelection.values.every((v) => !v);
+              selectAllNewFiles =
+                  allNewSelected ? true : (noNewSelected ? false : null);
+            } else {
+              selectAllNewFiles = false;
+            }
+
+            if (deletedTracks.isNotEmpty) {
+              final allDeletedSelected = deletedTracksSelection.values.every(
+                (v) => v,
+              );
+              final noDeletedSelected = deletedTracksSelection.values.every(
+                (v) => !v,
+              );
+              selectAllDeletedTracks =
+                  allDeletedSelected
+                      ? true
+                      : (noDeletedSelected ? false : null);
+            } else {
+              selectAllDeletedTracks = false;
+            }
+
+            final theme = Theme.of(dialogContext);
+
+            final MaterialStateProperty<Color?> selectAllFillColor =
+                MaterialStateProperty.resolveWith<Color?>((
+                  Set<MaterialState> states,
+                ) {
+                  if (states.contains(MaterialState.selected)) {
+                    return theme.colorScheme.primary.withOpacity(0.8);
+                  }
+                  return null;
+                });
+
+            return AlertDialog(
+              title: const Text('File System Changes Detected'),
+              content: SizedBox(
+                width: MediaQuery.of(dialogContext).size.width * 0.6,
+                height: MediaQuery.of(dialogContext).size.height * 0.7,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (movedFileUpdates.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: Text(
+                            'Paths Updated (Moved Files):',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: Colors.orangeAccent,
+                            ),
+                          ),
+                        ),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 150),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: movedFileUpdates.length,
+                            itemBuilder: (ctx, index) {
+                              final moved = movedFileUpdates[index];
+                              return ListTile(
+                                dense: true,
+                                leading: const Icon(
+                                  Icons.drive_file_move_rtl_outlined,
+                                  color: Colors.orangeAccent,
+                                  size: 20,
+                                ),
+                                title: Text(
+                                  moved.trackTitle,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  "New location: ${pathLib.basename(moved.newPath)}\n(Old: ${pathLib.basename(moved.oldPath)})",
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const Divider(height: 24, thickness: 1),
+                      ],
+
+                      if (newFilePaths.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: Text(
+                            'New Files Found:',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: Colors.green,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.secondaryContainer
+                                .withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(
+                              4,
+                            ), // Optional: add border radius
+                          ),
+                          margin: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: CheckboxListTile(
+                            title: Text(
+                              // Main title for "Select All"
+                              "Add all new files",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ), // Prominent title
+                            ),
+                            subtitle: Text(
+                              // Subtitle for explanation
+                              "${newFilePaths.length} file(s) will be added to the collection.",
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: theme.textTheme.bodySmall?.color,
+                              ),
+                            ),
+                            value: selectAllNewFiles,
+                            tristate: true,
+                            onChanged: (bool? newValue) {
+                              stfSetState(() {
+                                bool checkAll = selectAllNewFiles != true;
+                                selectAllNewFiles = checkAll;
+                                for (var key in newFilesSelection.keys) {
+                                  newFilesSelection[key] = checkAll;
+                                }
+                              });
+                            },
+                            controlAffinity: ListTileControlAffinity.leading,
+                            dense:
+                                false, // Make it slightly less dense to accommodate subtitle
+                            fillColor: selectAllFillColor,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8.0,
+                              vertical: 4.0,
+                            ), // Adjust padding
+                          ),
+                        ),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 150),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: newFilePaths.length,
+                            itemBuilder: (ctx, index) {
+                              final path = newFilePaths[index];
+                              return CheckboxListTile(
+                                title: Tooltip(
+                                  message: path,
+                                  child: Text(
+                                    pathLib.basename(path),
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                value: newFilesSelection[path] ?? false,
+                                onChanged: (bool? newValue) {
+                                  stfSetState(() {
+                                    newFilesSelection[path] = newValue ?? false;
+                                  });
+                                },
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                dense: true,
+                              );
+                            },
+                          ),
+                        ),
+                        const Divider(height: 24, thickness: 1),
+                      ],
+
+                      if (deletedTracks.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: Text(
+                            'Missing Files:', // Simplified header
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: Colors.redAccent,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.errorContainer.withOpacity(
+                              0.15,
+                            ),
+                            borderRadius: BorderRadius.circular(
+                              4,
+                            ), // Optional: add border radius
+                          ),
+                          margin: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: CheckboxListTile(
+                            title: Text(
+                              "Remove all missing files", // Clearer action
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            subtitle: Text(
+                              // Subtitle for explanation
+                              "${deletedTracks.length} track(s) will be removed from the collection.",
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: theme.textTheme.bodySmall?.color,
+                              ),
+                            ),
+                            value: selectAllDeletedTracks,
+                            tristate: true,
+                            onChanged: (bool? newValue) {
+                              stfSetState(() {
+                                bool checkAll = selectAllDeletedTracks != true;
+                                selectAllDeletedTracks = checkAll;
+                                for (var key in deletedTracksSelection.keys) {
+                                  deletedTracksSelection[key] = checkAll;
+                                }
+                              });
+                            },
+                            controlAffinity: ListTileControlAffinity.leading,
+                            dense: false, // Make it slightly less dense
+                            fillColor: selectAllFillColor,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8.0,
+                              vertical: 4.0,
+                            ),
+                          ),
+                        ),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 150),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: deletedTracks.length,
+                            itemBuilder: (ctx, index) {
+                              final track = deletedTracks[index];
+                              return CheckboxListTile(
+                                title: Tooltip(
+                                  message: "Last known path: ${track.path}",
+                                  child: Text(
+                                    "${track.title} (${pathLib.basename(track.path)})",
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                value:
+                                    deletedTracksSelection[track.id] ?? false,
+                                onChanged: (bool? newValue) {
+                                  stfSetState(() {
+                                    deletedTracksSelection[track.id!] =
+                                        newValue ?? false;
+                                  });
+                                },
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                dense: true,
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                      if (newFilePaths.isEmpty &&
+                          deletedTracks.isEmpty &&
+                          movedFileUpdates.isEmpty)
+                        const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(16.0),
+                            child: Text(
+                              "No file changes requiring action were detected.\nYour collection appears up-to-date based on the last scan.",
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Skip All & Refresh'),
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    context.read<TrackDataBloc>().add(SkipAllFileChanges());
+                  },
+                ),
+                ElevatedButton(
+                  child: const Text('Apply Changes'),
+                  onPressed:
+                      (newFilePaths.isEmpty &&
+                              deletedTracks.isEmpty &&
+                              movedFileUpdates.isEmpty)
+                          ? null
+                          : () {
+                            final List<String> confirmedAdds =
+                                newFilesSelection.entries
+                                    .where((e) => e.value)
+                                    .map((e) => e.key)
+                                    .toList();
+                            final List<int> confirmedDeletes =
+                                deletedTracksSelection.entries
+                                    .where((e) => e.value)
+                                    .map((e) => e.key)
+                                    .toList();
+
+                            Navigator.of(dialogContext).pop();
+                            context.read<TrackDataBloc>().add(
+                              ProcessFileChanges(
+                                filesToAdd: confirmedAdds,
+                                trackIdsToDelete: confirmedDeletes,
+                                movedFilesToUpdate: movedFileUpdates,
+                              ),
+                            );
+                          },
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

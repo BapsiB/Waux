@@ -57,6 +57,44 @@ class SetRatingFilter extends TrackDataEvent {
 /// Event to trigger synchronization of files within root folders.
 class SyncFolders extends TrackDataEvent {}
 
+// Add these new events to track_data_event.dart
+
+/// Event triggered by the UI to process confirmed new/deleted files
+/// and automatically process detected moved files.
+class ProcessFileChanges extends TrackDataEvent {
+  final List<String> filesToAdd;
+  final List<int> trackIdsToDelete;
+  // Moved files are processed based on the list from FilesystemChangesDetected state,
+  // so they don't need to be passed again here if the BLoC can access that state's data.
+  // However, to be explicit, let's include them.
+  final List<MovedFileUpdate> movedFilesToUpdate;
+
+  const ProcessFileChanges({
+    required this.filesToAdd,
+    required this.trackIdsToDelete,
+    required this.movedFilesToUpdate,
+  });
+
+  @override
+  List<Object?> get props => [filesToAdd, trackIdsToDelete, movedFilesToUpdate];
+}
+
+/// Event to explicitly tell the BLoC to update a track's path (internal or from user action).
+/// This is now primarily for the BLoC to dispatch to itself after moved file detection.
+class UpdateTrackPath extends TrackDataEvent {
+  final int trackId;
+  final String newPath;
+  final String oldPath; // For logging or other logic if needed
+
+  const UpdateTrackPath(this.trackId, this.newPath, this.oldPath);
+
+  @override
+  List<Object?> get props => [trackId, newPath, oldPath];
+}
+
+/// Event to skip all detected file system changes and save current state.
+class SkipAllFileChanges extends TrackDataEvent {}
+
 /// Event to add tracks from a list of file paths.
 class AddTracks extends TrackDataEvent {
   final List<String> filePaths;

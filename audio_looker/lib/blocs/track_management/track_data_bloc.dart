@@ -66,6 +66,175 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     on<AddDetectedFiles>(_onAddDetectedFiles);
     on<SetPlaylistFilter>(_onSetPlaylistFilter);
     on<SkipDetectedFiles>(_onSkipDetectedFiles);
+    on<ProcessFileChanges>(_onProcessFileChanges);
+    on<UpdateTrackPath>(
+      _onUpdateTrackPath,
+    ); // Might not be directly called from UI anymore
+    on<SkipAllFileChanges>(_onSkipAllFileChanges);
+  }
+
+  Future<void> _onUpdateTrackPath(
+    UpdateTrackPath event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    try {
+      await _collectionService.updateTrackPath(event.trackId, event.newPath);
+      print(
+        "TrackDataBloc: Successfully updated path for track ${event.trackId} from ${event.oldPath} to ${event.newPath}",
+      );
+      // Optionally, if you want to immediately reflect this specific change in the UI without a full reload:
+      // You might need to update the track in the current state's track list and re-emit.
+      // However, a full reload after all changes are processed is often simpler.
+    } catch (e) {
+      print(
+        "TrackDataBloc: Error updating path for track ${event.trackId}: $e",
+      );
+      // Emit an error or handle as needed
+    }
+  }
+
+  Future<void> _onProcessFileChanges(
+    ProcessFileChanges event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    final activeDef = _collectionService.getActiveCollection();
+    if (activeDef == null) {
+      print(
+        "TrackDataBloc: Cannot process file changes, no active collection.",
+      );
+      return;
+    }
+
+    emit(
+      TrackDataLoading(
+        // Indicate processing
+        previousTracks: _getTracksFromState(),
+        previousRootFolders: _getRootFoldersFromState(),
+        searchQuery: _lastSearchQuery,
+        minimumRating: _lastMinimumRating,
+        selectedPlaylistId: _selectedPlaylistId,
+      ),
+    );
+
+    bool changesMade = false;
+
+    try {
+      // 1. Process Moved Files (updates paths in DB)
+      if (event.movedFilesToUpdate.isNotEmpty) {
+        print("Processing ${event.movedFilesToUpdate.length} moved files...");
+        for (final movedInfo in event.movedFilesToUpdate) {
+          // No need to dispatch UpdateTrackPath to self, call service directly for efficiency
+          await _collectionService.updateTrackPath(
+            movedInfo.trackId,
+            movedInfo.newPath,
+          );
+          print(
+            "Updated path for moved track: ${movedInfo.trackTitle} (ID: ${movedInfo.trackId}) to ${movedInfo.newPath}",
+          );
+        }
+        changesMade = true;
+      }
+
+      // 2. Process Deletions
+      if (event.trackIdsToDelete.isNotEmpty) {
+        print("Processing ${event.trackIdsToDelete.length} deletions...");
+        for (final trackId in event.trackIdsToDelete) {
+          try {
+            await _collectionService.deleteTrack(trackId);
+          } catch (e) {
+            print("Error deleting track $trackId from service: $e");
+          }
+        }
+        changesMade = true;
+      }
+
+      // 3. Process Additions
+      if (event.filesToAdd.isNotEmpty) {
+        print("Processing ${event.filesToAdd.length} additions...");
+        // We can directly call _onAddTracks's core logic or dispatch AddTracks
+        // Dispatching AddTracks is cleaner to reuse its existing processing (like waveform queueing)
+        add(
+          AddTracks(event.filesToAdd),
+        ); // This will trigger its own loading/processing states
+        changesMade =
+            true; // Technically AddTracks handles its own reloads, but good to note a change occurred.
+        // The final ReloadDataPreservingFilters will catch all.
+      }
+
+      // 4. Save the current disk state as the new "last known good state"
+      final List<String> currentFilePathsOnDiskList = [];
+      final List<String> rootFolders = _collectionService.getRootFolders();
+      for (final rootPath in rootFolders) {
+        final dir = Directory(rootPath);
+        if (await dir.exists()) {
+          await _findAudioFilesRecursively(
+            dir,
+            currentFilePathsOnDiskList,
+            _supportedExtensions,
+          );
+        }
+      }
+      final Set<String> currentFilesOnDisk =
+          currentFilePathsOnDiskList.map(pathLib.normalize).toSet();
+      await _collectionService.saveLastScanState(
+        activeDef.id,
+        currentFilesOnDisk,
+      );
+      print(
+        "Saved current disk state after processing changes for collection ${activeDef.id}.",
+      );
+    } catch (e, stackTrace) {
+      print("TrackDataBloc: Error processing file changes: $e\n$stackTrace");
+      emit(TrackDataError("Error applying file changes: ${e.toString()}"));
+    } finally {
+      // 5. Reload all data to reflect changes
+      // If AddTracks was called, it might lead to its own reloads/processing states.
+      // This final reload ensures consistency.
+      print("Reloading data after processing all file changes.");
+      add(ReloadDataPreservingFilters());
+    }
+  }
+
+  Future<void> _onSkipAllFileChanges(
+    SkipAllFileChanges event,
+    Emitter<TrackDataState> emit,
+  ) async {
+    final activeDef = _collectionService.getActiveCollection();
+    if (activeDef == null) {
+      print("TrackDataBloc: Cannot skip file changes, no active collection.");
+      return;
+    }
+    print(
+      "TrackDataBloc: User chose to skip all file changes. Saving current disk state.",
+    );
+    try {
+      final List<String> currentFilePathsOnDiskList = [];
+      final List<String> rootFolders = _collectionService.getRootFolders();
+      for (final rootPath in rootFolders) {
+        final dir = Directory(rootPath);
+        if (await dir.exists()) {
+          await _findAudioFilesRecursively(
+            dir,
+            currentFilePathsOnDiskList,
+            _supportedExtensions,
+          );
+        }
+      }
+      final Set<String> currentFilesOnDisk =
+          currentFilePathsOnDiskList.map(pathLib.normalize).toSet();
+      await _collectionService.saveLastScanState(
+        activeDef.id,
+        currentFilesOnDisk,
+      );
+      print(
+        "Saved current disk state after skipping changes for collection ${activeDef.id}.",
+      );
+    } catch (e) {
+      print("Error saving disk state after skipping: $e");
+    }
+    add(
+      ReloadDataPreservingFilters(),
+    ); // Reload to clear the FilesystemChangesDetected state
   }
 
   // --- Helper to generate placeholder waveform (Updated) ---
@@ -324,7 +493,6 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
       emit(TrackDataError("Failed to load tracks: ${e.toString()}"));
     }
   }
-  // --- End Modified _onLoadTracks ---
 
   // --- Modified _onAddTracks ---
   Future<void> _onAddTracks(
@@ -847,134 +1015,194 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
     // }
   }
 
+  // In TrackDataBloc
+
+  // Modify or replace _onCheckForNewFiles with more comprehensive logic
   Future<void> _onCheckForNewFiles(
     CheckForNewFiles event,
     Emitter<TrackDataState> emit,
   ) async {
-    // Prevent concurrent execution
     if (_isCheckingFiles) {
       print(
         "TrackDataBloc: Already checking for files, skipping duplicate request.",
       );
       return;
     }
-    _isCheckingFiles = true; // Set flag
-
-    print("TrackDataBloc: _onCheckForNewFiles entered.");
+    _isCheckingFiles = true;
+    print("TrackDataBloc: _onCheckForNewFiles comprehensively...");
 
     final activeDef = _collectionService.getActiveCollection();
-    // Currently only checking for local collections, adjust if needed for shared
-    if (activeDef == null || activeDef.type != CollectionType.local) {
+    if (activeDef == null) {
+      print("Skipping file check: No active collection.");
+      _isCheckingFiles = false;
+      return;
+    }
+    // Avoid re-triggering if a dialog is already pending
+    if (state is FilesystemChangesDetected &&
+        (state as FilesystemChangesDetected).hasChanges) {
       print(
-        "Skipping new file check: Not a local collection or no active collection.",
+        "Skipping new file check: Already awaiting user confirmation for file changes.",
       );
-      _isCheckingFiles = false; // Reset flag before returning
+      _isCheckingFiles = false;
       return;
     }
 
-    // Avoid checking if already in the NewFilesDetected state (user needs to respond first)
-    if (state is NewFilesDetected) {
-      print("Skipping new file check: Already awaiting user confirmation.");
-      _isCheckingFiles = false; // Reset flag
-      return;
-    }
-
-    print("TrackDataBloc: Checking for new files in ${activeDef.name}...");
-
-    Set<String>? lastKnownFiles;
-    Set<String> currentFilesOnDisk = {};
-    bool scanError = false;
-    List<String> rootFolders = []; // Store roots for state emission
+    emit(
+      TrackDataLoading(
+        // Emit loading state
+        previousTracks: _getTracksFromState(),
+        previousRootFolders: _getRootFoldersFromState(),
+        searchQuery: _lastSearchQuery,
+        minimumRating: _lastMinimumRating,
+        selectedPlaylistId: _selectedPlaylistId,
+      ),
+    );
 
     try {
-      // 1. Load last state
-      lastKnownFiles = await _collectionService.loadLastScanState(activeDef.id);
-      print(
-        "Last known files state loaded: ${lastKnownFiles?.length ?? 'None (first scan)'}",
-      );
-
-      // 2. Scan current files
-      final List<String> currentFilesOnDiskList = [];
-      rootFolders = _collectionService.getRootFolders(); // Get current roots
-      if (rootFolders.isEmpty) {
-        print("No root folders to scan for collection ${activeDef.name}.");
-        // Save empty state if no roots defined, potentially clear last state?
-        await _collectionService.saveLastScanState(activeDef.id, {});
-        _isCheckingFiles = false; // Reset flag
-        return; // Nothing to scan
+      // 1. Get current files on disk
+      final List<String> currentFilePathsOnDiskList = [];
+      final List<String> rootFolders = _collectionService.getRootFolders();
+      if (rootFolders.isEmpty && activeDef.type == CollectionType.local) {
+        print(
+          "No root folders to scan for local collection ${activeDef.name}.",
+        );
+        await _collectionService.saveLastScanState(
+          activeDef.id,
+          {},
+        ); // Save empty for next time
+        _isCheckingFiles = false;
+        add(ReloadDataPreservingFilters()); // Reload to clear loading state
+        return;
       }
 
       for (final rootPath in rootFolders) {
         final dir = Directory(rootPath);
         if (await dir.exists()) {
-          // Use the existing recursive helper from the BLoC
           await _findAudioFilesRecursively(
             dir,
-            currentFilesOnDiskList,
+            currentFilePathsOnDiskList,
             _supportedExtensions,
           );
         } else {
-          print("Warning: Root folder $rootPath not found during scan.");
-          // Optionally remove the root folder if it doesn't exist anymore?
-          // await _collectionService.removeRootFolder(rootPath);
+          print(
+            "Warning: Root folder $rootPath not found during scan for collection ${activeDef.name}.",
+          );
         }
       }
-      currentFilesOnDisk =
-          currentFilesOnDiskList.map((p) => pathLib.normalize(p)).toSet();
-      print("Scan found ${currentFilesOnDisk.length} supported files on disk.");
-    } catch (e, stackTrace) {
-      print("Error during file scan or loading last state: $e\n$stackTrace");
-      scanError = true;
-      // Optionally emit an error state
-      // emit(TrackDataError("Failed during new file check: $e"));
-    }
+      final Set<String> currentFilesOnDisk =
+          currentFilePathsOnDiskList.map(pathLib.normalize).toSet();
+      print(
+        "Scan found ${currentFilesOnDisk.length} supported files on disk for ${activeDef.name}.",
+      );
 
-    // Only proceed if scan didn't error out
-    if (!scanError) {
-      Set<String> newFiles = {};
-      if (lastKnownFiles != null) {
-        // 3. Compare
-        newFiles = currentFilesOnDisk.difference(lastKnownFiles);
-      } else {
-        // 3a. First Scan Scenario
-        print(
-          "First scan for collection ${activeDef.name}. Saving current state.",
-        );
-        // Just save the current state, don't prompt on first scan
-        await _collectionService.saveLastScanState(
-          activeDef.id,
-          currentFilesOnDisk,
-        );
-        _isCheckingFiles = false; // Reset flag
-        return; // Exit, LoadTracks will handle showing initial files
+      // 2. Get tracks from DB
+      final List<Track> tracksInDb = await _collectionService.getAllTracks();
+      final Map<String, Track> dbTracksByNormalizedPath = {
+        for (var track in tracksInDb.where((t) => !t.isUrl && t.id != null))
+          pathLib.normalize(track.path):
+              track, // track.path is already absolute from getAllTracks
+      };
+      print(
+        "Found ${dbTracksByNormalizedPath.length} local tracks in DB for ${activeDef.name}.",
+      );
+
+      // 3. Load last known files (optional, but helps distinguish truly new vs. just not in DB yet)
+      // For simplicity in this pass, we'll primarily compare Disk vs DB.
+      // A more advanced version would use lastKnownFiles to differentiate between
+      // files that were deleted since last app run vs. files never known.
+
+      // Identify differences
+      final List<String> newDiskOnlyPaths = []; // Files on disk, not in DB
+      final List<Track> dbOnlyTracks = []; // Tracks in DB, not on disk
+
+      for (String diskPath in currentFilesOnDisk) {
+        if (!dbTracksByNormalizedPath.containsKey(diskPath)) {
+          newDiskOnlyPaths.add(diskPath);
+        }
       }
 
-      // 4. Emit new state or save current state
-      if (newFiles.isNotEmpty) {
-        print("Detected ${newFiles.length} new files.");
-        // Get current UI state data to pass along
-        final currentTracksForState = _getTracksFromState();
-        // We already fetched rootFolders above
+      for (String dbPathKey in dbTracksByNormalizedPath.keys) {
+        if (!currentFilesOnDisk.contains(dbPathKey)) {
+          dbOnlyTracks.add(dbTracksByNormalizedPath[dbPathKey]!);
+        }
+      }
+      print(
+        "Initial detection: ${newDiskOnlyPaths.length} new disk paths, ${dbOnlyTracks.length} DB-only tracks.",
+      );
+
+      // Detect Moved Files
+      final List<MovedFileUpdate> movedFileUpdates = [];
+      final List<String> confirmedNewFilePaths = [];
+      final List<Track> confirmedDeletedTracks = [];
+
+      // Create a map of new filenames to their full paths for quick lookup
+      Map<String, String> newDiskFilenamesToPath = {
+        for (var p in newDiskOnlyPaths) pathLib.basename(p): p,
+      };
+
+      for (Track deletedTrackCandidate in dbOnlyTracks) {
+        String deletedFilename = pathLib.basename(deletedTrackCandidate.path);
+        if (newDiskFilenamesToPath.containsKey(deletedFilename)) {
+          // This filename exists in both deleted (from DB perspective) and new (on disk)
+          String newPath = newDiskFilenamesToPath[deletedFilename]!;
+          movedFileUpdates.add(
+            MovedFileUpdate(
+              trackId: deletedTrackCandidate.id!,
+              oldPath: deletedTrackCandidate.path, // This is already absolute
+              newPath: newPath, // This is also absolute from disk scan
+              trackTitle: deletedTrackCandidate.title,
+            ),
+          );
+          // Remove from newDiskFilenamesToPath and newDiskOnlyPaths to avoid double processing
+          newDiskFilenamesToPath.remove(deletedFilename);
+          newDiskOnlyPaths.remove(newPath);
+        } else {
+          // Filename not found in new paths, so it's a confirmed deletion
+          confirmedDeletedTracks.add(deletedTrackCandidate);
+        }
+      }
+      // Remaining paths in newDiskOnlyPaths are truly new files
+      confirmedNewFilePaths.addAll(newDiskOnlyPaths);
+      print(
+        "Final detection: ${confirmedNewFilePaths.length} new, ${confirmedDeletedTracks.length} deleted, ${movedFileUpdates.length} moved.",
+      );
+
+      if (confirmedNewFilePaths.isNotEmpty ||
+          confirmedDeletedTracks.isNotEmpty ||
+          movedFileUpdates.isNotEmpty) {
         emit(
-          NewFilesDetected(
-            newFilePaths: newFiles.toList(),
-            currentTracks: currentTracksForState,
-            rootFolders: rootFolders, // Pass the fetched roots
+          FilesystemChangesDetected(
+            newFilePaths: confirmedNewFilePaths,
+            deletedTracks: confirmedDeletedTracks,
+            movedFileUpdates: movedFileUpdates,
+            currentTracksInUI: _getTracksFromState(), // Pass current UI state
+            currentRootFoldersInUI: _getRootFoldersFromState(),
+            currentSearchQuery: _lastSearchQuery,
+            currentMinimumRating: _lastMinimumRating,
+            currentSelectedPlaylistId: _selectedPlaylistId,
           ),
         );
-        print("TrackDataBloc: Emitted NewFilesDetected state.");
+        print("Emitted FilesystemChangesDetected.");
       } else {
-        print("No new files detected.");
-        // Save the current state as the last known state since scan was successful
-        // and no new files were found (or it was the first scan handled above).
+        print("No file system changes detected requiring user action.");
         await _collectionService.saveLastScanState(
           activeDef.id,
           currentFilesOnDisk,
         );
+        add(
+          ReloadDataPreservingFilters(),
+        ); // Ensure UI is up-to-date if loading was emitted
       }
-    } // End if(!scanError)
-
-    _isCheckingFiles = false; // Reset flag in all cases before exiting
+    } catch (e, stackTrace) {
+      print(
+        "TrackDataBloc: ERROR during comprehensive file check: $e\n$stackTrace",
+      );
+      emit(TrackDataError("Failed during file system check: ${e.toString()}"));
+      // Fallback to a stable state
+      add(ReloadDataPreservingFilters());
+    } finally {
+      _isCheckingFiles = false;
+    }
   }
 
   Future<void> _onAddDetectedFiles(

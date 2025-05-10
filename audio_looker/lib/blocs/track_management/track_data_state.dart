@@ -215,6 +215,69 @@ class FolderDeletionConfirmationNeeded extends TrackDataState {
   ];
 }
 
+// Helper class for moved file information
+class MovedFileUpdate extends Equatable {
+  final int trackId; // ID of the track in the database
+  final String oldPath; // The old absolute path
+  final String newPath; // The new absolute path
+  final String trackTitle; // For display purposes in the dialog
+
+  const MovedFileUpdate({
+    required this.trackId,
+    required this.oldPath,
+    required this.newPath,
+    required this.trackTitle,
+  });
+
+  @override
+  List<Object?> get props => [trackId, oldPath, newPath, trackTitle];
+}
+
+class FilesystemChangesDetected extends TrackDataState {
+  final List<String>
+  newFilePaths; // Paths of files on disk, not in DB (candidates for adding)
+  final List<Track>
+  deletedTracks; // Track objects from DB that are no longer on disk (candidates for removal)
+  final List<MovedFileUpdate>
+  movedFileUpdates; // Files detected as moved (path will be updated in DB)
+
+  // These fields help restore the UI's previous view state if the dialog is part of the main screen
+  final List<Track> currentTracksInUI;
+  final List<String> currentRootFoldersInUI;
+  final String? currentSearchQuery;
+  final int? currentMinimumRating;
+  final String? currentSelectedPlaylistId;
+
+  const FilesystemChangesDetected({
+    required this.newFilePaths,
+    required this.deletedTracks,
+    required this.movedFileUpdates,
+    required this.currentTracksInUI,
+    required this.currentRootFoldersInUI,
+    this.currentSearchQuery,
+    this.currentMinimumRating,
+    this.currentSelectedPlaylistId,
+  });
+
+  /// Utility getter to quickly check if there are any changes to report.
+  bool get hasChanges =>
+      newFilePaths.isNotEmpty ||
+      deletedTracks.isNotEmpty ||
+      movedFileUpdates.isNotEmpty;
+
+  @override
+  List<Object?> get props => [
+    newFilePaths,
+    deletedTracks,
+    movedFileUpdates,
+    currentTracksInUI,
+    currentRootFoldersInUI,
+    currentSearchQuery,
+    currentMinimumRating,
+    currentSelectedPlaylistId,
+  ];
+}
+
 class TrackDataDeletingFolder extends TrackDataState {
   final List<Track>? previousTracks;
   final List<String>? previousRootFolders;

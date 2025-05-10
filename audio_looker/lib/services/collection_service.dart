@@ -356,6 +356,72 @@ class CollectionService {
     return [];
   }
 
+  /// Updates the file path of an existing track while preserving other metadata.
+  /// Handles converting the newPath to relative if the collection is shared.
+  Future<int> updateTrackPath(int trackId, String newAbsolutePath) async {
+    if (_database == null || !_database!.isOpen) {
+      throw Exception("Database not open");
+    }
+    if (_activeCollectionDefinition == null) {
+      throw Exception("No active collection definition");
+    }
+
+    String pathToStore = newAbsolutePath;
+    // Convert to relative path if it's a shared collection and the path is within its root
+    if (_activeCollectionDefinition!.type == CollectionType.shared &&
+        !Uri.tryParse(
+          newAbsolutePath,
+        )!.isAbsolute && // Don't make URLs relative
+        _activeCollectionDefinition!.rootPath != null) {
+      try {
+        if (pathLib.isAbsolute(newAbsolutePath) &&
+            pathLib.isWithin(
+              _activeCollectionDefinition!.rootPath!,
+              newAbsolutePath,
+            )) {
+          pathToStore = pathLib.relative(
+            newAbsolutePath,
+            from: _activeCollectionDefinition!.rootPath!,
+          );
+        } else if (!pathLib.isAbsolute(newAbsolutePath)) {
+          // If the passed path is already relative (e.g. from some other logic)
+          // and it's a shared collection, assume it's correct relative to the root.
+          // This case might need careful handling depending on where newAbsolutePath comes from.
+          // For now, we assume newAbsolutePath is indeed absolute when passed to this specific function.
+          print(
+            "Warning: updateTrackPath received a relative path '$newAbsolutePath' for a shared collection. Storing as is, assuming it's relative to the root.",
+          );
+        }
+        // If absolute but not within root, it will be stored as absolute.
+      } catch (e) {
+        print(
+          "Warning: Could not make new path relative for '$newAbsolutePath'. Storing as is. Error: $e",
+        );
+        pathToStore = newAbsolutePath; // Fallback
+      }
+    }
+
+    try {
+      final count = await _database!.update(
+        tableMusic,
+        {columnPath: pathToStore}, // Only update the path column
+        where: '$columnId = ?',
+        whereArgs: [trackId],
+      );
+      if (count > 0) {
+        print(
+          "CollectionService: Updated path for track $trackId to '$pathToStore' (stored) from '$newAbsolutePath' (provided).",
+        );
+      } else {
+        print("CollectionService: Track $trackId not found for path update.");
+      }
+      return count;
+    } catch (e) {
+      print("CollectionService: Error updating path for track $trackId: $e");
+      rethrow;
+    }
+  }
+
   Future<void> _saveCollectionDefinitions(
     List<CollectionDefinition> definitions,
   ) async {
