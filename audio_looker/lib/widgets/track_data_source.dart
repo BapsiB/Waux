@@ -8,6 +8,10 @@ import 'package:waux/blocs/audio_player/audio_player_bloc.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:flutter/services.dart';
 // import '../utils/track_filtering.dart'; // Import the filtering utility
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:waux/blocs/track_management/track_metadata_bloc.dart';
+import 'package:waux/blocs/track_management/global_tag_bloc.dart';
+import 'package:waux/widgets/tag_editor_popup.dart';
 
 // Add these typedefs for clarity
 typedef PlayPreviewCallback = void Function(Track track);
@@ -473,11 +477,40 @@ class TrackDataSource extends DataGridSource {
                           icon: const Icon(Icons.edit),
                           iconSize: 18,
                           color: Theme.of(context).colorScheme.primary,
-                          tooltip: 'Edit Metadatas',
+                          tooltip: 'Edit Tags',
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
                           splashRadius: 18,
-                          onPressed: () => onEditMetadata(track!),
+                          onPressed: () {
+                            if (track?.id != null) {
+                              showDialog(
+                                context: context,
+                                builder: (dialogContext) {
+                                  return MultiBlocProvider(
+                                    providers: [
+                                      BlocProvider.value(
+                                        value:
+                                            BlocProvider.of<TrackMetadataBloc>(
+                                              context,
+                                            ),
+                                      ),
+                                      BlocProvider.value(
+                                        value: BlocProvider.of<GlobalTagBloc>(
+                                          context,
+                                        ),
+                                      ),
+                                    ],
+                                    child: TagEditorPopup(
+                                      trackIds: [track!.id!],
+                                      trackTags: {
+                                        track!.id!: track!.generalTags,
+                                      },
+                                    ),
+                                  );
+                                },
+                              );
+                            }
+                          },
                         ),
                     ],
                   );
