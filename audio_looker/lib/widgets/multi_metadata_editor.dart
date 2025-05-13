@@ -7,6 +7,7 @@ import 'package:waux/blocs/track_management/track_metadata_bloc.dart';
 import 'package:waux/blocs/track_management/global_tag_bloc.dart';
 import 'package:waux/services/collection_service.dart';
 import 'package:collection/collection.dart';
+import 'package:waux/widgets/tag_editor_popup.dart';
 
 const String _variesPlaceholder = "<Multiple Values>";
 const String _leaveUnchangedPlaceholder =
@@ -486,6 +487,44 @@ class _MultiMetadataEditorState extends State<MultiMetadataEditor> {
                     color: Theme.of(context).hintColor,
                   ),
                 ),
+              if (widget.selectedTracks.length > 1) ...[
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.edit),
+                  iconSize: 18,
+                  tooltip: 'Edit Tags',
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (dialogContext) {
+                        return MultiBlocProvider(
+                          providers: [
+                            BlocProvider.value(
+                              value: BlocProvider.of<TrackMetadataBloc>(
+                                context,
+                              ),
+                            ),
+                            BlocProvider.value(
+                              value: BlocProvider.of<GlobalTagBloc>(context),
+                            ),
+                          ],
+                          child: TagEditorPopup(
+                            trackIds:
+                                widget.selectedTracks
+                                    .map((t) => t.id!)
+                                    .toList(),
+                            trackTags: Map.fromEntries(
+                              widget.selectedTracks.map(
+                                (t) => MapEntry(t.id!, t.generalTags),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 8),
@@ -497,38 +536,29 @@ class _MultiMetadataEditorState extends State<MultiMetadataEditor> {
                 color: Theme.of(context).hintColor,
               ),
             ),
-          if (tagsVary)
-            Text(
-              'Tags differ across selection. New tags will replace existing ones on all selected tracks.',
-              style: TextStyle(
-                fontStyle: FontStyle.italic,
-                color: Theme.of(context).hintColor,
-                fontSize: 12,
+          if (widget.selectedTracks.length == 1) ...[
+            const SizedBox(height: 8),
+            TextFormField(
+              initialValue: _tags.join(', '),
+              decoration: InputDecoration(
+                labelText: 'Set New Tags (comma-separated)',
+                hintText: 'e.g., energetic, vocal, instrumental',
+                border: const OutlineInputBorder(),
+                isDense: true,
               ),
+              onChanged: (value) {
+                setState(() {
+                  _tags =
+                      value
+                          .split(',')
+                          .map((t) => t.trim())
+                          .where((t) => t.isNotEmpty)
+                          .toList();
+                  _fieldChanged('tags', value);
+                });
+              },
             ),
-          const SizedBox(height: 8),
-          TextFormField(
-            initialValue: _tags.join(
-              ', ',
-            ), // Show currently staged tags for overwrite
-            decoration: InputDecoration(
-              labelText: 'Set New Tags (comma-separated)',
-              hintText: 'e.g., energetic, vocal, instrumental',
-              border: const OutlineInputBorder(),
-              isDense: true,
-            ),
-            onChanged: (value) {
-              setState(() {
-                _tags =
-                    value
-                        .split(',')
-                        .map((t) => t.trim())
-                        .where((t) => t.isNotEmpty)
-                        .toList();
-                _fieldChanged('tags', value);
-              });
-            },
-          ),
+          ],
         ],
       ),
     );

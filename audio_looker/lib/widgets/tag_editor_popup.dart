@@ -6,21 +6,20 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 // Import BLoCs
-// import '../blocs/track_management/track_management_bloc.dart'; // <<< REMOVED
-import '../blocs/track_management/track_metadata_bloc.dart'; // <<< ADDED
-import '../blocs/track_management/global_tag_bloc.dart'; // <<< ADDED
+import '../blocs/track_management/track_metadata_bloc.dart';
+import '../blocs/track_management/global_tag_bloc.dart';
 
 // Import Models
 import '../services/collection_service.dart'; // Make sure Tag model is accessible
 
 class TagEditorPopup extends StatefulWidget {
-  final int trackId;
-  final List<String> currentTrackTags; // Pass the track's current assigned tags
+  final List<int> trackIds; // Changed from single trackId to list
+  final Map<int, List<String>> trackTags; // Map of trackId to its current tags
 
   const TagEditorPopup({
     Key? key,
-    required this.trackId,
-    required this.currentTrackTags,
+    required this.trackIds,
+    required this.trackTags,
   }) : super(key: key);
 
   @override
@@ -32,35 +31,74 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
   final FocusNode _searchFocusNode = FocusNode();
   final ScrollController _availableTagsScrollController = ScrollController();
   String _searchTerm = '';
-  late Set<String>
-  _selectedTags; // Holds the tags currently ASSIGNED to this track
+
+  // State for tracking changes
+  late Map<int, Set<String>> _originalTrackTags; // Original state
+  late Map<int, Set<String>> _pendingTrackTags; // Pending changes
+  late Set<String> _commonTags; // Tags common to all tracks
+  late Set<String> _partialTags; // Tags in some tracks
 
   // Autocomplete State
   String? _suggestion;
-  String? _suggestedTag; // The full name of the suggested tag
+  String? _suggestedTag;
 
   // Constants for Alignment
   final EdgeInsets _textFieldPadding = const EdgeInsets.symmetric(
     horizontal: 12,
     vertical: 12,
   );
-  final double _prefixIconTotalWidth =
-      33.0; // Approx width of search icon + padding
+  final double _prefixIconTotalWidth = 33.0;
 
   @override
   void initState() {
     super.initState();
-    // Initialize the set of selected tags based on the track's current tags
-    _selectedTags = Set<String>.from(widget.currentTrackTags);
+    // Initialize state tracking
+    _originalTrackTags = {};
+    _pendingTrackTags = {};
+
+    // Convert lists to sets for easier comparison
+    widget.trackTags.forEach((trackId, tags) {
+      _originalTrackTags[trackId] = Set<String>.from(tags);
+      _pendingTrackTags[trackId] = Set<String>.from(tags);
+    });
+
+    _updateTagSets();
+
     _searchController.addListener(_onSearchChanged);
-    // Request focus after the first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         FocusScope.of(context).requestFocus(_searchFocusNode);
       }
     });
-    // Load global tags if not already loaded (optional, main.dart might handle initial load)
-    // context.read<GlobalTagBloc>().add(LoadGlobalTags());
+  }
+
+  void _updateTagSets() {
+    if (widget.trackIds.isEmpty) return;
+
+    // Get all unique tags across all tracks
+    final allTags = _pendingTrackTags.values.expand((tags) => tags).toSet();
+
+    // Find tags common to all tracks
+    _commonTags =
+        allTags
+            .where(
+              (tag) => _pendingTrackTags.values.every(
+                (trackTags) => trackTags.contains(tag),
+              ),
+            )
+            .toSet();
+
+    // Find tags that are in some but not all tracks
+    _partialTags =
+        allTags
+            .where(
+              (tag) =>
+                  _pendingTrackTags.values.any(
+                    (trackTags) => trackTags.contains(tag),
+                  ) &&
+                  !_commonTags.contains(tag),
+            )
+            .toSet();
   }
 
   @override
@@ -91,7 +129,7 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
             (tag) =>
                 tag.name.toLowerCase().startsWith(_searchTerm) &&
                 tag.name.toLowerCase() != _searchTerm &&
-                !_selectedTags.contains(
+                !_pendingTrackTags[widget.trackIds.first]!.contains(
                   tag.name,
                 ), // Check against track's assigned tags
             orElse: () => Tag(name: ''), // Return dummy tag if not found
@@ -143,61 +181,50 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
     }
   }
 
-  // Create a new global tag OR add/remove an existing tag for the current track
+  // Modified to handle multiple tracks
   void _createOrToggleTag() {
     final tagName = _searchController.text.trim();
     if (tagName.isEmpty) return;
 
-    // <<< CHANGED: Read from GlobalTagBloc >>>
     final tagState = context.read<GlobalTagBloc>().state;
     if (tagState is GlobalTagLoaded) {
       final allGlobalTags = tagState.allTags;
       final existingGlobalTag = allGlobalTags.firstWhere(
         (t) => t.name.toLowerCase() == tagName.toLowerCase(),
-        orElse: () => Tag(name: ''), // Dummy tag if not found
+        orElse: () => Tag(name: ''),
       );
 
       if (existingGlobalTag.name.isNotEmpty) {
-        // Tag definition exists globally, toggle assignment for this track
-        final exactTagName = existingGlobalTag.name; // Use the correct casing
-        if (_selectedTags.contains(exactTagName)) {
-          // Tag is currently assigned -> Remove it
-          // <<< CHANGED: Dispatch to TrackMetadataBloc >>>
-          context.read<TrackMetadataBloc>().add(
-            RemoveTrackGeneralTag(widget.trackId, exactTagName),
-          );
-          if (mounted) {
-            setState(() {
-              _selectedTags.remove(exactTagName);
-            });
+        // Tag exists globally
+        final exactTagName = existingGlobalTag.name;
+
+        // Check if tag is in all tracks
+        final isInAllTracks = _pendingTrackTags.values.every(
+          (trackTags) => trackTags.contains(exactTagName),
+        );
+
+        if (isInAllTracks) {
+          // Remove from all tracks
+          for (final trackId in widget.trackIds) {
+            _pendingTrackTags[trackId]?.remove(exactTagName);
           }
         } else {
-          // Tag is not assigned -> Add it
-          // <<< CHANGED: Dispatch to TrackMetadataBloc >>>
-          context.read<TrackMetadataBloc>().add(
-            AddTrackGeneralTag(widget.trackId, exactTagName),
-          );
-          if (mounted) {
-            setState(() {
-              _selectedTags.add(exactTagName);
-            });
+          // Add to all tracks
+          for (final trackId in widget.trackIds) {
+            _pendingTrackTags[trackId]?.add(exactTagName);
           }
         }
       } else {
-        // Tag definition does NOT exist globally -> Create it AND assign it
-        final newTag = Tag(name: tagName); // Create with user's casing
-        // <<< CHANGED: Dispatch to GlobalTagBloc >>>
+        // Create new tag and add to all tracks
+        final newTag = Tag(name: tagName);
         context.read<GlobalTagBloc>().add(AddGlobalTag(newTag));
-        // <<< CHANGED: Dispatch to TrackMetadataBloc >>>
-        context.read<TrackMetadataBloc>().add(
-          AddTrackGeneralTag(widget.trackId, tagName),
-        );
-        if (mounted) {
-          setState(() {
-            _selectedTags.add(tagName);
-          });
+
+        for (final trackId in widget.trackIds) {
+          _pendingTrackTags[trackId]?.add(tagName);
         }
       }
+
+      _updateTagSets();
 
       // Clear search input after action
       _searchController.clear();
@@ -207,7 +234,6 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
           _suggestedTag = null;
           _searchTerm = '';
         });
-        // Refocus after action
         FocusScope.of(context).requestFocus(_searchFocusNode);
       }
     } else {
@@ -215,6 +241,38 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
         const SnackBar(content: Text('Global tags not loaded yet.')),
       );
     }
+  }
+
+  void _applyChanges() {
+    // Apply pending changes to all tracks
+    for (final trackId in widget.trackIds) {
+      final originalTags = _originalTrackTags[trackId] ?? {};
+      final pendingTags = _pendingTrackTags[trackId] ?? {};
+
+      // Remove tags that were removed
+      for (final tag in originalTags) {
+        if (!pendingTags.contains(tag)) {
+          context.read<TrackMetadataBloc>().add(
+            RemoveTrackGeneralTag(trackId, tag),
+          );
+        }
+      }
+
+      // Add tags that were added
+      for (final tag in pendingTags) {
+        if (!originalTags.contains(tag)) {
+          context.read<TrackMetadataBloc>().add(
+            AddTrackGeneralTag(trackId, tag),
+          );
+        }
+      }
+    }
+
+    Navigator.of(context).pop();
+  }
+
+  void _cancelChanges() {
+    Navigator.of(context).pop();
   }
 
   // Show color picker dialog
@@ -337,10 +395,8 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
   Widget _buildTagChip({
     required BuildContext context,
     required Tag tag,
-    required bool
-    isSelectedForTrack, // Is this tag currently assigned to the track?
-    required bool
-    isInAvailableSection, // Is this chip in the bottom "Available" list?
+    required bool isSelectedForTrack,
+    required bool isInAvailableSection,
   }) {
     final Color tagColor = tag.color ?? Colors.grey.shade600;
     final Color textColor =
@@ -352,28 +408,31 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
       key: ValueKey(
         'tag_chip_${tag.name}_${isInAvailableSection ? 'avail' : 'assign'}',
       ),
-      // --- Primary Tap Action: Toggle assignment for the current track ---
+      // --- Primary Tap Action: Toggle assignment for all tracks ---
       onTap: () {
         if (!mounted) return;
         if (isSelectedForTrack) {
-          // Remove from track
-          // <<< CHANGED: Dispatch to TrackMetadataBloc >>>
-          context.read<TrackMetadataBloc>().add(
-            RemoveTrackGeneralTag(widget.trackId, tag.name),
-          );
-          setState(() {
-            _selectedTags.remove(tag.name);
-          });
+          // Remove from all tracks
+          for (final trackId in widget.trackIds) {
+            context.read<TrackMetadataBloc>().add(
+              RemoveTrackGeneralTag(trackId, tag.name),
+            );
+            setState(() {
+              _pendingTrackTags[trackId]?.remove(tag.name);
+            });
+          }
         } else {
-          // Add to track
-          // <<< CHANGED: Dispatch to TrackMetadataBloc >>>
-          context.read<TrackMetadataBloc>().add(
-            AddTrackGeneralTag(widget.trackId, tag.name),
-          );
-          setState(() {
-            _selectedTags.add(tag.name);
-          });
+          // Add to all tracks
+          for (final trackId in widget.trackIds) {
+            context.read<TrackMetadataBloc>().add(
+              AddTrackGeneralTag(trackId, tag.name),
+            );
+            setState(() {
+              _pendingTrackTags[trackId]?.add(tag.name);
+            });
+          }
         }
+        _updateTagSets(); // Update the tag sets after changes
         // Refocus search bar after interaction
         FocusScope.of(context).requestFocus(_searchFocusNode);
       },
@@ -387,27 +446,17 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 5.0),
         decoration: BoxDecoration(
-          // Use full opacity if assigned, slightly transparent if only available
           color: tagColor.withOpacity(isSelectedForTrack ? 1.0 : 0.7),
           borderRadius: BorderRadius.circular(15.0),
-          // Optional: Add border for visual distinction, e.g., when selected in available list
-          // border: isSelectedForTrack && isInAvailableSection
-          //     ? Border.all(color: Theme.of(context).colorScheme.outline, width: 1.5)
-          //     : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Show checkmark if selected in the "Available" section
             if (isSelectedForTrack && isInAvailableSection)
               Icon(Icons.check_circle_outline, size: 14, color: textColor),
             if (isSelectedForTrack && isInAvailableSection)
               const SizedBox(width: 4),
-
-            // Tag Name
             Text(tag.name, style: TextStyle(color: textColor, fontSize: 13)),
-
-            // Show remove icon only for chips in the "Assigned" section
             if (!isInAvailableSection) const SizedBox(width: 4),
             if (!isInAvailableSection)
               Icon(Icons.cancel, size: 14, color: textColor.withOpacity(0.8)),
@@ -419,17 +468,13 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
 
   @override
   Widget build(BuildContext context) {
-    // Use KeyboardListener for Tab/Enter keys
     return KeyboardListener(
-      focusNode: FocusNode(), // Use a local FocusNode for the listener itself
+      focusNode: FocusNode(),
       onKeyEvent: (event) => _handleKeyEvent(_searchFocusNode, event),
-      // <<< CHANGED: Build based on GlobalTagBloc state >>>
       child: BlocBuilder<GlobalTagBloc, GlobalTagState>(
         builder: (context, tagState) {
-          // Handle loading or error states for the global tag list
           if (tagState is! GlobalTagLoaded) {
             return Dialog(
-              // Use Dialog for consistent sizing
               child: Padding(
                 padding: const EdgeInsets.all(20.0),
                 child: Center(
@@ -439,39 +484,36 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                             "Error loading tags: ${tagState.message}",
                             style: TextStyle(color: Colors.red),
                           )
-                          : const CircularProgressIndicator(), // Show loading indicator
+                          : const CircularProgressIndicator(),
                 ),
               ),
             );
           }
 
-          // --- Data Extraction (when GlobalTagLoaded) ---
           final allGlobalTags = tagState.allTags;
-          // Sort available tags alphabetically for consistent display
           final availableTagsSorted = List<Tag>.from(allGlobalTags)..sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
           );
 
-          // Filter available tags based on search term
           final filteredAvailableTags =
               _searchTerm.isEmpty
-                  ? availableTagsSorted // Show all if search is empty
+                  ? availableTagsSorted
                   : availableTagsSorted
                       .where(
                         (tag) => tag.name.toLowerCase().contains(_searchTerm),
                       )
                       .toList();
 
-          // Get assigned tags based on current _selectedTags set, preserving order if needed
-          // We need the Tag objects (with color) for the assigned tags list
-          final assignedTags =
-              allGlobalTags // Filter from the global list
-                  .where((tag) => _selectedTags.contains(tag.name))
+          // Get Tag objects for common and partial tags
+          final commonTags =
+              allGlobalTags
+                  .where((tag) => _commonTags.contains(tag.name))
                   .toList();
-          // Optional: Sort assigned tags if needed
-          // assignedTags.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          final partialTags =
+              allGlobalTags
+                  .where((tag) => _partialTags.contains(tag.name))
+                  .toList();
 
-          // --- UI Styles ---
           final textStyle =
               Theme.of(context).textTheme.bodyLarge ?? const TextStyle();
           final suggestionStyle = textStyle.copyWith(color: Colors.grey[500]);
@@ -482,27 +524,27 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
             bottom: _textFieldPadding.bottom,
           );
 
-          // --- Build Dialog ---
           return AlertDialog(
-            title: const Text('Edit Track Tags'),
+            title: Text(
+              widget.trackIds.length > 1
+                  ? 'Edit Multiple Tracks Tags'
+                  : 'Edit Track Tags',
+            ),
             content: SizedBox(
-              // Constrain dialog size
               width: 450,
               height: 550,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // --- Search and Create Row ---
+                  // Search and Create Row (unchanged)
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         child: Stack(
-                          // Stack for suggestion overlay
                           alignment: Alignment.centerLeft,
                           children: [
-                            // Actual TextField
                             TextField(
                               controller: _searchController,
                               focusNode: _searchFocusNode,
@@ -529,27 +571,25 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                                 contentPadding: _textFieldPadding,
                               ),
                             ),
-                            // Suggestion Text Overlay
                             if (_suggestion != null &&
                                 _searchFocusNode.hasFocus)
                               Padding(
                                 padding: suggestionPadding,
                                 child: IgnorePointer(
-                                  // Make overlay non-interactive
                                   child: RichText(
                                     text: TextSpan(
-                                      style: textStyle, // Base style
+                                      style: textStyle,
                                       children: <TextSpan>[
                                         TextSpan(
                                           text: _searchController.text,
                                           style: const TextStyle(
                                             color: Colors.transparent,
                                           ),
-                                        ), // Invisible part matching input
+                                        ),
                                         TextSpan(
                                           text: _suggestion!,
                                           style: suggestionStyle,
-                                        ), // Visible suggestion
+                                        ),
                                       ],
                                     ),
                                     maxLines: 1,
@@ -560,7 +600,6 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                           ],
                         ),
                       ),
-                      // Add/Create Button
                       IconButton(
                         icon: const Icon(Icons.add_circle_outline),
                         tooltip: 'Add/Create Tag',
@@ -574,53 +613,147 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                   ),
                   const SizedBox(height: 15),
 
-                  // --- Assigned Tags Section ---
-                  Text(
-                    'Assigned Tags:',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(
-                      maxHeight: 100,
-                    ), // Limit height
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceVariant
-                          .withOpacity(0.3), // Subtle background
-                      borderRadius: BorderRadius.circular(4),
+                  // Tags Assigned in All Tracks Section
+                  if (widget.trackIds.length > 1) ...[
+                    Text(
+                      'Tags Assigned in All Tracks:',
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    child:
-                        assignedTags.isEmpty
-                            ? const Center(
-                              child: Text(
-                                'None',
-                                style: TextStyle(color: Colors.grey),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(maxHeight: 100),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceVariant.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child:
+                          commonTags.isEmpty
+                              ? const Center(
+                                child: Text(
+                                  'None',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              )
+                              : SingleChildScrollView(
+                                child: Wrap(
+                                  spacing: 6.0,
+                                  runSpacing: 6.0,
+                                  children:
+                                      commonTags
+                                          .map(
+                                            (tag) => _buildTagChip(
+                                              context: context,
+                                              tag: tag,
+                                              isSelectedForTrack: true,
+                                              isInAvailableSection: false,
+                                            ),
+                                          )
+                                          .toList(),
+                                ),
                               ),
-                            )
-                            : SingleChildScrollView(
-                              child: Wrap(
-                                spacing: 6.0,
-                                runSpacing: 6.0,
-                                children:
-                                    assignedTags
-                                        .map(
-                                          (tag) => _buildTagChip(
-                                            context: context,
-                                            tag: tag,
-                                            isSelectedForTrack:
-                                                true, // Always true here
-                                            isInAvailableSection: false,
-                                          ),
-                                        )
-                                        .toList(),
+                    ),
+                    const SizedBox(height: 15),
+
+                    // Tags Assigned in Some Tracks Section
+                    Text(
+                      'Tags Assigned in Some Tracks:',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(maxHeight: 100),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceVariant.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child:
+                          partialTags.isEmpty
+                              ? const Center(
+                                child: Text(
+                                  'None',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              )
+                              : SingleChildScrollView(
+                                child: Wrap(
+                                  spacing: 6.0,
+                                  runSpacing: 6.0,
+                                  children:
+                                      partialTags
+                                          .map(
+                                            (tag) => _buildTagChip(
+                                              context: context,
+                                              tag: tag,
+                                              isSelectedForTrack: true,
+                                              isInAvailableSection: false,
+                                            ),
+                                          )
+                                          .toList(),
+                                ),
                               ),
-                            ),
-                  ),
+                    ),
+                  ] else ...[
+                    // Single track view (unchanged)
+                    Text(
+                      'Assigned Tags:',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(maxHeight: 100),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceVariant.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child:
+                          _pendingTrackTags[widget.trackIds.first]?.isEmpty ??
+                                  true
+                              ? const Center(
+                                child: Text(
+                                  'None',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              )
+                              : SingleChildScrollView(
+                                child: Wrap(
+                                  spacing: 6.0,
+                                  runSpacing: 6.0,
+                                  children:
+                                      allGlobalTags
+                                          .where(
+                                            (tag) =>
+                                                _pendingTrackTags[widget
+                                                        .trackIds
+                                                        .first]
+                                                    ?.contains(tag.name) ??
+                                                false,
+                                          )
+                                          .map(
+                                            (tag) => _buildTagChip(
+                                              context: context,
+                                              tag: tag,
+                                              isSelectedForTrack: true,
+                                              isInAvailableSection: false,
+                                            ),
+                                          )
+                                          .toList(),
+                                ),
+                              ),
+                    ),
+                  ],
 
                   const Divider(height: 25, thickness: 1),
 
-                  // --- Available Tags Section ---
+                  // Available Tags Section (unchanged)
                   Text(
                     'Available Tags:',
                     style: Theme.of(context).textTheme.titleMedium,
@@ -638,7 +771,6 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                               ),
                             )
                             : Scrollbar(
-                              // Add Scrollbar
                               controller: _availableTagsScrollController,
                               thumbVisibility: true,
                               child: SingleChildScrollView(
@@ -656,9 +788,18 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
                                             (tag) => _buildTagChip(
                                               context: context,
                                               tag: tag,
-                                              // Check if this available tag is also in the track's assigned set
-                                              isSelectedForTrack: _selectedTags
-                                                  .contains(tag.name),
+                                              isSelectedForTrack:
+                                                  widget.trackIds.length > 1
+                                                      ? _commonTags.contains(
+                                                        tag.name,
+                                                      )
+                                                      : _pendingTrackTags[widget
+                                                                  .trackIds
+                                                                  .first]
+                                                              ?.contains(
+                                                                tag.name,
+                                                              ) ??
+                                                          false,
                                               isInAvailableSection: true,
                                             ),
                                           )
@@ -672,7 +813,7 @@ class _TagEditorPopupState extends State<TagEditorPopup> {
             ),
             actions: <Widget>[
               TextButton(
-                child: const Text('Close'),
+                child: const Text('Done'),
                 onPressed: () => Navigator.of(context).pop(),
               ),
             ],

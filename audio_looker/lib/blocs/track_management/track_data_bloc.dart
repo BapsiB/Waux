@@ -648,7 +648,19 @@ class TrackDataBloc extends Bloc<TrackDataEvent, TrackDataState> {
 
     try {
       // addUrl now returns the track, check if it's YouTube
-      // final Track? addedTrack = await _collectionService.addUrl(event.url);
+      final Track? addedTrack = await _collectionService.addUrl(event.url);
+
+      if (addedTrack != null) {
+        // Optional: Check if track was successfully created by the service
+        print(
+          "TrackDataBloc: URL processed by service. ID: ${addedTrack.id}, Title: ${addedTrack.title}",
+        );
+      } else {
+        print(
+          "TrackDataBloc: CollectionService.addUrl returned null for ${event.url}",
+        );
+        // You might want to emit an error state here if addUrl returning null is an error condition
+      }
 
       // --- Reload data AFTER adding the URL ---
       // The _onLoadTracks handler will now generate the placeholder if needed.

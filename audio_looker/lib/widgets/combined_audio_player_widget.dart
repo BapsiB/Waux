@@ -861,8 +861,8 @@ class _CombinedAudioPlayerWidgetState extends State<CombinedAudioPlayerWidget>
                 BlocProvider.value(value: trackMetadataBloc),
               ],
               child: TagEditorPopup(
-                trackId: currentTrack.id!, // Use ID from the displayed track
-                currentTrackTags: currentTrackTags,
+                trackIds: [currentTrack.id!],
+                trackTags: {currentTrack.id!: currentTrackTags},
               ),
             ),
       );

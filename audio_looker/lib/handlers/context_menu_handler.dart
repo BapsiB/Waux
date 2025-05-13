@@ -9,10 +9,13 @@ import 'package:path/path.dart' as path_lib;
 import '../blocs/track_management/track_data_bloc.dart';
 import '../blocs/audio_player/audio_player_bloc.dart';
 import '../blocs/playlist/playlist_bloc.dart';
+import '../blocs/track_management/track_metadata_bloc.dart';
+import '../blocs/track_management/global_tag_bloc.dart';
 
 // Import models and custom menu widget
 import '../services/collection_service.dart';
 import '../widgets/custom_context_menu.dart';
+import '../widgets/tag_editor_popup.dart';
 // Import the (yet to be created) multi-edit dialog
 // import '../widgets/multi_metadata_editor.dart'; // <-- Add this later
 
@@ -335,6 +338,76 @@ class ContextMenuHandler {
             () => onShowMultiEditDialog(
               selectedTrackIds,
             ), // Call the new callback
+      ),
+      // Add Edit Tags option
+      CustomContextMenuItem(
+        label: 'Edit Tags',
+        icon: Icons.label,
+        // Enabled if one or more tracks are selected
+        enabled: selectedTrackIds.isNotEmpty,
+        onTap: () {
+          // Get the tracks from the TrackDataBloc state
+          final trackDataState = context.read<TrackDataBloc>().state;
+          List<Track> tracksToEdit = [];
+
+          List<Track> sourceTracks = [];
+          if (trackDataState is TrackDataLoaded) {
+            sourceTracks = trackDataState.tracks;
+          } else if (trackDataState is TrackDataLoading &&
+              trackDataState.previousTracks != null) {
+            sourceTracks = trackDataState.previousTracks!;
+          } else if (trackDataState is TrackDataProcessingNeeded) {
+            sourceTracks = trackDataState.tracks;
+          } else if (trackDataState is TrackDataDeletingFolder &&
+              trackDataState.previousTracks != null) {
+            sourceTracks = trackDataState.previousTracks!;
+          }
+
+          if (sourceTracks.isNotEmpty) {
+            for (int id in selectedTrackIds) {
+              try {
+                tracksToEdit.add(
+                  sourceTracks.firstWhere((track) => track.id == id),
+                );
+              } catch (e) {
+                print("Could not find track with ID $id for tag editing.");
+              }
+            }
+          }
+
+          if (tracksToEdit.isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text("Could not load details for selected tracks."),
+              ),
+            );
+            return;
+          }
+
+          // Show the TagEditorPopup
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) {
+              return MultiBlocProvider(
+                providers: [
+                  BlocProvider.value(
+                    value: BlocProvider.of<TrackMetadataBloc>(context),
+                  ),
+                  BlocProvider.value(
+                    value: BlocProvider.of<GlobalTagBloc>(context),
+                  ),
+                ],
+                child: TagEditorPopup(
+                  trackIds: tracksToEdit.map((t) => t.id!).toList(),
+                  trackTags: Map.fromEntries(
+                    tracksToEdit.map((t) => MapEntry(t.id!, t.generalTags)),
+                  ),
+                ),
+              );
+            },
+          );
+        },
       ),
       // --- END ADDED ---
       CustomContextMenuItem(
