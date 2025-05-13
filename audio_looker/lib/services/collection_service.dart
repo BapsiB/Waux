@@ -1490,6 +1490,19 @@ class CollectionService {
   Future<void> updateTrackTitle(int trackId, String title) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
+
+    // Get the current track to access its path
+    final track = await getTrack(trackId);
+    if (track == null) {
+      throw Exception("Track not found");
+    }
+
+    // Skip file renaming for URL tracks
+    if (!track.isUrl) {
+      await _updateTrackTitleAndRenameFile(track, title);
+    }
+
+    // Update the title in the database
     await _database!.update(
       tableMusic,
       {columnTitle: title}, // Update only the title column
@@ -1497,6 +1510,43 @@ class CollectionService {
       whereArgs: [trackId],
     );
     print("CollectionService: Updated title for track $trackId");
+  }
+
+  Future<void> _updateTrackTitleAndRenameFile(
+    Track track,
+    String newTitle,
+  ) async {
+    if (track.isUrl) return; // Skip for URL tracks
+
+    final oldPath = track.path;
+    final directory = pathLib.dirname(oldPath);
+    final extension = pathLib.extension(oldPath);
+
+    // Create a sanitized version of the new title for the filename
+    String sanitizedTitle = newTitle.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+
+    // Generate the new path
+    String newPath = pathLib.join(directory, '$sanitizedTitle$extension');
+
+    // Check if a file with the same name already exists
+    int counter = 1;
+    while (await File(newPath).exists()) {
+      newPath = pathLib.join(directory, '${sanitizedTitle}_$counter$extension');
+      counter++;
+    }
+
+    try {
+      // Rename the file
+      await File(oldPath).rename(newPath);
+
+      // Update the path in the database
+      await updateTrackPath(track.id!, newPath);
+
+      print("CollectionService: Renamed file from '$oldPath' to '$newPath'");
+    } catch (e) {
+      print("CollectionService: Error renaming file: $e");
+      rethrow;
+    }
   }
 
   Future<void> updateTrackArtist(int trackId, String artist) async {
