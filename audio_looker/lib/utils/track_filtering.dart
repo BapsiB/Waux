@@ -246,28 +246,32 @@ class FieldConditionNode implements QueryNode {
 
 class GlobalTermNode implements QueryNode {
   final String term;
-  // Could add a flag for exact phrase if global quoted terms are desired
-  // final bool isExactPhrase;
-  // GlobalTermNode(this.term, {this.isExactPhrase = false});
 
   GlobalTermNode(this.term);
 
   @override
   bool evaluate(Track track) {
     final lowerTerm = term.toLowerCase();
-    // if (isExactPhrase) { // Logic for exact global phrase
-    //   return track.title.toLowerCase() == lowerTerm ||
-    //          track.artist.toLowerCase() == lowerTerm ||
-    //          // ... and so on for other fields
-    //          track.generalTags.any((tag) => tag.toLowerCase() == lowerTerm);
-    // } else { // Contains logic
-    return track.title.toLowerCase().contains(lowerTerm) ||
+
+    // Check metadata fields
+    if (track.title.toLowerCase().contains(lowerTerm) ||
         track.artist.toLowerCase().contains(lowerTerm) ||
         track.album.toLowerCase().contains(lowerTerm) ||
         track.comment.toLowerCase().contains(lowerTerm) ||
-        track.generalTags.any((tag) => tag.toLowerCase().contains(lowerTerm)) ||
-        track.path.toLowerCase().contains(lowerTerm);
-    // }
+        track.generalTags.any((tag) => tag.toLowerCase().contains(lowerTerm))) {
+      return true;
+    }
+
+    // For path-based searching, only check filename and parent folder
+    if (!track.isUrl) {
+      final fileName = pathLib.basename(track.path).toLowerCase();
+      final parentFolder =
+          pathLib.basename(pathLib.dirname(track.path)).toLowerCase();
+
+      return fileName.contains(lowerTerm) || parentFolder.contains(lowerTerm);
+    }
+
+    return false;
   }
 }
 

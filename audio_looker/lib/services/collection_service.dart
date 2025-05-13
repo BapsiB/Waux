@@ -1150,21 +1150,38 @@ class CollectionService {
     if (_database == null || !_database!.isOpen) return [];
     final String lowercaseQuery = query.toLowerCase();
     final String wildcardQuery = '%$lowercaseQuery%';
-    // Search across relevant fields
-    String whereClause = '''
-      LOWER($columnTitle) LIKE ? OR LOWER($columnArtist) LIKE ? OR
-      LOWER($columnAlbum) LIKE ? OR LOWER($columnComment) LIKE ? OR
-      LOWER($columnGeneralTags) LIKE ? OR LOWER($columnPath) LIKE ?
-    ''';
-    List<dynamic> whereArgs = List.filled(6, wildcardQuery);
 
-    final List<Map<String, dynamic>> maps = await _database!.query(
+    // Get all tracks first
+    final List<Map<String, dynamic>> allMaps = await _database!.query(
       tableMusic,
-      where: whereClause,
-      whereArgs: whereArgs,
     );
-    // Resolve paths for search results
-    return maps.map((map) => _resolveTrackPath(Track.fromJson(map))).toList();
+    final List<Track> allTracks =
+        allMaps.map((map) => _resolveTrackPath(Track.fromJson(map))).toList();
+
+    // Filter tracks based on query
+    return allTracks.where((track) {
+      // Skip URL tracks for path-based filtering
+      if (!track.isUrl) {
+        final fileName = pathLib.basename(track.path).toLowerCase();
+        final parentFolder =
+            pathLib.basename(pathLib.dirname(track.path)).toLowerCase();
+
+        // Check if query matches filename or parent folder
+        if (fileName.contains(lowercaseQuery) ||
+            parentFolder.contains(lowercaseQuery)) {
+          return true;
+        }
+      }
+
+      // Check other metadata fields
+      return track.title.toLowerCase().contains(lowercaseQuery) ||
+          track.artist.toLowerCase().contains(lowercaseQuery) ||
+          track.album.toLowerCase().contains(lowercaseQuery) ||
+          track.comment.toLowerCase().contains(lowercaseQuery) ||
+          track.generalTags.any(
+            (tag) => tag.toLowerCase().contains(lowercaseQuery),
+          );
+    }).toList();
   }
 
   // --- Metadata Update Methods ---
