@@ -145,7 +145,7 @@ class TrackDataSource extends DataGridSource {
               DataGridCell<String>(columnName: 'title', value: track.title),
               DataGridCell<String>(columnName: 'artist', value: track.artist),
               DataGridCell<String>(columnName: 'album', value: track.album),
-              DataGridCell<Track>(columnName: 'rating', value: track),
+              DataGridCell<int>(columnName: 'rating', value: track.rating),
               DataGridCell<Track>(columnName: 'tags', value: track),
               DataGridCell<int>(columnName: 'duration', value: track.duration),
               DataGridCell<Track>(columnName: 'source', value: track),

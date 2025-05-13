@@ -166,7 +166,7 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
       'width': 60.0,
       'visible': true,
       'label': 'Source',
-      'allowSorting': false,
+      'allowSorting': true,
       'isNumeric': false,
     },
     // Other potential columns (not visible by default unless saved in config)

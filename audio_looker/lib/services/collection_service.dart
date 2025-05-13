@@ -19,7 +19,7 @@ enum TrackSource { local, url, youtube }
 enum CollectionType { local, shared }
 
 // Track class definition remains the same...
-class Track {
+class Track implements Comparable<Track> {
   final int? id;
   final String title;
   final String artist;
@@ -215,6 +215,34 @@ class Track {
         return TrackSource.url;
       }
     }
+  }
+
+  @override
+  int compareTo(Track other) {
+    // First compare by rating (higher ratings first)
+    if (rating != other.rating) {
+      // If either track has no rating (0), it should go last
+      if (rating == 0) return 1;
+      if (other.rating == 0) return -1;
+      // Otherwise, higher rating comes first (descending order)
+      return other.rating.compareTo(rating);
+    }
+
+    // If ratings are equal, compare by source type
+    if (sourceType != other.sourceType) {
+      // Define source type priority: local > youtube > url
+      final sourcePriority = {
+        TrackSource.local: 0,
+        TrackSource.youtube: 1,
+        TrackSource.url: 2,
+      };
+      return sourcePriority[sourceType]!.compareTo(
+        sourcePriority[other.sourceType]!,
+      );
+    }
+
+    // If source types are equal, sort by title
+    return title.toLowerCase().compareTo(other.title.toLowerCase());
   }
 }
 

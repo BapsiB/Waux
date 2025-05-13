@@ -5,18 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "waux",
+            "name": "waux (debug)",
             "request": "launch",
             "type": "dart"
         },
         {
-            "name": "waux (profile mode)",
+            "name": "waux (profile)",
             "request": "launch",
             "type": "dart",
             "flutterMode": "profile"
         },
         {
-            "name": "waux (release mode)",
+            "name": "waux (release)",
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"
