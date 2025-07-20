@@ -12,6 +12,8 @@ import 'package:uuid/uuid.dart'; // Import uuid
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../../services/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
+import '../models/sync_models.dart';
+import 'sync_service.dart';
 
 // Enum definitions (TrackSource, CollectionType) remain the same...
 enum TrackSource { local, url, youtube }
@@ -361,6 +363,7 @@ class CollectionService {
   final _loadingController = StreamController<bool>.broadcast();
   Stream<bool> get loadingStream => _loadingController.stream;
   bool _isLoading = false;
+  SyncService? _syncService;
 
   // --- Collection Definition Management ---
   // (Methods: loadCollectionDefinitions, _saveCollectionDefinitions, addCollectionDefinition, removeCollectionDefinition)
@@ -541,6 +544,11 @@ class CollectionService {
         await _loadLocalCollectionRootFolders();
       } else {
         _localCollectionRootFolders = [];
+        // Initialize sync service for shared collections
+        // For now, using placeholder user and device IDs
+        // In a real app, these would come from user authentication and device identification
+        _syncService = SyncService(this, 'current_user', 'current_device');
+        await _syncService!.initialize();
       }
       print("Collection ${definition.name} opened successfully.");
     } catch (e, stackTrace) {
@@ -556,6 +564,10 @@ class CollectionService {
   }
 
   Future<void> closeCollection() async {
+    if (_syncService != null) {
+      await _syncService!.dispose();
+      _syncService = null;
+    }
     if (_database != null && _database!.isOpen) {
       await _database!.close();
       print(
@@ -577,6 +589,10 @@ class CollectionService {
     }
     print("Warning: getActiveDatabase called but database is null or closed.");
     return null;
+  }
+
+  SyncService? getSyncService() {
+    return _syncService;
   }
 
   // --- Database Initialization and Migration ---
@@ -1030,19 +1046,54 @@ class CollectionService {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
     final data = _prepareTrackForDb(track); // Convert path if needed
-    return await _database!.insert(tableMusic, data);
+    final id = await _database!.insert(tableMusic, data);
+
+    // Record change for sync if this is a shared collection
+    if (_syncService != null) {
+      await _syncService!.recordChange(
+        operation: 'insert',
+        entityType: 'track',
+        entityId: id.toString(),
+        afterData: data,
+      );
+    }
+
+    return id;
   }
 
   Future<int> updateTrack(Track track) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
+
+    // Get before data for sync
+    Map<String, dynamic>? beforeData;
+    if (_syncService != null && track.id != null) {
+      final beforeTrack = await getTrack(track.id!);
+      if (beforeTrack != null) {
+        beforeData = _prepareTrackForDb(beforeTrack);
+      }
+    }
+
     final data = _prepareTrackForDb(track); // Convert path if needed
-    return await _database!.update(
+    final count = await _database!.update(
       tableMusic,
       data,
       where: '$columnId = ?',
       whereArgs: [track.id],
     );
+
+    // Record change for sync if this is a shared collection
+    if (_syncService != null && track.id != null) {
+      await _syncService!.recordChange(
+        operation: 'update',
+        entityType: 'track',
+        entityId: track.id.toString(),
+        beforeData: beforeData,
+        afterData: data,
+      );
+    }
+
+    return count;
   }
 
   Future<int> deleteTrack(int id) async {
@@ -1055,12 +1106,33 @@ class CollectionService {
     print(
       "CollectionService.deleteTrack: Attempting to delete track with ID: $id",
     ); // <<< Added Log
+
+    // Get before data for sync
+    Map<String, dynamic>? beforeData;
+    if (_syncService != null) {
+      final beforeTrack = await getTrack(id);
+      if (beforeTrack != null) {
+        beforeData = _prepareTrackForDb(beforeTrack);
+      }
+    }
+
     try {
       final int count = await _database!.delete(
         tableMusic,
         where: '$columnId = ?',
         whereArgs: [id],
       );
+
+      // Record change for sync if this is a shared collection
+      if (_syncService != null && count > 0) {
+        await _syncService!.recordChange(
+          operation: 'delete',
+          entityType: 'track',
+          entityId: id.toString(),
+          beforeData: beforeData,
+        );
+      }
+
       print(
         "CollectionService.deleteTrack: Database delete result for ID $id. Rows affected: $count",
       ); // <<< Added Log
@@ -1190,12 +1262,36 @@ class CollectionService {
   Future<void> updateRating(int trackId, int rating) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
+
+    // Get before data for sync
+    Map<String, dynamic>? beforeData;
+    if (_syncService != null) {
+      final beforeTrack = await getTrack(trackId);
+      if (beforeTrack != null) {
+        beforeData = _prepareTrackForDb(beforeTrack);
+      }
+    }
+
     await _database!.update(
       tableMusic,
       {columnRating: rating},
       where: '$columnId = ?',
       whereArgs: [trackId],
     );
+
+    // Record change for sync if this is a shared collection
+    if (_syncService != null) {
+      final afterTrack = await getTrack(trackId);
+      if (afterTrack != null) {
+        await _syncService!.recordChange(
+          operation: 'update',
+          entityType: 'track',
+          entityId: trackId.toString(),
+          beforeData: beforeData,
+          afterData: _prepareTrackForDb(afterTrack),
+        );
+      }
+    }
   }
 
   Future<void> updateComment(int trackId, String comment) async {
@@ -1325,11 +1421,36 @@ class CollectionService {
   Future<void> saveUiSetting(String key, String value) async {
     if (_database == null || !_database!.isOpen)
       throw Exception("Database not open");
+
+    // Get before data for sync
+    Map<String, dynamic>? beforeData;
+    if (_syncService != null) {
+      final existingValue = await loadUiSetting(key);
+      if (existingValue != null) {
+        beforeData = {
+          columnUiSettingsKey: key,
+          columnUiSettingsValue: existingValue,
+        };
+      }
+    }
+
     try {
       await _database!.insert(tableUiSettings, {
         columnUiSettingsKey: key,
         columnUiSettingsValue: value,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+      // Record change for sync if this is a shared collection
+      if (_syncService != null) {
+        await _syncService!.recordChange(
+          operation: beforeData != null ? 'update' : 'insert',
+          entityType: 'ui_settings',
+          entityId: key,
+          beforeData: beforeData,
+          afterData: {columnUiSettingsKey: key, columnUiSettingsValue: value},
+        );
+      }
+
       // print("Saved UI setting: $key");
     } catch (e) {
       print("Error saving UI setting for key $key: $e");

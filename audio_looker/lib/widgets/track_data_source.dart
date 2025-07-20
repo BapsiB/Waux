@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
+import 'package:collection/collection.dart';
 import 'package:waux/services/collection_service.dart'; // Your Track model
 import 'package:waux/widgets/rating_cell_widget.dart'; // Reuse the cell widget
 import 'package:waux/widgets/preview_cell_widget.dart'; // Reuse the cell widget
@@ -204,13 +205,11 @@ class TrackDataSource extends DataGridSource {
             as int? ??
         -1;
 
-    Track? track;
-    try {
-      track = _trackData.firstWhere((t) => t.id == trackId);
-    } catch (e) {
+    final track = _trackData.firstWhereOrNull((t) => t.id == trackId);
+    if (track == null) {
+      print("TrackDataSource: Track with ID $trackId not found in _trackData");
       return null;
     }
-    if (track == null) return null;
     // --- End Track object finding ---
 
     final String draggableData = track.path;

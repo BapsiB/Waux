@@ -259,16 +259,20 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
       final trackId = int.tryParse(trackIdStr);
 
       if (trackId != null && newValue != null) {
-        Track? originalTrack;
-        try {
-          originalTrack = widget.tracks.firstWhere((t) => t.id == trackId);
-        } catch (e) {
-          print("Error finding track for editing: $e");
+        final originalTrack = widget.tracks.firstWhereOrNull(
+          (t) => t.id == trackId,
+        );
+        if (originalTrack == null) {
+          print(
+            "Track with ID $trackId not found in widget.tracks during save",
+          );
+          setState(() {
+            _editingCellKey = null;
+            _potentialEditCellDetails = null;
+          });
+          return;
         }
-        final originalValue =
-            originalTrack != null
-                ? _getTrackValueByColumn(originalTrack, columnName)
-                : null;
+        final originalValue = _getTrackValueByColumn(originalTrack, columnName);
 
         if (newValue != originalValue) {
           print(
@@ -415,7 +419,16 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
           // Check if already editing this cell to prevent infinite loop? No, should be fine.
           if (_editingCellKey != newEditingCellKey) {
             try {
-              final track = widget.tracks.firstWhere((t) => t.id == trackId);
+              final track = widget.tracks.firstWhereOrNull(
+                (t) => t.id == trackId,
+              );
+              if (track == null) {
+                print(
+                  "Track with ID $trackId not found in widget.tracks during editing",
+                );
+                _handleEndEditing(); // Clear editing state on error
+                return;
+              }
               final currentValue = _getTrackValueByColumn(track, columnName);
               _cellEditController.text = currentValue; // Pre-fill controller
               setState(() {
@@ -715,6 +728,16 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
 
     // --- Cast and Check Selection ---
     final trackId = idCell?.value as int; // Safe to cast now
+
+    // --- Validation Step 3: Verify track still exists in widget.tracks ---
+    final trackExists = widget.tracks.any((t) => t.id == trackId);
+    if (!trackExists) {
+      print(
+        "[LOG] _shouldSelectRow: Skipping row - Track ID $trackId not found in widget.tracks",
+      );
+      return false;
+    }
+
     final isSelected = widget.selectedTrackIds.contains(trackId);
 
     // print("[LOG] _shouldSelectRow: Checking Row ID $trackId -> In selection set? $isSelected"); // Verbose log (optional)
@@ -723,18 +746,22 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
 
   // 2. Modify _updateControllerSelection to use the helper:
   void _updateControllerSelection() {
-    // ... (existing initial checks: mounted, loading, grid context etc.) ...
+    if (!mounted || _isLoadingConfig) return;
+
     print("[LOG] TrackTableWidget: Running _updateControllerSelection.");
     print(
       "[LOG]   Target selected IDs (widget.selectedTrackIds): ${widget.selectedTrackIds}",
     );
+    print("[LOG]   Current widget.tracks count: ${widget.tracks.length}");
 
     try {
       final currentRows = _trackDataSource.rows;
       print("[LOG]   Current DataSource rows count: ${currentRows.length}");
 
-      if (currentRows.isEmpty) {
-        // ... (handle empty rows) ...
+      if (currentRows.isEmpty || widget.tracks.isEmpty) {
+        print("[LOG]   Empty rows or tracks, clearing selection");
+        _dataGridController.selectedRows.clear();
+        _dataGridController.selectedRow = null;
         return;
       }
 
@@ -1272,13 +1299,15 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
                   print("Double Click Detected on Track ID: $currentTrackId");
 
                   // Find the track and trigger the double-click callback
-                  try {
-                    final track = widget.tracks.firstWhere(
-                      (t) => t.id == currentTrackId,
-                    );
+                  final track = widget.tracks.firstWhereOrNull(
+                    (t) => t.id == currentTrackId,
+                  );
+                  if (track != null) {
                     widget.onRowDoubleTap(track); // Call the load/play callback
-                  } catch (e) {
-                    debugPrint("Error finding track for double tap: $e");
+                  } else {
+                    debugPrint(
+                      "Track with ID $currentTrackId not found for double tap",
+                    );
                   }
 
                   // Reset tap tracking after a double-click
@@ -1336,10 +1365,10 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
                     if (_isRowSelected(rowIndex) && isTappedCellEditable) {
                       // Start editing
                       print("Starting edit for $tappedCellKey");
-                      try {
-                        final track = widget.tracks.firstWhere(
-                          (t) => t.id == currentTrackId,
-                        );
+                      final track = widget.tracks.firstWhereOrNull(
+                        (t) => t.id == currentTrackId,
+                      );
+                      if (track != null) {
                         final currentValue = _getTrackValueByColumn(
                           track,
                           tappedColumnName,
@@ -1363,8 +1392,10 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
                             }
                           });
                         });
-                      } catch (e) {
-                        print("Error finding track to edit: $e");
+                      } else {
+                        print(
+                          "Track with ID $currentTrackId not found for editing",
+                        );
                         _handleEndEditing();
                       }
                     } else {
@@ -1408,17 +1439,19 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
                   );
                   final int trackId = idCell.value as int? ?? -1;
                   if (trackId != -1) {
-                    try {
-                      final track = widget.tracks.firstWhere(
-                        (t) => t.id == trackId,
-                      );
+                    final track = widget.tracks.firstWhereOrNull(
+                      (t) => t.id == trackId,
+                    );
+                    if (track != null) {
                       widget.onShowContextMenu(
                         context,
                         details.globalPosition,
                         track,
                       );
-                    } catch (e) {
-                      debugPrint("Error finding track for context menu: $e");
+                    } else {
+                      debugPrint(
+                        "Track with ID $trackId not found for context menu",
+                      );
                     }
                   }
                 }
