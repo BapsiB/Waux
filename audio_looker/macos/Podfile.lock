@@ -6,13 +6,6 @@ PODS:
     - FlutterMacOS
   - desktop_drop (0.0.1):
     - FlutterMacOS
-  - ffmpeg-kit-macos-https (6.0)
-  - ffmpeg_kit_flutter (6.0.3):
-    - ffmpeg_kit_flutter/https (= 6.0.3)
-    - FlutterMacOS
-  - ffmpeg_kit_flutter/https (6.0.3):
-    - ffmpeg-kit-macos-https (= 6.0)
-    - FlutterMacOS
   - FlutterMacOS (1.0.0)
   - just_audio (0.0.1):
     - Flutter
@@ -33,17 +26,12 @@ DEPENDENCIES:
   - audio_service (from `Flutter/ephemeral/.symlinks/plugins/audio_service/darwin`)
   - audio_session (from `Flutter/ephemeral/.symlinks/plugins/audio_session/macos`)
   - desktop_drop (from `Flutter/ephemeral/.symlinks/plugins/desktop_drop/macos`)
-  - ffmpeg_kit_flutter (from `Flutter/ephemeral/.symlinks/plugins/ffmpeg_kit_flutter/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - just_audio (from `Flutter/ephemeral/.symlinks/plugins/just_audio/darwin`)
   - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
   - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
   - sqflite_darwin (from `Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin`)
   - url_launcher_macos (from `Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos`)
-
-SPEC REPOS:
-  trunk:
-    - ffmpeg-kit-macos-https
 
 EXTERNAL SOURCES:
   audio_service:
@@ -52,8 +40,6 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/audio_session/macos
   desktop_drop:
     :path: Flutter/ephemeral/.symlinks/plugins/desktop_drop/macos
-  ffmpeg_kit_flutter:
-    :path: Flutter/ephemeral/.symlinks/plugins/ffmpeg_kit_flutter/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
   just_audio:
@@ -71,8 +57,6 @@ SPEC CHECKSUMS:
   audio_service: cab6c1a0eaf01b5a35b567e11fa67d3cc1956910
   audio_session: 728ae3823d914f809c485d390274861a24b0904e
   desktop_drop: 69eeff437544aa619c8db7f4481b3a65f7696898
-  ffmpeg-kit-macos-https: 8fe9a5bdb2a42ecb2caf067522aa9a8ce386294e
-  ffmpeg_kit_flutter: 5bd75928cf88ec177cea410b027681e4bfe09452
   FlutterMacOS: 8f6f14fa908a6fb3fba0cd85dbd81ec4b251fb24
   just_audio: a42c63806f16995daf5b219ae1d679deb76e6a79
   path_provider_foundation: 2b6b4c569c0fb62ec74538f866245ac84301af46

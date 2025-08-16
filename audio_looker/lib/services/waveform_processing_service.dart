@@ -10,11 +10,11 @@ import 'package:path/path.dart' as pathLib;
 // Import path_provider for getTemporaryDirectory
 import 'package:path_provider/path_provider.dart';
 // Import ffmpeg_kit_flutter and ffprobe_kit_flutter
-import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter/ffprobe_kit.dart';
-import 'package:ffmpeg_kit_flutter/return_code.dart';
-import 'package:ffmpeg_kit_flutter/media_information.dart';
-import 'package:ffmpeg_kit_flutter/media_information_session.dart'; // Ensure this import is present
+// import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
+// import 'package:ffmpeg_kit_flutter/ffprobe_kit.dart';
+// import 'package:ffmpeg_kit_flutter/return_code.dart';
+// import 'package:ffmpeg_kit_flutter/media_information.dart';
+// import 'package:ffmpeg_kit_flutter/media_information_session.dart'; // Ensure this import is present
 
 // Import the AudioService (keep for potential revert)
 import 'audio_service.dart';
@@ -82,88 +82,26 @@ class WaveformProcessingService {
     );
 
     try {
-      // --- Step 1: Get Media Information (Duration) using FFprobeKit ---
+      // --- TEMPORARY STUB: FFmpeg functionality disabled ---
       print(
-        '[WaveformService REAL_PROCESS_NO_ISOLATE] Step 1: Getting media info...',
-      );
-      final MediaInformationSession sessionInfo =
-          await FFprobeKit.getMediaInformation(inputFilePath);
-      final MediaInformation? mediaInfo = sessionInfo.getMediaInformation();
-      final String? durationString = mediaInfo?.getDuration();
-
-      if (durationString == null) {
-        throw Exception('Could not get duration from media information.');
-      }
-      final double durationSeconds = double.tryParse(durationString) ?? 0.0;
-      if (durationSeconds <= 0) {
-        throw Exception(
-          'Invalid duration ($durationSeconds) obtained from media information.',
-        );
-      }
-      print(
-        '[WaveformService REAL_PROCESS_NO_ISOLATE] Duration found: ${durationSeconds.toStringAsFixed(2)}s',
+        '[WaveformService REAL_PROCESS_NO_ISOLATE] FFmpeg functionality temporarily disabled for build.',
       );
 
-      // --- Step 2: Calculate Target Sample Rate for ~1024 points ---
-      const int desiredPoints = 1024;
-      const int fixedSamplesPerSegment = 200;
-      final double targetTotalSamples =
-          (desiredPoints * fixedSamplesPerSegment).toDouble();
-      int targetSampleRate = (targetTotalSamples / durationSeconds).round();
-      targetSampleRate = targetSampleRate.clamp(500, 48000);
-
-      print(
-        '[WaveformService REAL_PROCESS_NO_ISOLATE] Calculated targetSampleRate: $targetSampleRate Hz',
+      // Create a dummy waveform data for now
+      final List<double> dummyWaveform = List.generate(
+        1024,
+        (index) => (0.5 + 0.3 * (index % 100) / 100.0).clamp(0.0, 1.0),
       );
 
-      // --- Step 3: Prepare and Run FFmpeg with calculated sample rate ---
-      final Directory tempDir = await getTemporaryDirectory();
-      ffmpegOutputFile = '${tempDir.path}/waveform_data_$trackId.txt';
-
-      final outputDir = Directory(pathLib.dirname(ffmpegOutputFile));
-      if (!await outputDir.exists()) {
-        await outputDir.create(recursive: true);
-      }
-
-      final String ffmpegCommand =
-          '-i "$inputFilePath" '
-          // Use asetnsamples and reset=1 for fixed segment analysis
-          '-af "aresample=$targetSampleRate,asetnsamples=$fixedSamplesPerSegment,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.Peak_level:file=\'$ffmpegOutputFile\'" '
-          '-f null -';
-
-      print(
-        '[WaveformService REAL_PROCESS_NO_ISOLATE] Step 3: Executing FFmpeg...',
+      _updateStreamController.add(
+        WaveformProcessingUpdate(
+          trackId: trackId,
+          waveformData: dummyWaveform,
+          isCompletionUpdate: true,
+        ),
       );
-      final sessionExec = await FFmpegKit.execute(ffmpegCommand);
-      final returnCode = await sessionExec.getReturnCode();
-      final ffmpegReturnCodeValue = returnCode?.getValue();
 
-      if (ReturnCode.isSuccess(returnCode)) {
-        print(
-          '[WaveformService REAL_PROCESS_NO_ISOLATE] FFmpeg astats SUCCESS for $trackId.',
-        );
-        // --- Step 4: Process the FFmpeg output file SYNCHRONOUSLY ---
-        print(
-          '[WaveformService REAL_PROCESS_NO_ISOLATE] Step 4: Processing astats file synchronously...',
-        );
-        await _processAstatsFileSynchronously(trackId, ffmpegOutputFile);
-        // _finalizeProcessingStep is called within the sync function
-      } else {
-        // --- FFmpeg Failure ---
-        print(
-          '[WaveformService REAL_PROCESS_NO_ISOLATE] FFmpeg astats FAILED for $trackId. Code: $ffmpegReturnCodeValue',
-        );
-        final logs = await sessionExec.getLogsAsString();
-        print("[WaveformService] FFmpeg Logs:\n$logs");
-        await _cleanupTempFile(
-          ffmpegOutputFile,
-        ); // Await cleanup before reporting
-        _reportError(
-          trackId,
-          'FFmpeg processing failed (Code: $ffmpegReturnCodeValue)',
-        );
-        _finalizeProcessingStep(); // Ensure queue continues on FFmpeg error
-      }
+      _finalizeProcessingStep();
     } catch (error, stackTrace) {
       // Catch errors from ffprobe or ffmpeg setup/execution
       print(
