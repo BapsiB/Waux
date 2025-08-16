@@ -186,6 +186,215 @@ class TrackDataSource extends DataGridSource {
     return "$twoDigitMinutes:$twoDigitSeconds";
   }
 
+  // Build the drag feedback widget - a transparent version of the entire row
+  Widget _buildDragFeedback(Track track) {
+    return Material(
+      elevation: 4.0,
+      borderRadius: BorderRadius.circular(4.0),
+      child: Container(
+        width: 800, // Fixed width for the feedback - adjust as needed
+        height: 40, // Match the row height from the grid
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.7),
+          borderRadius: BorderRadius.circular(4.0),
+          border: Border.all(color: Colors.blue.withOpacity(0.5), width: 1.0),
+        ),
+        child: Row(children: _buildFeedbackRowCells(track)),
+      ),
+    );
+  }
+
+  // Build individual cells for the drag feedback row
+  List<Widget> _buildFeedbackRowCells(Track track) {
+    final List<Widget> cells = [];
+
+    for (final String columnName in _currentColumnOrder) {
+      Widget cellContent;
+
+      switch (columnName) {
+        case 'preview':
+          cellContent = Container(
+            width: 250, // Match column width
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
+                Icon(Icons.play_circle_outline, size: 16, color: Colors.grey),
+                SizedBox(width: 8),
+                Icon(Icons.graphic_eq, size: 16, color: Colors.grey),
+              ],
+            ),
+          );
+          break;
+        case 'title':
+          cellContent = Container(
+            width: 150,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              track.title,
+              style: TextStyle(fontSize: 13, color: Colors.black87),
+              overflow: TextOverflow.ellipsis,
+            ),
+          );
+          break;
+        case 'artist':
+          cellContent = Container(
+            width: 150,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              track.artist,
+              style: TextStyle(fontSize: 13, color: Colors.black87),
+              overflow: TextOverflow.ellipsis,
+            ),
+          );
+          break;
+        case 'album':
+          cellContent = Container(
+            width: 150,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              track.album,
+              style: TextStyle(fontSize: 13, color: Colors.black87),
+              overflow: TextOverflow.ellipsis,
+            ),
+          );
+          break;
+        case 'rating':
+          cellContent = Container(
+            width: 100,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerLeft,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(5, (index) {
+                return Icon(
+                  index < track.rating ? Icons.star : Icons.star_border,
+                  size: 14,
+                  color: Colors.amber,
+                );
+              }),
+            ),
+          );
+          break;
+        case 'duration':
+          cellContent = Container(
+            width: 80,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerRight,
+            child: Text(
+              _formatDuration(track.duration),
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          );
+          break;
+        case 'source':
+          cellContent = Container(
+            width: 60,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.center,
+            child: Icon(
+              track.sourceType == TrackSource.youtube
+                  ? FontAwesomeIcons.youtube
+                  : track.sourceType == TrackSource.url
+                  ? Icons.link
+                  : Icons.music_note_outlined,
+              size: 16,
+              color:
+                  track.sourceType == TrackSource.youtube
+                      ? Colors.red
+                      : Colors.grey,
+            ),
+          );
+          break;
+        case 'tags':
+          cellContent = Container(
+            width: 150,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerLeft,
+            child:
+                track.generalTags.isNotEmpty
+                    ? Wrap(
+                      spacing: 2.0,
+                      children:
+                          track.generalTags
+                              .take(3)
+                              .map(
+                                (tag) => Chip(
+                                  label: Text(
+                                    tag,
+                                    style: TextStyle(fontSize: 10),
+                                  ),
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 2,
+                                    vertical: 0,
+                                  ),
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              )
+                              .toList(),
+                    )
+                    : SizedBox.shrink(),
+          );
+          break;
+        case 'albumArtist':
+        case 'composer':
+        case 'genre':
+          final String value =
+              columnName == 'albumArtist'
+                  ? (track.albumArtist ?? '')
+                  : columnName == 'composer'
+                  ? (track.composer ?? '')
+                  : (track.genre ?? '');
+          cellContent = Container(
+            width: 150,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: TextStyle(fontSize: 13, color: Colors.black87),
+              overflow: TextOverflow.ellipsis,
+            ),
+          );
+          break;
+        case 'year':
+        case 'bpm':
+          final String value =
+              columnName == 'year'
+                  ? (track.year?.toString() ?? '')
+                  : (track.bpm?.toString() ?? '');
+          cellContent = Container(
+            width: 70,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: TextStyle(fontSize: 13, color: Colors.black87),
+              overflow: TextOverflow.ellipsis,
+            ),
+          );
+          break;
+        default:
+          cellContent = Container(
+            width: 100,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '',
+              style: TextStyle(fontSize: 13, color: Colors.black87),
+            ),
+          );
+      }
+
+      cells.add(cellContent);
+    }
+
+    return cells;
+  }
+
   // --- DataGridSource Overrides ---
 
   @override
@@ -328,9 +537,10 @@ class TrackDataSource extends DataGridSource {
                 // Wrap title in Draggable
                 cellContent = Draggable<String>(
                   data: draggableData,
-                  feedback: Material(/* ... existing feedback ... */),
+                  feedback: _buildDragFeedback(track),
                   childWhenDragging: Container(
-                    /* ... existing placeholder ... */
+                    alignment: Alignment.centerLeft,
+                    child: Opacity(opacity: 0.3, child: textWidget),
                   ),
                   child: Container(
                     // Container needed for Draggable child
@@ -481,7 +691,7 @@ class TrackDataSource extends DataGridSource {
                           constraints: const BoxConstraints(),
                           splashRadius: 18,
                           onPressed: () {
-                            if (track?.id != null) {
+                            if (track.id != null) {
                               showDialog(
                                 context: context,
                                 builder: (dialogContext) {
@@ -500,10 +710,8 @@ class TrackDataSource extends DataGridSource {
                                       ),
                                     ],
                                     child: TagEditorPopup(
-                                      trackIds: [track!.id!],
-                                      trackTags: {
-                                        track!.id!: track!.generalTags,
-                                      },
+                                      trackIds: [track.id!],
+                                      trackTags: {track.id!: track.generalTags},
                                     ),
                                   );
                                 },
