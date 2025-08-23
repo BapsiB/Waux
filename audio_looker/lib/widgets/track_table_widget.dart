@@ -34,6 +34,11 @@ typedef SelectAndOpenPlayerCallback = void Function(Track track);
 typedef DoubleTapCallback = void Function(Track track);
 typedef ColumnConfigChangedCallback = void Function();
 
+// Define the Intent for select all action
+class SelectAllIntent extends Intent {
+  const SelectAllIntent();
+}
+
 class TrackTableWidget extends StatefulWidget {
   final List<Track> tracks;
   final Set<int> selectedTrackIds;
@@ -91,6 +96,9 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
   double _containerWidth = 0;
   // Flag to prevent recursive resizing loops (optional but safer)
   bool _isAdjustingLastColumn = false;
+
+  // Flag to track if we're currently processing a right-click
+  bool _isProcessingRightClick = false;
 
   // Map storing current width for each column name
   Map<String, double> _columnWidths = {};
@@ -818,12 +826,45 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
         print(
           "[LOG]   Applying new selection to controller: ${newSelectedRows.length} rows.",
         );
-        _dataGridController.selectedRows = newSelectedRows; // THE ASSIGNMENT
-        _dataGridController.selectedRow = newSelectedRows.firstOrNull;
 
-        print(
-          "[LOG]   Controller selectedRows count after update: ${_dataGridController.selectedRows.length}",
-        );
+        // Add defensive error handling for SyncFusion library bug
+        try {
+          _dataGridController.selectedRows = newSelectedRows; // THE ASSIGNMENT
+          _dataGridController.selectedRow = newSelectedRows.firstOrNull;
+
+          print(
+            "[LOG]   Controller selectedRows count after update: ${_dataGridController.selectedRows.length}",
+          );
+        } catch (e) {
+          // Handle SyncFusion internal state inconsistency
+          print("[LOG]   SyncFusion selection update failed: $e");
+          print(
+            "[LOG]   Attempting recovery by clearing and re-setting selection...",
+          );
+
+          try {
+            // Try to recover by clearing first, then setting
+            _dataGridController.selectedRows = <DataGridRow>[];
+            _dataGridController.selectedRow = null;
+
+            // Small delay to allow internal state to stabilize
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && newSelectedRows.isNotEmpty) {
+                try {
+                  _dataGridController.selectedRows = newSelectedRows;
+                  _dataGridController.selectedRow = newSelectedRows.firstOrNull;
+                  print(
+                    "[LOG]   Recovery successful: ${_dataGridController.selectedRows.length} rows selected",
+                  );
+                } catch (recoveryError) {
+                  print("[LOG]   Recovery failed: $recoveryError");
+                }
+              }
+            });
+          } catch (recoveryException) {
+            print("[LOG]   Recovery attempt also failed: $recoveryException");
+          }
+        }
       } else {
         print(
           "[LOG]   Controller selection already matches target IDs. Skipping update.",
@@ -1084,6 +1125,37 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
     _buildGridColumnsFromState(); // Rebuild columns using the updated widths
   }
 
+  // Method to select all tracks
+  void _selectAllTracks() {
+    if (widget.tracks.isEmpty || _trackDataSource.rows.isEmpty) return;
+
+    try {
+      // Get all DataGridRows from the current data source
+      final List<DataGridRow> allRows = _trackDataSource.rows;
+
+      // Update the grid controller directly with all rows selected
+      _dataGridController.selectedRows = List<DataGridRow>.from(allRows);
+      _dataGridController.selectedRow = allRows.firstOrNull;
+
+      print(
+        "[LOG] _selectAllTracks: Updated grid controller to select ${allRows.length} tracks",
+      );
+
+      // The grid's onSelectionChanged callback will be triggered automatically
+      // by the controller change above, which will handle notifying the parent
+      // widget through _handleGridSelectionChange method
+    } catch (e, stackTrace) {
+      debugPrint("Error in _selectAllTracks: $e\n$stackTrace");
+    }
+
+    // Request focus to ensure keyboard shortcuts continue to work
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        FocusScope.of(context).requestFocus(_focusNode);
+      }
+    });
+  }
+
   // This method is public and can be called from HomeScreen
   void toggleColumnVisibilityAndUpdate(String columnName) {
     if (_isLoadingConfig) {
@@ -1153,312 +1225,370 @@ class TrackTableWidgetState extends State<TrackTableWidget> {
 
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Focus(
-      focusNode: _focusNode,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // Store the container width
-          _containerWidth = constraints.maxWidth;
+    return Shortcuts(
+      shortcuts: <LogicalKeySet, Intent>{
+        LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyA):
+            const SelectAllIntent(),
+        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyA):
+            const SelectAllIntent(),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          SelectAllIntent: CallbackAction<SelectAllIntent>(
+            onInvoke: (SelectAllIntent intent) => _selectAllTracks(),
+          ),
+        },
+        child: Focus(
+          focusNode: _focusNode,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Store the container width
+              _containerWidth = constraints.maxWidth;
 
-          return SfDataGridTheme(
-            data: SfDataGridThemeData(
-              selectionColor: colorScheme.primary.withOpacity(0.2),
-              headerColor: colorScheme.surfaceVariant.withOpacity(0.5),
-              headerHoverColor: colorScheme.primary.withOpacity(0.1),
-            ),
-            child: SfDataGrid(
-              key: _sfDataGridKey,
-              source: _trackDataSource,
-              selectionMode: SelectionMode.multiple,
-              gridLinesVisibility: GridLinesVisibility.horizontal,
-              headerGridLinesVisibility: GridLinesVisibility.both,
-              headerRowHeight: 30,
-              rowHeight: 40,
-              allowColumnsResizing: true,
-              allowColumnsDragging: true,
-              // --- Column Dragging Handler ---
-              onColumnDragging: (DataGridColumnDragDetails details) {
-                if (details.action == DataGridColumnDragAction.dropping) {
-                  setState(() {
-                    final int fromIndex = details.from;
-                    final int toIndex = details.to!;
+              return SfDataGridTheme(
+                data: SfDataGridThemeData(
+                  selectionColor: colorScheme.primary.withOpacity(0.2),
+                  headerColor: colorScheme.surfaceVariant.withOpacity(0.5),
+                  headerHoverColor: colorScheme.primary.withOpacity(0.1),
+                ),
+                child: SfDataGrid(
+                  key: _sfDataGridKey,
+                  source: _trackDataSource,
+                  selectionMode: SelectionMode.multiple,
+                  gridLinesVisibility: GridLinesVisibility.horizontal,
+                  headerGridLinesVisibility: GridLinesVisibility.both,
+                  headerRowHeight: 30,
+                  rowHeight: 40,
+                  allowColumnsResizing: true,
+                  allowColumnsDragging: true,
+                  // --- Column Dragging Handler ---
+                  onColumnDragging: (DataGridColumnDragDetails details) {
+                    if (details.action == DataGridColumnDragAction.dropping) {
+                      setState(() {
+                        final int fromIndex = details.from;
+                        final int toIndex = details.to!;
 
-                    // Find the actual column objects based on the visible columns in _gridColumns
-                    if (fromIndex >= 0 &&
-                        fromIndex < _gridColumns.length &&
-                        toIndex >= 0 &&
-                        toIndex < _gridColumns.length &&
-                        fromIndex != toIndex) {
-                      final GridColumn draggedColumn = _gridColumns.removeAt(
-                        fromIndex,
-                      );
-                      _gridColumns.insert(toIndex, draggedColumn);
+                        // Find the actual column objects based on the visible columns in _gridColumns
+                        if (fromIndex >= 0 &&
+                            fromIndex < _gridColumns.length &&
+                            toIndex >= 0 &&
+                            toIndex < _gridColumns.length &&
+                            fromIndex != toIndex) {
+                          final GridColumn draggedColumn = _gridColumns
+                              .removeAt(fromIndex);
+                          _gridColumns.insert(toIndex, draggedColumn);
 
-                      // Update the internal _columnOrder state based on the new _gridColumns order
-                      _columnOrder =
-                          _gridColumns.map((c) => c.columnName).toList();
+                          // Update the internal _columnOrder state based on the new _gridColumns order
+                          _columnOrder =
+                              _gridColumns.map((c) => c.columnName).toList();
 
-                      // Update the DataSource with the new order
-                      _trackDataSource.updateColumnOrder(_columnOrder);
-                      print("Column order updated: $_columnOrder");
+                          // Update the DataSource with the new order
+                          _trackDataSource.updateColumnOrder(_columnOrder);
+                          print("Column order updated: $_columnOrder");
 
-                      // Save the new configuration
-                      _saveColumnConfiguration();
-                      widget.onColumnConfigChanged?.call();
-                    } else {
-                      print(
-                        "Column drag index out of bounds or invalid: from $fromIndex, to $toIndex",
-                      );
+                          // Save the new configuration
+                          _saveColumnConfiguration();
+                          widget.onColumnConfigChanged?.call();
+                        } else {
+                          print(
+                            "Column drag index out of bounds or invalid: from $fromIndex, to $toIndex",
+                          );
+                        }
+                      });
                     }
-                  });
-                }
-                return true; // Indicate drag was handled
-              },
-              columnResizeMode: ColumnResizeMode.onResize,
-              onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
-                // Pass container width to the handler
-                _handleColumnResize(details, _containerWidth);
-                return true; // Indicate resize was handled
-              },
-              // onCellDoubleTap: (DataGridCellDoubleTapDetails details) {
-              //   final int rowIndex = details.rowColumnIndex.rowIndex;
-              //   // Ensure it's a data row (not header)
-              //   if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
-              //     final dataRow = _trackDataSource.rows[rowIndex - 1];
-              //     final idCell = dataRow.getCells().firstWhere(
-              //       (cell) => cell.columnName == 'id',
-              //       orElse:
-              //           () => DataGridCell<int>(columnName: 'id', value: -1),
-              //     );
-              //     final int trackId = idCell.value as int? ?? -1;
+                    return true; // Indicate drag was handled
+                  },
+                  columnResizeMode: ColumnResizeMode.onResize,
+                  onColumnResizeUpdate: (ColumnResizeUpdateDetails details) {
+                    // Pass container width to the handler
+                    _handleColumnResize(details, _containerWidth);
+                    return true; // Indicate resize was handled
+                  },
+                  // onCellDoubleTap: (DataGridCellDoubleTapDetails details) {
+                  //   final int rowIndex = details.rowColumnIndex.rowIndex;
+                  //   // Ensure it's a data row (not header)
+                  //   if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
+                  //     final dataRow = _trackDataSource.rows[rowIndex - 1];
+                  //     final idCell = dataRow.getCells().firstWhere(
+                  //       (cell) => cell.columnName == 'id',
+                  //       orElse:
+                  //           () => DataGridCell<int>(columnName: 'id', value: -1),
+                  //     );
+                  //     final int trackId = idCell.value as int? ?? -1;
 
-              //     if (trackId != -1) {
-              //       try {
-              //         // Find the track corresponding to the double-tapped row
-              //         final track = widget.tracks.firstWhere(
-              //           (t) => t.id == trackId,
-              //         );
-              //         // Call the callback passed from HomeScreen
-              //         widget.onRowDoubleTap(track);
-              //         print(
-              //           "Double tapped on track: ${track.title}",
-              //         ); // Optional log
-              //       } catch (e) {
-              //         debugPrint("Error finding track for double tap: $e");
-              //       }
-              //     }
-              //   }
-              // },
-              allowSorting: true,
-              onCellTap: (DataGridCellTapDetails details) {
-                final int rowIndex = details.rowColumnIndex.rowIndex;
-                final int columnIndex = details.rowColumnIndex.columnIndex;
-                final bool isDataRow = rowIndex > 0;
-                // final bool isEditing = _editingCellKey != null; // Keep editing logic if needed
+                  //     if (trackId != -1) {
+                  //       try {
+                  //         // Find the track corresponding to the double-tapped row
+                  //         final track = widget.tracks.firstWhere(
+                  //           (t) => t.id == trackId,
+                  //         );
+                  //         // Call the callback passed from HomeScreen
+                  //         widget.onRowDoubleTap(track);
+                  //         print(
+                  //           "Double tapped on track: ${track.title}",
+                  //         ); // Optional log
+                  //       } catch (e) {
+                  //         debugPrint("Error finding track for double tap: $e");
+                  //       }
+                  //     }
+                  //   }
+                  // },
+                  allowSorting: true,
+                  onCellTap: (DataGridCellTapDetails details) {
+                    // Skip if we're currently processing a right-click
+                    if (_isProcessingRightClick) {
+                      print("Ignoring onCellTap during right-click processing");
+                      return;
+                    }
 
-                print("Cell Tapped: Row $rowIndex, Col $columnIndex"); // Debug
+                    final int rowIndex = details.rowColumnIndex.rowIndex;
+                    final int columnIndex = details.rowColumnIndex.columnIndex;
+                    final bool isDataRow = rowIndex > 0;
+                    // final bool isEditing = _editingCellKey != null; // Keep editing logic if needed
 
-                if (!isDataRow ||
-                    columnIndex < 0 ||
-                    columnIndex >= _gridColumns.length) {
-                  // Handle header/invalid clicks, finish editing if necessary
-                  // ... (existing logic for finishing edit on outside click) ...
-                  if (_editingCellKey != null) {
                     print(
-                      "Clicked header/invalid column while editing. Finishing edit.",
+                      "Cell Tapped (Left Click): Row $rowIndex, Col $columnIndex",
+                    ); // Debug
+
+                    if (!isDataRow ||
+                        columnIndex < 0 ||
+                        columnIndex >= _gridColumns.length) {
+                      // Handle header/invalid clicks, finish editing if necessary
+                      // ... (existing logic for finishing edit on outside click) ...
+                      if (_editingCellKey != null) {
+                        print(
+                          "Clicked header/invalid column while editing. Finishing edit.",
+                        );
+                        _handleEndEditing(newValue: _cellEditController.text);
+                      }
+                      // Clear tap tracking if clicking outside data rows
+                      _lastTapTime = null;
+                      _lastTappedTrackId = null;
+                      return;
+                    }
+
+                    // --- Get Track ID ---
+                    final dataRow =
+                        _trackDataSource.rows[rowIndex -
+                            1]; // Adjust for header row
+                    final idCell = dataRow.getCells().firstWhere(
+                      (cell) => cell.columnName == 'id',
+                      orElse:
+                          () => DataGridCell<int>(columnName: 'id', value: -1),
                     );
-                    _handleEndEditing(newValue: _cellEditController.text);
-                  }
-                  // Clear tap tracking if clicking outside data rows
-                  _lastTapTime = null;
-                  _lastTappedTrackId = null;
-                  return;
-                }
+                    final int currentTrackId = idCell.value as int? ?? -1;
 
-                // --- Get Track ID ---
-                final dataRow =
-                    _trackDataSource.rows[rowIndex -
-                        1]; // Adjust for header row
-                final idCell = dataRow.getCells().firstWhere(
-                  (cell) => cell.columnName == 'id',
-                  orElse: () => DataGridCell<int>(columnName: 'id', value: -1),
-                );
-                final int currentTrackId = idCell.value as int? ?? -1;
+                    if (currentTrackId == -1) return; // Invalid track ID
 
-                if (currentTrackId == -1) return; // Invalid track ID
+                    // --- Custom Double-Click Logic ---
+                    final DateTime now = DateTime.now();
+                    bool isDoubleClick = false;
 
-                // --- Custom Double-Click Logic ---
-                final DateTime now = DateTime.now();
-                bool isDoubleClick = false;
+                    if (_lastTapTime != null &&
+                        _lastTappedTrackId == currentTrackId &&
+                        now.difference(_lastTapTime!) < _doubleClickThreshold) {
+                      // --- Double Click Detected ---
+                      isDoubleClick = true;
+                      print(
+                        "Double Click Detected on Track ID: $currentTrackId",
+                      );
 
-                if (_lastTapTime != null &&
-                    _lastTappedTrackId == currentTrackId &&
-                    now.difference(_lastTapTime!) < _doubleClickThreshold) {
-                  // --- Double Click Detected ---
-                  isDoubleClick = true;
-                  print("Double Click Detected on Track ID: $currentTrackId");
-
-                  // Find the track and trigger the double-click callback
-                  final track = widget.tracks.firstWhereOrNull(
-                    (t) => t.id == currentTrackId,
-                  );
-                  if (track != null) {
-                    widget.onRowDoubleTap(track); // Call the load/play callback
-                  } else {
-                    debugPrint(
-                      "Track with ID $currentTrackId not found for double tap",
-                    );
-                  }
-
-                  // Reset tap tracking after a double-click
-                  _lastTapTime = null;
-                  _lastTappedTrackId = null;
-                } else {
-                  // --- Single Click ---
-                  // Update last tap info for potential next click
-                  _lastTapTime = now;
-                  _lastTappedTrackId = currentTrackId;
-                }
-                // --- End Custom Double-Click Logic ---
-
-                // --- IMPORTANT: Always handle selection immediately on the first tap ---
-                // The selection logic relies on the SfDataGrid's internal mechanism
-                // triggered by the tap, which then calls onSelectionChanged.
-                // We don't need to explicitly call widget.onSelectionChanged here.
-                // The selection highlight should appear instantly via the grid's default behavior.
-
-                // --- Handle Cell Editing (if applicable, after double-click check) ---
-                if (!isDoubleClick) {
-                  // --- Get details of the tapped cell ---
-                  final String tappedColumnName =
-                      _gridColumns[columnIndex].columnName;
-                  final List<String> editableColumns = [
-                    'title', 'artist', 'album',
-                    'albumArtist',
-                    'composer',
-                    'genre',
-                    'year',
-                    'bpm', // Added new editable fields
-                  ];
-                  final bool isTappedCellEditable = editableColumns.contains(
-                    tappedColumnName,
-                  );
-                  final String tappedCellKey =
-                      "${currentTrackId}_$tappedColumnName";
-                  final bool isEditing =
-                      _editingCellKey != null; // Check editing state *now*
-
-                  // --- Cell Editing Logic (mostly unchanged from before) ---
-                  if (isEditing && _editingCellKey == tappedCellKey) {
-                    // Tapped inside the currently editing cell
-                    return;
-                  }
-                  if (isEditing && _editingCellKey != tappedCellKey) {
-                    // Tapped different cell while editing, finish previous
-                    _handleEndEditing(newValue: _cellEditController.text);
-                    // Reset tap tracking because the action was finishing an edit
-                    _lastTapTime = null;
-                    _lastTappedTrackId = null;
-                    return;
-                  }
-                  if (!isEditing) {
-                    if (_isRowSelected(rowIndex) && isTappedCellEditable) {
-                      // Start editing
-                      print("Starting edit for $tappedCellKey");
+                      // Find the track and trigger the double-click callback
                       final track = widget.tracks.firstWhereOrNull(
                         (t) => t.id == currentTrackId,
                       );
                       if (track != null) {
-                        final currentValue = _getTrackValueByColumn(
+                        widget.onRowDoubleTap(
                           track,
-                          tappedColumnName,
-                        );
-                        _cellEditController.text = currentValue;
-                        setState(() {
-                          _editingCellKey = tappedCellKey;
-                        });
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          // ... (focus and selection logic) ...
-                          Future.delayed(const Duration(milliseconds: 50), () {
-                            if (mounted) {
-                              print("Requesting focus and selection NOW");
-                              FocusScope.of(
-                                context,
-                              ).requestFocus(_cellEditFocusNode);
-                              _cellEditController.selection = TextSelection(
-                                baseOffset: 0,
-                                extentOffset: _cellEditController.text.length,
-                              );
-                            }
-                          });
-                        });
+                        ); // Call the load/play callback
                       } else {
-                        print(
-                          "Track with ID $currentTrackId not found for editing",
+                        debugPrint(
+                          "Track with ID $currentTrackId not found for double tap",
                         );
-                        _handleEndEditing();
                       }
+
+                      // Reset tap tracking after a double-click
+                      _lastTapTime = null;
+                      _lastTappedTrackId = null;
                     } else {
-                      print(
-                        "Tap conditions not met for starting edit (Row Selected: ${_isRowSelected(rowIndex)}, Cell Editable: $isTappedCellEditable, Track ID: $currentTrackId).",
-                      );
-                      // No edit action needed for single click here. Selection handled by grid.
+                      // --- Single Click ---
+                      // Update last tap info for potential next click
+                      _lastTapTime = now;
+                      _lastTappedTrackId = currentTrackId;
                     }
-                  }
-                  // --- End Cell Editing Logic ---
-                }
-              }, // End onCellTap
+                    // --- End Custom Double-Click Logic ---
 
-              onColumnSortChanged: (
-                SortColumnDetails? newSortColumn,
-                SortColumnDetails? oldSortColumn,
-              ) {
-                if (newSortColumn != null) {
-                  widget.onSort(
-                    newSortColumn.name,
-                    newSortColumn.sortDirection,
-                  );
-                } else {
-                  // Default sort if sorting is cleared (optional)
-                  widget.onSort('title', DataGridSortDirection.ascending);
-                }
-              },
-              navigationMode: GridNavigationMode.row,
-              onSelectionChanged: _handleGridSelectionChange,
-              controller: _dataGridController,
-              columns: _gridColumns, // Use the dynamically built columns
+                    // --- IMPORTANT: Always handle selection immediately on the first tap ---
+                    // The selection logic relies on the SfDataGrid's internal mechanism
+                    // triggered by the tap, which then calls onSelectionChanged.
+                    // We don't need to explicitly call widget.onSelectionChanged here.
+                    // The selection highlight should appear instantly via the grid's default behavior.
 
-              onCellSecondaryTap: (DataGridCellTapDetails details) {
-                int rowIndex = details.rowColumnIndex.rowIndex;
-                if (rowIndex > 0 && rowIndex <= _trackDataSource.rows.length) {
-                  final dataRow = _trackDataSource.rows[rowIndex - 1];
-                  final idCell = dataRow.getCells().firstWhere(
-                    (cell) => cell.columnName == 'id',
-                    orElse:
-                        () => DataGridCell<int>(columnName: 'id', value: -1),
-                  );
-                  final int trackId = idCell.value as int? ?? -1;
-                  if (trackId != -1) {
-                    final track = widget.tracks.firstWhereOrNull(
-                      (t) => t.id == trackId,
+                    // --- Handle Cell Editing (if applicable, after double-click check) ---
+                    if (!isDoubleClick) {
+                      // --- Get details of the tapped cell ---
+                      final String tappedColumnName =
+                          _gridColumns[columnIndex].columnName;
+                      final List<String> editableColumns = [
+                        'title', 'artist', 'album',
+                        'albumArtist',
+                        'composer',
+                        'genre',
+                        'year',
+                        'bpm', // Added new editable fields
+                      ];
+                      final bool isTappedCellEditable = editableColumns
+                          .contains(tappedColumnName);
+                      final String tappedCellKey =
+                          "${currentTrackId}_$tappedColumnName";
+                      final bool isEditing =
+                          _editingCellKey != null; // Check editing state *now*
+
+                      // --- Cell Editing Logic (mostly unchanged from before) ---
+                      if (isEditing && _editingCellKey == tappedCellKey) {
+                        // Tapped inside the currently editing cell
+                        return;
+                      }
+                      if (isEditing && _editingCellKey != tappedCellKey) {
+                        // Tapped different cell while editing, finish previous
+                        _handleEndEditing(newValue: _cellEditController.text);
+                        // Reset tap tracking because the action was finishing an edit
+                        _lastTapTime = null;
+                        _lastTappedTrackId = null;
+                        return;
+                      }
+                      if (!isEditing) {
+                        if (_isRowSelected(rowIndex) && isTappedCellEditable) {
+                          // Start editing
+                          print("Starting edit for $tappedCellKey");
+                          final track = widget.tracks.firstWhereOrNull(
+                            (t) => t.id == currentTrackId,
+                          );
+                          if (track != null) {
+                            final currentValue = _getTrackValueByColumn(
+                              track,
+                              tappedColumnName,
+                            );
+                            _cellEditController.text = currentValue;
+                            setState(() {
+                              _editingCellKey = tappedCellKey;
+                            });
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              // ... (focus and selection logic) ...
+                              Future.delayed(
+                                const Duration(milliseconds: 50),
+                                () {
+                                  if (mounted) {
+                                    print("Requesting focus and selection NOW");
+                                    FocusScope.of(
+                                      context,
+                                    ).requestFocus(_cellEditFocusNode);
+                                    _cellEditController
+                                        .selection = TextSelection(
+                                      baseOffset: 0,
+                                      extentOffset:
+                                          _cellEditController.text.length,
+                                    );
+                                  }
+                                },
+                              );
+                            });
+                          } else {
+                            print(
+                              "Track with ID $currentTrackId not found for editing",
+                            );
+                            _handleEndEditing();
+                          }
+                        } else {
+                          print(
+                            "Tap conditions not met for starting edit (Row Selected: ${_isRowSelected(rowIndex)}, Cell Editable: $isTappedCellEditable, Track ID: $currentTrackId).",
+                          );
+                          // No edit action needed for single click here. Selection handled by grid.
+                        }
+                      }
+                      // --- End Cell Editing Logic ---
+                    }
+                  }, // End onCellTap
+
+                  onColumnSortChanged: (
+                    SortColumnDetails? newSortColumn,
+                    SortColumnDetails? oldSortColumn,
+                  ) {
+                    if (newSortColumn != null) {
+                      widget.onSort(
+                        newSortColumn.name,
+                        newSortColumn.sortDirection,
+                      );
+                    } else {
+                      // Default sort if sorting is cleared (optional)
+                      widget.onSort('title', DataGridSortDirection.ascending);
+                    }
+                  },
+                  navigationMode: GridNavigationMode.row,
+                  onSelectionChanging: (
+                    List<DataGridRow> addedRows,
+                    List<DataGridRow> removedRows,
+                  ) {
+                    // Check if we're processing a right-click - if so, prevent selection change
+                    if (_isProcessingRightClick) {
+                      print("Preventing selection change during right-click");
+                      return false; // Prevent the selection change
+                    }
+                    return true; // Allow the selection change
+                  },
+                  onSelectionChanged: _handleGridSelectionChange,
+                  controller: _dataGridController,
+                  columns: _gridColumns, // Use the dynamically built columns
+
+                  onCellSecondaryTap: (DataGridCellTapDetails details) {
+                    print(
+                      "Right-click detected (onCellSecondaryTap) - Row ${details.rowColumnIndex.rowIndex}",
                     );
-                    if (track != null) {
-                      widget.onShowContextMenu(
-                        context,
-                        details.globalPosition,
-                        track,
+
+                    // Set flag to prevent onCellTap from processing during right-click
+                    _isProcessingRightClick = true;
+
+                    // Reset the flag after a short delay to allow proper event handling
+                    Future.delayed(const Duration(milliseconds: 100), () {
+                      if (mounted) {
+                        _isProcessingRightClick = false;
+                      }
+                    });
+
+                    int rowIndex = details.rowColumnIndex.rowIndex;
+                    if (rowIndex > 0 &&
+                        rowIndex <= _trackDataSource.rows.length) {
+                      final dataRow = _trackDataSource.rows[rowIndex - 1];
+                      final idCell = dataRow.getCells().firstWhere(
+                        (cell) => cell.columnName == 'id',
+                        orElse:
+                            () =>
+                                DataGridCell<int>(columnName: 'id', value: -1),
                       );
-                    } else {
-                      debugPrint(
-                        "Track with ID $trackId not found for context menu",
-                      );
+                      final int trackId = idCell.value as int? ?? -1;
+                      if (trackId != -1) {
+                        final track = widget.tracks.firstWhereOrNull(
+                          (t) => t.id == trackId,
+                        );
+                        if (track != null) {
+                          widget.onShowContextMenu(
+                            context,
+                            details.globalPosition,
+                            track,
+                          );
+                        } else {
+                          debugPrint(
+                            "Track with ID $trackId not found for context menu",
+                          );
+                        }
+                      }
                     }
-                  }
-                }
-              },
-            ),
-          );
-        },
+                  },
+                ),
+              );
+            },
+          ),
+        ),
       ),
     );
   }
