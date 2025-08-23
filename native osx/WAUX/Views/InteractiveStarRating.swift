@@ -6,6 +6,7 @@ struct InteractiveStarRating: View {
     
     @State private var hoveredStar: Int = 0
     @State private var isHovering: Bool = false
+    @State private var currentRating: Int = 0
     
     var body: some View {
         HStack(spacing: 2) {
@@ -25,6 +26,8 @@ struct InteractiveStarRating: View {
                         }
                     }
                     .onTapGesture {
+                        // Optimistic UI update
+                        currentRating = star
                         onRatingChanged(star)
                     }
                     .scaleEffect(isHovering && hoveredStar >= star ? 1.1 : 1.0)
@@ -43,12 +46,17 @@ struct InteractiveStarRating: View {
                     }
                 }
         )
+        .onAppear { currentRating = track.rating }
+        .onChange(of: track.rating) { newValue in
+            // Sync from parent updates
+            currentRating = newValue
+        }
     }
     
     private func starName(for star: Int) -> String {
         if isHovering && hoveredStar >= star {
             return "star.fill"
-        } else if star <= track.rating {
+        } else if star <= currentRating {
             return "star.fill"
         } else {
             return "star"
@@ -58,7 +66,7 @@ struct InteractiveStarRating: View {
     private func starColor(for star: Int) -> Color {
         if isHovering && hoveredStar >= star {
             return .orange
-        } else if star <= track.rating {
+        } else if star <= currentRating {
             return .yellow
         } else {
             return .gray
