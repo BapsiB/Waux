@@ -34,36 +34,6 @@
             endingLineNumber = "505"
             landmarkName = "searchTracks(query:)"
             landmarkType = "7">
-            <Locations>
-               <Location
-                  uuid = "2984DF29-62F6-4B39-902C-38F9A78674EB - 847281810a5d162"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(1) suspend resume partial function for WAUX.CollectionService.searchTracks(query: Swift.String) async throws -&gt; Swift.Array&lt;WAUX.Track&gt;"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Services/CollectionService.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "508"
-                  endingLineNumber = "508">
-               </Location>
-               <Location
-                  uuid = "2984DF29-62F6-4B39-902C-38F9A78674EB - 847281810a5d107"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(1) suspend resume partial function for WAUX.CollectionService.searchTracks(query: Swift.String) async throws -&gt; Swift.Array&lt;WAUX.Track&gt;"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Services/CollectionService.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "505"
-                  endingLineNumber = "505">
-               </Location>
-            </Locations>
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy

@@ -15,7 +15,9 @@ struct ContentView: View {
     @State private var showingFolderPicker = false
     @State private var showingError = false
     @State private var errorMessage = ""
-    @State private var selectedTab = "tracks"
+    @State private var selectedPlaylist: Playlist?
+    @State private var playlistTracks: [Track] = []
+    @State private var isLoadingPlaylistTracks = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -49,23 +51,47 @@ struct ContentView: View {
                             .font(.headline)
                             .padding()
                         
-                        List {
-                            Button("Tracks") {
-                                selectedTab = "tracks"
+                        if playlistService.isLoading {
+                            ProgressView("Loading playlists...")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if playlistService.playlists.isEmpty {
+                            VStack {
+                                Image(systemName: "music.note.list")
+                                    .font(.system(size: 32))
+                                    .foregroundColor(.gray)
+                                Text("No playlists")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                    .multilineTextAlignment(.center)
                             }
-                            .buttonStyle(PlainButtonStyle())
-                            .foregroundColor(selectedTab == "tracks" ? .blue : .primary)
-                            
-                            Button("Playlists") {
-                                selectedTab = "playlists"
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            List(playlistService.playlists, id: \.id, selection: $selectedPlaylist) { playlist in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(playlist.name)
+                                        .font(.headline)
+                                        .lineLimit(1)
+                                    
+                                    HStack {
+                                        Text("\(playlist.trackPaths.count) tracks")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        
+                                        if playlist.duration > 0 {
+                                            Text("•")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                            
+                                            Text(playlist.formattedDuration)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 4)
                             }
-                            .buttonStyle(PlainButtonStyle())
-                            .foregroundColor(selectedTab == "playlists" ? .blue : .primary)
-                            
-                            Text("Recently Added")
-                            Text("Favorites")
+                            .listStyle(SidebarListStyle())
                         }
-                        .listStyle(SidebarListStyle())
                     }
                     .frame(width: 200)
                     .background(Color(.controlBackgroundColor))
@@ -75,12 +101,62 @@ struct ContentView: View {
                         if collectionService.isLoading {
                             ProgressView("Loading collection...")
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else if selectedTab == "tracks" && !collectionService.tracks.isEmpty {
-                            // Show tracks
-                            TrackListView(tracks: collectionService.tracks, collectionService: collectionService, audioService: audioService)
-                        } else if selectedTab == "playlists" {
-                            // Show playlists
-                            PlaylistView(playlistService: playlistService)
+                        } else if let selectedPlaylist = selectedPlaylist {
+                            // Show playlist tracks
+                            if isLoadingPlaylistTracks {
+                                ProgressView("Loading playlist tracks...")
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            } else if !playlistTracks.isEmpty {
+                                VStack {
+                                    HStack {
+                                        Text("Playlist: \(selectedPlaylist.name)")
+                                            .font(.title2)
+                                            .fontWeight(.bold)
+                                        
+                                        Spacer()
+                                        
+                                        Text("\(playlistTracks.count) tracks")
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.horizontal)
+                                    .padding(.top)
+                                    
+                                    TrackListView(tracks: playlistTracks, collectionService: collectionService, audioService: audioService)
+                                }
+                            } else {
+                                VStack(spacing: 20) {
+                                    Image(systemName: "music.note.list")
+                                        .font(.system(size: 64))
+                                        .foregroundColor(.blue)
+                                    
+                                    Text("Empty Playlist")
+                                        .font(.largeTitle)
+                                        .fontWeight(.bold)
+                                    
+                                    Text("This playlist contains no tracks")
+                                        .font(.title2)
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                        } else if !collectionService.tracks.isEmpty {
+                            // Show all tracks when no playlist is selected
+                            VStack {
+                                HStack {
+                                    Text("All Tracks")
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+                                    
+                                    Spacer()
+                                    
+                                    Text("\(collectionService.tracks.count) tracks")
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.horizontal)
+                                .padding(.top)
+                                
+                                TrackListView(tracks: collectionService.tracks, collectionService: collectionService, audioService: audioService)
+                            }
                         } else {
                             // Welcome screen
                             VStack(spacing: 20) {
@@ -143,6 +219,45 @@ struct ContentView: View {
             Button("OK") { }
         } message: {
             Text(errorMessage)
+        }
+        .onChange(of: selectedPlaylist) { _, newPlaylist in
+            if let playlist = newPlaylist {
+                Task {
+                    await loadPlaylistTracks(playlist)
+                }
+            } else {
+                playlistTracks = []
+            }
+        }
+    }
+    
+    private func loadPlaylistTracks(_ playlist: Playlist) async {
+        await MainActor.run {
+            isLoadingPlaylistTracks = true
+        }
+        
+        do {
+            // Get tracks that match the playlist track paths
+            let tracks = collectionService.tracks.filter { track in
+                playlist.trackPaths.contains(track.path)
+            }
+            
+            // Sort tracks according to playlist order
+            let sortedTracks = playlist.trackPaths.compactMap { trackPath in
+                tracks.first { $0.path == trackPath }
+            }
+            
+            await MainActor.run {
+                playlistTracks = sortedTracks
+                isLoadingPlaylistTracks = false
+            }
+        } catch {
+            await MainActor.run {
+                playlistTracks = []
+                isLoadingPlaylistTracks = false
+                errorMessage = "Failed to load playlist tracks: \(error.localizedDescription)"
+                showingError = true
+            }
         }
     }
     
