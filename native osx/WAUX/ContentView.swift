@@ -41,77 +41,84 @@ struct ContentView: View {
             .background(Color(.controlBackgroundColor))
             
             // Main content
-            HStack(spacing: 0) {
-                // Sidebar
-                VStack {
-                    Text("Library")
-                        .font(.headline)
-                        .padding()
-                    
-                    List {
-                        Button("Tracks") {
-                            selectedTab = "tracks"
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .foregroundColor(selectedTab == "tracks" ? .blue : .primary)
-                        
-                        Button("Playlists") {
-                            selectedTab = "playlists"
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .foregroundColor(selectedTab == "playlists" ? .blue : .primary)
-                        
-                        Text("Recently Added")
-                        Text("Favorites")
-                    }
-                    .listStyle(SidebarListStyle())
-                }
-                .frame(width: 200)
-                .background(Color(.controlBackgroundColor))
-                
-                // Main area
-                VStack {
-                    if collectionService.isLoading {
-                        ProgressView("Loading collection...")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if selectedTab == "tracks" && !collectionService.tracks.isEmpty {
-                        // Show tracks
-                        TrackListView(tracks: collectionService.tracks, collectionService: collectionService)
-                    } else if selectedTab == "playlists" {
-                        // Show playlists
-                        PlaylistView(playlistService: playlistService)
-                    } else if audioService.currentTrack != nil {
-                        AudioPlayerView(audioService: audioService)
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    // Sidebar
+                    VStack {
+                        Text("Library")
+                            .font(.headline)
                             .padding()
-                    } else {
-                        // Welcome screen
-                        VStack(spacing: 20) {
-                            Image(systemName: "music.note")
-                                .font(.system(size: 64))
-                                .foregroundColor(.blue)
-                            
-                            Text("Welcome to WAUX")
-                                .font(.largeTitle)
-                                .fontWeight(.bold)
-                            
-                            Text("Your audio collection manager")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                            
-                            Text("Open a database to view your collection")
-                                .font(.body)
-                                .foregroundColor(.secondary)
-                            
-                            Button("Open Folder") {
-                                showingFolderPicker = true
+                        
+                        List {
+                            Button("Tracks") {
+                                selectedTab = "tracks"
                             }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
+                            .buttonStyle(PlainButtonStyle())
+                            .foregroundColor(selectedTab == "tracks" ? .blue : .primary)
+                            
+                            Button("Playlists") {
+                                selectedTab = "playlists"
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .foregroundColor(selectedTab == "playlists" ? .blue : .primary)
+                            
+                            Text("Recently Added")
+                            Text("Favorites")
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .listStyle(SidebarListStyle())
                     }
+                    .frame(width: 200)
+                    .background(Color(.controlBackgroundColor))
+                    
+                    // Main area
+                    VStack {
+                        if collectionService.isLoading {
+                            ProgressView("Loading collection...")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if selectedTab == "tracks" && !collectionService.tracks.isEmpty {
+                            // Show tracks
+                            TrackListView(tracks: collectionService.tracks, collectionService: collectionService, audioService: audioService)
+                        } else if selectedTab == "playlists" {
+                            // Show playlists
+                            PlaylistView(playlistService: playlistService)
+                        } else {
+                            // Welcome screen
+                            VStack(spacing: 20) {
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 64))
+                                    .foregroundColor(.blue)
+                                
+                                Text("Welcome to WAUX")
+                                    .font(.largeTitle)
+                                    .fontWeight(.bold)
+                                
+                                Text("Your audio collection manager")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                                
+                                Text("Open a database to view your collection")
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                                
+                                Button("Open Folder") {
+                                    showingFolderPicker = true
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                
+                // Audio player at bottom
+                if audioService.currentTrack != nil {
+                    AudioPlayerView(audioService: audioService)
+                        .padding()
+                        .background(Color(.controlBackgroundColor))
+                        .border(Color(.separatorColor), width: 1)
+                }
             }
         }
         .frame(minWidth: 800, minHeight: 600)

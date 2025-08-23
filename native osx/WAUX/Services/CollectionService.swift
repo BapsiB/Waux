@@ -81,7 +81,11 @@ class CollectionService: ObservableObject {
             print("Database opened at: \(definition.dbPath)")
             
             if definition.type == .local {
-                try await loadLocalCollectionRootFolders()
+                // For local collections, the root folder is the folder containing the database
+                let dbURL = URL(fileURLWithPath: definition.dbPath)
+                let rootFolder = dbURL.deletingLastPathComponent().path
+                localCollectionRootFolders = [rootFolder]
+                print("📁 Set local collection root folder: \(rootFolder)")
             } else {
                 localCollectionRootFolders = []
             }
@@ -266,7 +270,9 @@ class CollectionService: ObservableObject {
     
     // MARK: - Track Operations
     func loadAllTracks() async throws {
+        print("🎵 loadAllTracks called")
         guard let db = database else {
+            print("❌ Database not open")
             throw CollectionError.databaseNotOpen
         }
         
@@ -275,6 +281,7 @@ class CollectionService: ObservableObject {
         }
         
         let query = "SELECT * FROM \(tableMusic)"
+        print("🔍 Executing query: \(query)")
         var statement: OpaquePointer?
         
         let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
@@ -282,6 +289,7 @@ class CollectionService: ObservableObject {
         
         if result != SQLITE_OK {
             let errorMessage = String(cString: sqlite3_errmsg(db))
+            print("❌ Query failed: \(errorMessage)")
             throw CollectionError.queryFailed(message: errorMessage)
         }
         
@@ -289,6 +297,7 @@ class CollectionService: ObservableObject {
         
         while sqlite3_step(statement) == SQLITE_ROW {
             if let track = try? parseTrackFromRow(statement) {
+                print("📝 Parsed track: \(track.title)")
                 let resolvedTrack = resolveTrackPath(track)
                 loadedTracks.append(resolvedTrack)
             }
@@ -299,7 +308,7 @@ class CollectionService: ObservableObject {
             isLoading = false
         }
         
-        print("Loaded \(loadedTracks.count) tracks from database")
+        print("✅ Loaded \(loadedTracks.count) tracks from database")
     }
     
     private func parseTrackFromRow(_ statement: OpaquePointer?) throws -> Track {
@@ -403,15 +412,57 @@ class CollectionService: ObservableObject {
     
     // MARK: - Path Resolution
     private func resolveTrackPath(_ track: Track) -> Track {
+        print("🔍 resolveTrackPath called for track: \(track.title)")
+        print("   Original path: \(track.path)")
+        print("   Is URL: \(track.isUrl)")
+        print("   Collection type: \(activeCollectionDefinition?.type.rawValue ?? "unknown")")
+        print("   Root folders: \(localCollectionRootFolders)")
+        
         guard let definition = activeCollectionDefinition,
-              definition.type == .shared,
-              !track.isUrl,
-              let rootPath = definition.rootPath else {
+              !track.isUrl else {
+            print("   ⚠️ Skipping path resolution (no definition or is URL)")
             return track
         }
         
-        let absolutePath = (rootPath as NSString).appendingPathComponent(track.path)
-        return Track(
+        var absolutePath: String
+        
+        switch definition.type {
+        case .shared:
+            guard let rootPath = definition.rootPath else {
+                print("   ⚠️ No root path for shared collection")
+                return track
+            }
+            absolutePath = (rootPath as NSString).appendingPathComponent(track.path)
+            print("   📁 Shared collection resolved path: \(absolutePath)")
+            
+        case .local:
+            print("   🔍 Local collection - checking \(localCollectionRootFolders.count) root folders")
+            // For local collections, try to find the file in any of the root folders
+            var foundPath = false
+            absolutePath = "" // Initialize with empty string
+            
+            for (index, rootFolder) in localCollectionRootFolders.enumerated() {
+                let candidatePath = (rootFolder as NSString).appendingPathComponent(track.path)
+                print("   📂 Checking folder \(index + 1): \(candidatePath)")
+                if FileManager.default.fileExists(atPath: candidatePath) {
+                    absolutePath = candidatePath
+                    foundPath = true
+                    print("   ✅ Found file at: \(absolutePath)")
+                    break
+                }
+            }
+            // If not found in any root folder, use the first root folder as fallback
+            if localCollectionRootFolders.isEmpty {
+                print("   ⚠️ No root folders available")
+                return track
+            }
+            if !foundPath {
+                absolutePath = (localCollectionRootFolders[0] as NSString).appendingPathComponent(track.path)
+                print("   📁 Using fallback path: \(absolutePath)")
+            }
+        }
+        
+        let resolvedTrack = Track(
             id: track.id,
             title: track.title,
             artist: track.artist,
@@ -432,6 +483,9 @@ class CollectionService: ObservableObject {
             comment: track.comment,
             generalTags: track.generalTags
         )
+        
+        print("   ✅ Resolved track path: \(track.path) -> \(absolutePath)")
+        return resolvedTrack
     }
     
     // MARK: - Utility Methods

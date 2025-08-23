@@ -3,12 +3,13 @@ import AVFoundation
 import Combine
 
 class AudioService: NSObject, ObservableObject {
-    @Published var currentTrack: AudioTrack?
+    @Published var currentTrack: Track?
     @Published var isPlaying: Bool = false
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
     @Published var volume: Float = 1.0
-    @Published var tracks: [AudioTrack] = []
+    @Published var isLoading: Bool = false
+    @Published var errorMessage: String?
     
     private var audioPlayer: AVAudioPlayer?
     private var timer: Timer?
@@ -50,17 +51,75 @@ class AudioService: NSObject, ObservableObject {
         duration = player.duration
     }
     
-    func loadTrack(_ track: AudioTrack) {
+    func loadTrack(_ track: Track) async {
+        await MainActor.run {
+            isLoading = true
+            errorMessage = nil
+        }
+        
         do {
-            audioPlayer = try AVAudioPlayer(contentsOf: track.url)
+            let url: URL
+            if track.isUrl {
+                guard let trackUrl = URL(string: track.path) else {
+                    throw AudioServiceError.invalidUrl
+                }
+                url = trackUrl
+                print("Loading URL track: \(url)")
+            } else {
+                url = URL(fileURLWithPath: track.path)
+                print("Loading local track: \(url)")
+                
+                // Check if file exists
+                let fileManager = FileManager.default
+                guard fileManager.fileExists(atPath: track.path) else {
+                    throw AudioServiceError.fileNotFound
+                }
+                
+                // Get file size
+                let attributes = try fileManager.attributesOfItem(atPath: track.path)
+                let fileSize = attributes[.size] as? Int64 ?? 0
+                print("File size: \(fileSize) bytes")
+                
+                if fileSize == 0 {
+                    throw AudioServiceError.fileNotFound
+                }
+            }
+            
+            // Create audio player
+            print("Creating AVAudioPlayer for: \(url)")
+            audioPlayer = try AVAudioPlayer(contentsOf: url)
             audioPlayer?.delegate = self
             audioPlayer?.volume = volume
-            currentTrack = track
-            duration = track.duration
-            currentTime = 0
-            isPlaying = false
+            
+            print("Audio player created successfully")
+            print("Duration: \(audioPlayer?.duration ?? 0) seconds")
+            print("Format: \(audioPlayer?.format.description ?? "Unknown")")
+            
+            await MainActor.run {
+                currentTrack = track
+                duration = track.isUrl ? audioPlayer?.duration ?? 0 : TimeInterval(track.duration / 1000)
+                currentTime = 0
+                isPlaying = false
+                isLoading = false
+            }
+            
         } catch {
-            print("Failed to load track: \(error)")
+            print("Error loading track: \(error)")
+            print("Error domain: \((error as NSError).domain)")
+            print("Error code: \((error as NSError).code)")
+            print("Error description: \((error as NSError).localizedDescription)")
+            print("Error user info: \((error as NSError).userInfo)")
+            
+            await MainActor.run {
+                let errorDescription: String
+                if let audioError = error as? AudioServiceError {
+                    errorDescription = audioError.errorDescription ?? "Unknown error"
+                } else {
+                    errorDescription = "Failed to load track: \(error.localizedDescription)"
+                }
+                errorMessage = errorDescription
+                isLoading = false
+            }
         }
     }
     
@@ -90,15 +149,46 @@ class AudioService: NSObject, ObservableObject {
         currentTime = time
     }
     
+    func seekToRatio(_ ratio: Double) {
+        guard audioPlayer != nil, duration > 0 else { return }
+        let targetTime = duration * ratio
+        seek(to: targetTime)
+    }
+    
     func setVolume(_ newVolume: Float) {
         volume = max(0, min(1, newVolume))
         audioPlayer?.volume = volume
     }
     
-    func importAudioFiles() {
-        // TODO: Implement file picker and audio import
-        // This would typically open a file picker and load audio files
-        print("Import audio files functionality to be implemented")
+    func togglePlayPause() {
+        if isPlaying {
+            pause()
+        } else {
+            play()
+        }
+    }
+    
+    func formatTime(_ time: TimeInterval) -> String {
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+enum AudioServiceError: Error, LocalizedError {
+    case invalidUrl
+    case fileNotFound
+    case unsupportedFormat
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidUrl:
+            return "Invalid URL"
+        case .fileNotFound:
+            return "File not found"
+        case .unsupportedFormat:
+            return "Unsupported audio format"
+        }
     }
 }
 
@@ -114,6 +204,7 @@ extension AudioService: AVAudioPlayerDelegate {
         print("Audio player decode error: \(error?.localizedDescription ?? "Unknown error")")
         DispatchQueue.main.async {
             self.isPlaying = false
+            self.errorMessage = error?.localizedDescription ?? "Unknown error"
         }
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct AudioPlayerView: View {
     @ObservedObject var audioService: AudioService
@@ -8,39 +9,75 @@ struct AudioPlayerView: View {
             // Track info
             if let track = audioService.currentTrack {
                 VStack(spacing: 10) {
-                    Text(track.displayTitle)
+                    Text(track.title)
                         .font(.title2)
                         .fontWeight(.semibold)
                         .multilineTextAlignment(.center)
+                        .lineLimit(2)
                     
-                    if let album = track.album {
-                        Text(album)
+                    if !track.artist.isEmpty && track.artist != "Unknown" {
+                        Text(track.artist)
                             .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    if !track.album.isEmpty {
+                        Text(track.album)
+                            .font(.caption)
                             .foregroundColor(.secondary)
                     }
                 }
                 .padding(.bottom, 10)
+            } else {
+                Text("No track loaded")
+                    .font(.title2)
+                    .foregroundColor(.secondary)
+                    .padding(.bottom, 10)
+            }
+            
+            // Error message
+            if let errorMessage = audioService.errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .padding(.horizontal)
             }
             
             // Progress bar
             VStack(spacing: 5) {
-                ProgressView(value: audioService.duration > 0 ? audioService.currentTime / audioService.duration : 0)
-                    .progressViewStyle(LinearProgressViewStyle())
-                    .scaleEffect(y: 2)
+                // Seek bar
+                Slider(
+                    value: Binding(
+                        get: { audioService.duration > 0 ? audioService.currentTime / audioService.duration : 0 },
+                        set: { ratio in
+                            audioService.seekToRatio(ratio)
+                        }
+                    ),
+                    in: 0...1
+                )
+                .disabled(audioService.currentTrack == nil || audioService.isLoading)
                 
                 HStack {
-                    Text(formatTime(audioService.currentTime))
+                    Text(audioService.formatTime(audioService.currentTime))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .monospacedDigit()
                     
                     Spacer()
                     
-                    Text(formatTime(audioService.duration))
+                    Text(audioService.formatTime(audioService.duration))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .monospacedDigit()
                 }
             }
             .padding(.horizontal)
+            
+            // Loading indicator
+            if audioService.isLoading {
+                ProgressView("Loading...")
+                    .progressViewStyle(CircularProgressViewStyle())
+            }
             
             // Playback controls
             HStack(spacing: 30) {
@@ -50,17 +87,18 @@ struct AudioPlayerView: View {
                     Image(systemName: "backward.fill")
                         .font(.title2)
                 }
-                .disabled(audioService.currentTrack == nil)
+                .disabled(audioService.currentTrack == nil || audioService.isLoading)
                 
                 Button(action: {
-                    if audioService.isPlaying { audioService.pause() } else { audioService.play() }
+                    audioService.togglePlayPause()
                 }) {
                     Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title)
                         .frame(width: 50, height: 50)
                         .background(Circle().fill(Color.blue))
                         .foregroundColor(.white)
-                }.disabled(audioService.currentTrack == nil)
+                }
+                .disabled(audioService.currentTrack == nil || audioService.isLoading)
                 
                 Button(action: {
                     // TODO: Implement next track
@@ -68,7 +106,7 @@ struct AudioPlayerView: View {
                     Image(systemName: "forward.fill")
                         .font(.title2)
                 }
-                .disabled(audioService.currentTrack == nil)
+                .disabled(audioService.currentTrack == nil || audioService.isLoading)
             }
             
             // Volume control
@@ -89,12 +127,7 @@ struct AudioPlayerView: View {
         .padding()
         .background(Color(.controlBackgroundColor))
         .cornerRadius(10)
-    }
-    
-    private func formatTime(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%d:%02d", minutes, seconds)
+        .frame(minWidth: 300, minHeight: 200)
     }
 }
 

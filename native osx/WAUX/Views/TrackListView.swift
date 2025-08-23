@@ -51,6 +51,7 @@ enum TrackColumn: String, CaseIterable, Hashable {
 struct TrackListView: View {
     let tracks: [Track]
     let collectionService: CollectionService
+    @ObservedObject var audioService: AudioService
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
     @State private var searchText = ""
     @State private var selectedTracks = Set<Track.ID>()
@@ -229,12 +230,43 @@ struct TrackListView: View {
                 }
             }
             .tableStyle(.bordered)
+            .onTapGesture(count: 2) {
+                if let selectedTrack = selectedTracks.first,
+                   let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
+                    print("Double-clicked track: \(track.title)")
+                    print("Track path: \(track.path)")
+                    print("Is URL: \(track.isUrl)")
+                    print("Duration: \(track.duration) ms")
+                    Task {
+                        await audioService.loadTrack(track)
+                        audioService.play()
+                    }
+                }
+            }
             .contextMenu {
                 columnContextMenu
             }
             .onKeyPress("a", phases: .down) { press in
                 if press.modifiers.contains(.command) {
                     selectedTracks = Set(filteredTracks.compactMap { $0.id })
+                    return .handled
+                }
+                return .ignored
+            }
+            .onKeyPress(.space, phases: .down) { press in
+                if !selectedTracks.isEmpty {
+                    audioService.togglePlayPause()
+                    return .handled
+                }
+                return .ignored
+            }
+            .onKeyPress(.return, phases: .down) { press in
+                if let selectedTrack = selectedTracks.first,
+                   let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
+                    Task {
+                        await audioService.loadTrack(track)
+                        audioService.play()
+                    }
                     return .handled
                 }
                 return .ignored
@@ -323,6 +355,25 @@ struct TrackListView: View {
     
     @ViewBuilder
     private var columnContextMenu: some View {
+        // Track actions
+        if !selectedTracks.isEmpty {
+            Button("Play") {
+                if let selectedTrack = selectedTracks.first,
+                   let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
+                    print("Context menu play track: \(track.title)")
+                    print("Track path: \(track.path)")
+                    print("Is URL: \(track.isUrl)")
+                    print("Duration: \(track.duration) ms")
+                    Task {
+                        await audioService.loadTrack(track)
+                        audioService.play()
+                    }
+                }
+            }
+            Divider()
+        }
+        
+        // Column visibility
         ForEach(TrackColumn.allCases, id: \.self) { column in
             Button {
                 if visibleColumns.contains(column) {
@@ -400,6 +451,7 @@ struct TrackListView: View {
                 rating: 3
             )
         ],
-        collectionService: CollectionService()
+        collectionService: CollectionService(),
+        audioService: AudioService()
     )
 }
