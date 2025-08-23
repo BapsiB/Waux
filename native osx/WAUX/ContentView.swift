@@ -66,7 +66,7 @@ struct ContentView: View {
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
-                            List(playlistService.playlists, id: \.id, selection: $selectedPlaylist) { playlist in
+                            List(playlistService.playlists, id: \.id) { playlist in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(playlist.name)
                                         .font(.headline)
@@ -89,6 +89,10 @@ struct ContentView: View {
                                     }
                                 }
                                 .padding(.vertical, 4)
+                                .background(selectedPlaylist?.id == playlist.id ? Color.blue.opacity(0.2) : Color.clear)
+                                .onTapGesture {
+                                    selectedPlaylist = playlist
+                                }
                             }
                             .listStyle(SidebarListStyle())
                         }
@@ -237,15 +241,68 @@ struct ContentView: View {
         }
         
         do {
+            print("Loading playlist: \(playlist.name)")
+            print("Playlist has \(playlist.trackPaths.count) track paths")
+            print("Collection has \(collectionService.tracks.count) tracks")
+            
+            // Debug: Print first few playlist track paths
+            if !playlist.trackPaths.isEmpty {
+                print("First 3 playlist track paths:")
+                for (index, path) in playlist.trackPaths.prefix(3).enumerated() {
+                    print("  \(index): \(path)")
+                }
+            }
+            
+            // Debug: Print first few collection track paths
+            if !collectionService.tracks.isEmpty {
+                print("First 3 collection track paths:")
+                for (index, track) in collectionService.tracks.prefix(3).enumerated() {
+                    print("  \(index): \(track.path)")
+                }
+            }
+            
             // Get tracks that match the playlist track paths
-            let tracks = collectionService.tracks.filter { track in
+            // Try exact match first
+            var tracks = collectionService.tracks.filter { track in
                 playlist.trackPaths.contains(track.path)
+            }
+            
+            print("Found \(tracks.count) exact matching tracks")
+            
+            // If no exact matches, try filename matching
+            if tracks.isEmpty {
+                tracks = collectionService.tracks.filter { track in
+                    playlist.trackPaths.contains { playlistPath in
+                        let trackFilename = URL(fileURLWithPath: track.path).lastPathComponent
+                        let playlistFilename = URL(fileURLWithPath: playlistPath).lastPathComponent
+                        return trackFilename == playlistFilename
+                    }
+                }
+                print("Found \(tracks.count) filename matching tracks")
+            }
+            
+            // If still no matches, try normalized path matching
+            if tracks.isEmpty {
+                tracks = collectionService.tracks.filter { track in
+                    playlist.trackPaths.contains { playlistPath in
+                        let normalizedTrackPath = URL(fileURLWithPath: track.path).standardized.path
+                        let normalizedPlaylistPath = URL(fileURLWithPath: playlistPath).standardized.path
+                        return normalizedTrackPath == normalizedPlaylistPath
+                    }
+                }
+                print("Found \(tracks.count) normalized matching tracks")
             }
             
             // Sort tracks according to playlist order
             let sortedTracks = playlist.trackPaths.compactMap { trackPath in
-                tracks.first { $0.path == trackPath }
+                tracks.first { track in
+                    track.path == trackPath || 
+                    URL(fileURLWithPath: track.path).standardized.path == URL(fileURLWithPath: trackPath).standardized.path ||
+                    URL(fileURLWithPath: track.path).lastPathComponent == URL(fileURLWithPath: trackPath).lastPathComponent
+                }
             }
+            
+            print("Final sorted tracks count: \(sortedTracks.count)")
             
             await MainActor.run {
                 playlistTracks = sortedTracks
