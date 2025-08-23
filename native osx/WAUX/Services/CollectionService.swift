@@ -40,6 +40,8 @@ class CollectionService: ObservableObject {
     private var database: OpaquePointer?
     private var activeCollectionDefinition: CollectionDefinition?
     private var localCollectionRootFolders: [String] = []
+    private var securityScopedURL: URL?
+    private var isReadOnlyMode: Bool = false
     
     // MARK: - Initialization
     init() {
@@ -104,8 +106,10 @@ class CollectionService: ObservableObject {
             sqlite3_close(db)
             database = nil
         }
+        
         activeCollectionDefinition = nil
         localCollectionRootFolders = []
+        isReadOnlyMode = false
         
         Task { @MainActor in
             tracks = []
@@ -120,6 +124,10 @@ class CollectionService: ObservableObject {
         return database
     }
     
+    func setSecurityScopedURL(_ url: URL) {
+        securityScopedURL = url
+    }
+    
     // MARK: - Database Operations
     private func openDatabase(path: String) throws {
         // Handle path encoding issues (backslashes, spaces, etc.)
@@ -131,15 +139,22 @@ class CollectionService: ObservableObject {
             throw CollectionError.databaseOpenFailed(message: "Database file does not exist at path: \(cleanPath)")
         }
         
-        // Check file permissions
-        guard fileManager.isReadableFile(atPath: cleanPath) else {
-            throw CollectionError.databaseOpenFailed(message: "Database file is not readable. Please check file permissions.")
-        }
+        // Note: File permissions are checked in ContentView before calling this method
+        // Security-scoped URLs may not report correct permissions here
         
         print("Attempting to open database at: \(cleanPath)")
         
         // Try with UTF8 encoding and thread safety
-        let result = sqlite3_open_v2(cleanPath, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil)
+        // First try read-write, if that fails, try read-only (match flags used in testDatabaseConnection)
+        var result = sqlite3_open_v2(cleanPath, &database, SQLITE_OPEN_READWRITE, nil)
+        if result != SQLITE_OK {
+            print("Read-write mode failed, trying read-only mode")
+            result = sqlite3_open_v2(cleanPath, &database, SQLITE_OPEN_READONLY, nil)
+            if result == SQLITE_OK {
+                print("Database opened in read-only mode")
+                isReadOnlyMode = true
+            }
+        }
         if result != SQLITE_OK {
             let errorMessage = String(cString: sqlite3_errmsg(database))
             sqlite3_close(database)
@@ -147,15 +162,16 @@ class CollectionService: ObservableObject {
             throw CollectionError.databaseOpenFailed(message: "SQLite error: \(errorMessage)")
         }
         
-        // Configure database for thread safety
-        let threadModeResult = sqlite3_exec(database, "PRAGMA journal_mode = WAL", nil, nil, nil)
-        if threadModeResult != SQLITE_OK {
-            print("Warning: Could not set WAL journal mode")
+        // Configure database for better compatibility and stability
+        // Use DELETE journal mode to avoid creating separate journal files
+        let journalModeResult = sqlite3_exec(database, "PRAGMA journal_mode = DELETE", nil, nil, nil)
+        if journalModeResult != SQLITE_OK {
+            print("Warning: Could not set journal mode to DELETE")
         }
         
-        // Enable multi-threading with proper configuration
-        let threadingResult = sqlite3_exec(database, "PRAGMA synchronous = NORMAL", nil, nil, nil)
-        if threadingResult != SQLITE_OK {
+        // Set synchronous mode to NORMAL for better performance while maintaining safety
+        let synchronousResult = sqlite3_exec(database, "PRAGMA synchronous = NORMAL", nil, nil, nil)
+        if synchronousResult != SQLITE_OK {
             print("Warning: Could not set synchronous mode")
         }
         
@@ -163,6 +179,18 @@ class CollectionService: ObservableObject {
         let timeoutResult = sqlite3_busy_timeout(database, 30000) // 30 seconds
         if timeoutResult != SQLITE_OK {
             print("Warning: Could not set busy timeout")
+        }
+        
+        // Disable WAL mode explicitly to avoid journal file issues
+        let walResult = sqlite3_exec(database, "PRAGMA journal_mode = DELETE", nil, nil, nil)
+        if walResult != SQLITE_OK {
+            print("Warning: Could not disable WAL mode")
+        }
+        
+        // Set temp store to memory to avoid creating temporary files
+        let tempStoreResult = sqlite3_exec(database, "PRAGMA temp_store = MEMORY", nil, nil, nil)
+        if tempStoreResult != SQLITE_OK {
+            print("Warning: Could not set temp store to memory")
         }
         
         // Enable foreign keys
@@ -457,6 +485,73 @@ class CollectionService: ObservableObject {
         }
         
         return searchResults.sorted()
+    }
+    
+    // MARK: - Track Updates
+    func updateTrackRating(trackId: Int, newRating: Int) async throws {
+        guard let db = database else {
+            throw CollectionError.databaseNotOpen
+        }
+        
+        if isReadOnlyMode {
+            throw CollectionError.queryFailed(message: "Cannot update ratings in read-only mode. Please ensure the database file is writable.")
+        }
+        
+        // First, ensure we're using DELETE journal mode to avoid permission issues
+        let journalResult = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
+        if journalResult != SQLITE_OK {
+            print("Warning: Could not set journal mode to DELETE for update operation")
+        }
+        
+        let query = "UPDATE \(tableMusic) SET \(columnRating) = ? WHERE \(columnId) = ?"
+        var statement: OpaquePointer?
+        
+        let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+        defer { sqlite3_finalize(statement) }
+        
+        if result != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        
+        // Bind parameters
+        sqlite3_bind_int(statement, 1, Int32(newRating))
+        sqlite3_bind_int(statement, 2, Int32(trackId))
+        
+        let stepResult = sqlite3_step(statement)
+        if stepResult != SQLITE_DONE {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        
+        // Update the track in the local array on the main thread
+        await MainActor.run {
+            if let index = tracks.firstIndex(where: { $0.id == trackId }) {
+                tracks[index] = Track(
+                    id: tracks[index].id,
+                    title: tracks[index].title,
+                    artist: tracks[index].artist,
+                    album: tracks[index].album,
+                    albumArtist: tracks[index].albumArtist,
+                    composer: tracks[index].composer,
+                    genre: tracks[index].genre,
+                    year: tracks[index].year,
+                    trackNumber: tracks[index].trackNumber,
+                    discNumber: tracks[index].discNumber,
+                    bpm: tracks[index].bpm,
+                    path: tracks[index].path,
+                    isUrl: tracks[index].isUrl,
+                    duration: tracks[index].duration,
+                    timeMarkers: tracks[index].timeMarkers,
+                    waveformData: tracks[index].waveformData,
+                    rating: newRating,
+                    comment: tracks[index].comment,
+                    generalTags: tracks[index].generalTags
+                )
+            }
+        }
+        
+        print("Updated rating for track \(trackId) to \(newRating)")
     }
 }
 

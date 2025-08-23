@@ -2,9 +2,12 @@ import SwiftUI
 
 struct TrackListView: View {
     let tracks: [Track]
+    let collectionService: CollectionService
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
     @State private var searchText = ""
     @State private var selectedTracks = Set<Track.ID>()
+    @State private var showingRatingError = false
+    @State private var ratingErrorMessage = ""
     
     var filteredTracks: [Track] {
         if searchText.isEmpty {
@@ -66,11 +69,17 @@ struct TrackListView: View {
                 }
                 
                 TableColumn("Rating", value: \.rating) { track in
-                    HStack {
-                        ForEach(1...5, id: \.self) { star in
-                            Image(systemName: star <= track.rating ? "star.fill" : "star")
-                                .foregroundColor(star <= track.rating ? .yellow : .gray)
-                                .font(.caption)
+                    InteractiveStarRating(track: track) { newRating in
+                        Task {
+                            do {
+                                try await collectionService.updateTrackRating(trackId: track.id ?? 0, newRating: newRating)
+                            } catch {
+                                await MainActor.run {
+                                    ratingErrorMessage = "Failed to update rating: \(error.localizedDescription)"
+                                    showingRatingError = true
+                                }
+                                print("Error updating rating: \(error)")
+                            }
                         }
                     }
                 }
@@ -103,6 +112,11 @@ struct TrackListView: View {
                 return .ignored
             }
         }
+        .alert("Rating Update Error", isPresented: $showingRatingError) {
+            Button("OK") { }
+        } message: {
+            Text(ratingErrorMessage)
+        }
     }
     
     private func iconName(for sourceType: TrackSource) -> String {
@@ -129,24 +143,27 @@ struct TrackListView: View {
 }
 
 #Preview {
-    TrackListView(tracks: [
-        Track(
-            title: "Sample Track 1",
-            artist: "Sample Artist",
-            album: "Sample Album",
-            path: "/path/to/track1.mp3",
-            isUrl: false,
-            duration: 180000,
-            rating: 4
-        ),
-        Track(
-            title: "Sample Track 2",
-            artist: "Another Artist",
-            album: "Another Album",
-            path: "https://example.com/track2.mp3",
-            isUrl: true,
-            duration: 240000,
-            rating: 3
-        )
-    ])
+    TrackListView(
+        tracks: [
+            Track(
+                title: "Sample Track 1",
+                artist: "Sample Artist",
+                album: "Sample Album",
+                path: "/path/to/track1.mp3",
+                isUrl: false,
+                duration: 180000,
+                rating: 4
+            ),
+            Track(
+                title: "Sample Track 2",
+                artist: "Another Artist",
+                album: "Another Album",
+                path: "https://example.com/track2.mp3",
+                isUrl: true,
+                duration: 240000,
+                rating: 3
+            )
+        ],
+        collectionService: CollectionService()
+    )
 }

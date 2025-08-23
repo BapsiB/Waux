@@ -12,7 +12,7 @@ struct ContentView: View {
     @StateObject private var audioService = AudioService()
     @StateObject private var collectionService = CollectionService()
     @StateObject private var playlistService = PlaylistService()
-    @State private var showingDatabasePicker = false
+    @State private var showingFolderPicker = false
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var selectedTab = "tracks"
@@ -27,8 +27,8 @@ struct ContentView: View {
                 
                 Spacer()
                 
-                Button("Open Database") {
-                    showingDatabasePicker = true
+                Button("Open Folder") {
+                    showingFolderPicker = true
                 }
                 .buttonStyle(.borderedProminent)
                 
@@ -76,7 +76,7 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if selectedTab == "tracks" && !collectionService.tracks.isEmpty {
                         // Show tracks
-                        TrackListView(tracks: collectionService.tracks)
+                        TrackListView(tracks: collectionService.tracks, collectionService: collectionService)
                     } else if selectedTab == "playlists" {
                         // Show playlists
                         PlaylistView(playlistService: playlistService)
@@ -102,8 +102,8 @@ struct ContentView: View {
                                 .font(.body)
                                 .foregroundColor(.secondary)
                             
-                            Button("Open Database") {
-                                showingDatabasePicker = true
+                            Button("Open Folder") {
+                                showingFolderPicker = true
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.large)
@@ -116,19 +116,19 @@ struct ContentView: View {
         }
         .frame(minWidth: 800, minHeight: 600)
         .fileImporter(
-            isPresented: $showingDatabasePicker,
-            allowedContentTypes: [UTType(filenameExtension: "db")!],
+            isPresented: $showingFolderPicker,
+            allowedContentTypes: [.folder],
             allowsMultipleSelection: false
         ) { result in
             switch result {
             case .success(let urls):
-                if let url = urls.first {
+                if let folderURL = urls.first {
                     Task {
-                        await openDatabase(url: url)
+                        await openFolder(url: folderURL)
                     }
                 }
             case .failure(let error):
-                errorMessage = "File selection failed: \(error.localizedDescription)"
+                errorMessage = "Folder selection failed: \(error.localizedDescription)"
                 showingError = true
             }
         }
@@ -139,31 +139,48 @@ struct ContentView: View {
         }
     }
     
-    private func openDatabase(url: URL) async {
+    private func openFolder(url: URL) async {
         do {
-            print("Selected database URL: \(url)")
-            print("Database path: \(url.path)")
+            print("Selected folder URL: \(url)")
+            print("Folder path: \(url.path)")
             
-            // Start accessing the security-scoped resource
+            // Start accessing the security-scoped resource (folder-wide)
             guard url.startAccessingSecurityScopedResource() else {
-                throw NSError(domain: "DatabaseError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Cannot access the selected file"])
+                throw NSError(domain: "DatabaseError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Cannot access the selected folder"])
             }
             
-            defer {
+            // Store the folder URL so the service maintains access for sidecar files
+            collectionService.setSecurityScopedURL(url)
+            
+            // Locate a .db file inside the folder (search recursively, skip hidden files)
+            let fileManager = FileManager.default
+            let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            var dbURL: URL?
+            while let item = enumerator?.nextObject() as? URL {
+                if item.pathExtension.lowercased() == "db" {
+                    dbURL = item
+                    break
+                }
+            }
+            guard let dbURL else {
                 url.stopAccessingSecurityScopedResource()
+                throw NSError(domain: "DatabaseError", code: 4, userInfo: [NSLocalizedDescriptionKey: "No .db file found in the selected folder."])
             }
             
-            // Test database connection first
-            let canConnect = collectionService.testDatabaseConnection(path: url.path)
+            print("Found database at: \(dbURL.path)")
+            
+            // Test database connection first (read-only)
+            let canConnect = collectionService.testDatabaseConnection(path: dbURL.path)
             if !canConnect {
+                url.stopAccessingSecurityScopedResource()
                 throw NSError(domain: "DatabaseError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Cannot connect to database file"])
             }
             
             let definition = CollectionDefinition(
                 id: UUID().uuidString,
-                name: url.lastPathComponent,
+                name: dbURL.lastPathComponent,
                 type: .local,
-                dbPath: url.path
+                dbPath: dbURL.path
             )
             
             try await collectionService.openCollection(definition)
@@ -171,18 +188,16 @@ struct ContentView: View {
             // Set up playlist service with the same database and collection
             playlistService.setDatabase(collectionService.getDatabase(), collectionDefinition: definition)
             
-            // Load both tracks and playlists
-            async let tracksTask = collectionService.loadAllTracks()
-            async let playlistsTask = playlistService.loadPlaylists()
-            
-            try await (tracksTask, playlistsTask)
+            // Load tracks then playlists sequentially to avoid concurrent access to the same SQLite connection
+            try await collectionService.loadAllTracks()
+            try await playlistService.loadPlaylists()
             
         } catch {
             await MainActor.run {
-                errorMessage = "Failed to open database: \(error.localizedDescription)"
+                errorMessage = "Failed to open folder: \(error.localizedDescription)"
                 showingError = true
             }
-            print("Error opening database: \(error)")
+            print("Error opening folder: \(error)")
         }
     }
 }
