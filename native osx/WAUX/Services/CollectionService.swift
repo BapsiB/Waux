@@ -116,6 +116,10 @@ class CollectionService: ObservableObject {
         return activeCollectionDefinition
     }
     
+    func getDatabase() -> OpaquePointer? {
+        return database
+    }
+    
     // MARK: - Database Operations
     private func openDatabase(path: String) throws {
         // Handle path encoding issues (backslashes, spaces, etc.)
@@ -134,13 +138,31 @@ class CollectionService: ObservableObject {
         
         print("Attempting to open database at: \(cleanPath)")
         
-        // Try with UTF8 encoding
-        let result = sqlite3_open_v2(cleanPath, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
+        // Try with UTF8 encoding and thread safety
+        let result = sqlite3_open_v2(cleanPath, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil)
         if result != SQLITE_OK {
             let errorMessage = String(cString: sqlite3_errmsg(database))
             sqlite3_close(database)
             database = nil
             throw CollectionError.databaseOpenFailed(message: "SQLite error: \(errorMessage)")
+        }
+        
+        // Configure database for thread safety
+        let threadModeResult = sqlite3_exec(database, "PRAGMA journal_mode = WAL", nil, nil, nil)
+        if threadModeResult != SQLITE_OK {
+            print("Warning: Could not set WAL journal mode")
+        }
+        
+        // Enable multi-threading with proper configuration
+        let threadingResult = sqlite3_exec(database, "PRAGMA synchronous = NORMAL", nil, nil, nil)
+        if threadingResult != SQLITE_OK {
+            print("Warning: Could not set synchronous mode")
+        }
+        
+        // Set busy timeout to handle concurrent access
+        let timeoutResult = sqlite3_busy_timeout(database, 30000) // 30 seconds
+        if timeoutResult != SQLITE_OK {
+            print("Warning: Could not set busy timeout")
         }
         
         // Enable foreign keys

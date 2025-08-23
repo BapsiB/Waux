@@ -1,21 +1,25 @@
 import Foundation
 
-struct Playlist: Identifiable, Codable {
-    let id = UUID()
+struct Playlist: Identifiable, Codable, Hashable {
+    let id: String
     var name: String
-    var tracks: [AudioTrack]
+    var trackPaths: [String]
     let dateCreated: Date
     var dateModified: Date
     
-    init(name: String, tracks: [AudioTrack] = []) {
+    init(id: String = UUID().uuidString, name: String, trackPaths: [String] = []) {
+        self.id = id
         self.name = name
-        self.tracks = tracks
+        self.trackPaths = trackPaths
         self.dateCreated = Date()
         self.dateModified = Date()
     }
     
+    // Computed property to get duration (would need to be calculated from actual tracks)
     var duration: TimeInterval {
-        tracks.reduce(0) { $0 + $1.duration }
+        // This would need to be calculated from the actual track data
+        // For now, return 0 as we don't have access to track durations here
+        return 0
     }
     
     var formattedDuration: String {
@@ -24,24 +28,34 @@ struct Playlist: Identifiable, Codable {
         return String(format: "%d:%02d", minutes, seconds)
     }
     
-    mutating func addTrack(_ track: AudioTrack) {
-        tracks.append(track)
-        dateModified = Date()
+    mutating func addTrack(_ trackPath: String) {
+        if !trackPaths.contains(trackPath) {
+            trackPaths.append(trackPath)
+            dateModified = Date()
+        }
     }
     
-    mutating func removeTrack(at index: Int) {
-        guard index >= 0 && index < tracks.count else { return }
-        tracks.remove(at: index)
+    mutating func removeTrack(_ trackPath: String) {
+        trackPaths.removeAll { $0 == trackPath }
         dateModified = Date()
     }
     
     mutating func moveTrack(from sourceIndex: Int, to destinationIndex: Int) {
-        guard sourceIndex >= 0 && sourceIndex < tracks.count,
-              destinationIndex >= 0 && destinationIndex < tracks.count else { return }
+        guard sourceIndex >= 0 && sourceIndex < trackPaths.count,
+              destinationIndex >= 0 && destinationIndex < trackPaths.count else { return }
         
-        let track = tracks.remove(at: sourceIndex)
-        tracks.insert(track, at: destinationIndex)
+        let trackPath = trackPaths.remove(at: sourceIndex)
+        trackPaths.insert(trackPath, at: destinationIndex)
         dateModified = Date()
+    }
+    
+    // Hashable conformance
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: Playlist, rhs: Playlist) -> Bool {
+        return lhs.id == rhs.id
     }
 }
 

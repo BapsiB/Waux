@@ -11,9 +11,11 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @StateObject private var audioService = AudioService()
     @StateObject private var collectionService = CollectionService()
+    @StateObject private var playlistService = PlaylistService()
     @State private var showingDatabasePicker = false
     @State private var showingError = false
     @State private var errorMessage = ""
+    @State private var selectedTab = "tracks"
     
     var body: some View {
         VStack(spacing: 0) {
@@ -40,15 +42,25 @@ struct ContentView: View {
             
             // Main content
             HStack(spacing: 0) {
-                // Sidebar (placeholder)
+                // Sidebar
                 VStack {
                     Text("Library")
                         .font(.headline)
                         .padding()
                     
                     List {
-                        Text("All Tracks")
-                        Text("Playlists")
+                        Button("Tracks") {
+                            selectedTab = "tracks"
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .foregroundColor(selectedTab == "tracks" ? .blue : .primary)
+                        
+                        Button("Playlists") {
+                            selectedTab = "playlists"
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .foregroundColor(selectedTab == "playlists" ? .blue : .primary)
+                        
                         Text("Recently Added")
                         Text("Favorites")
                     }
@@ -62,9 +74,12 @@ struct ContentView: View {
                     if collectionService.isLoading {
                         ProgressView("Loading collection...")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if !collectionService.tracks.isEmpty {
+                    } else if selectedTab == "tracks" && !collectionService.tracks.isEmpty {
                         // Show tracks
                         TrackListView(tracks: collectionService.tracks)
+                    } else if selectedTab == "playlists" {
+                        // Show playlists
+                        PlaylistView(playlistService: playlistService)
                     } else if audioService.currentTrack != nil {
                         AudioPlayerView(audioService: audioService)
                             .padding()
@@ -152,7 +167,15 @@ struct ContentView: View {
             )
             
             try await collectionService.openCollection(definition)
-            try await collectionService.loadAllTracks()
+            
+            // Set up playlist service with the same database and collection
+            playlistService.setDatabase(collectionService.getDatabase(), collectionDefinition: definition)
+            
+            // Load both tracks and playlists
+            async let tracksTask = collectionService.loadAllTracks()
+            async let playlistsTask = playlistService.loadPlaylists()
+            
+            try await (tracksTask, playlistsTask)
             
         } catch {
             await MainActor.run {

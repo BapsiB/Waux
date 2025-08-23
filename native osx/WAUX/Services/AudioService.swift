@@ -9,7 +9,6 @@ class AudioService: NSObject, ObservableObject {
     @Published var duration: TimeInterval = 0
     @Published var volume: Float = 1.0
     @Published var tracks: [AudioTrack] = []
-    @Published var playlists: [Playlist] = []
     
     private var audioPlayer: AVAudioPlayer?
     private var timer: Timer?
@@ -100,16 +99,6 @@ class AudioService: NSObject, ObservableObject {
         // TODO: Implement file picker and audio import
         // This would typically open a file picker and load audio files
         print("Import audio files functionality to be implemented")
-    }
-    
-    func addToPlaylist(_ track: AudioTrack, playlist: Playlist) {
-        // TODO: Implement adding track to playlist
-        print("Add to playlist functionality to be implemented")
-    }
-    
-    func createPlaylist(name: String) {
-        let newPlaylist = Playlist(name: name)
-        playlists.append(newPlaylist)
     }
 }
 
