@@ -4,6 +4,7 @@ struct TrackListView: View {
     let tracks: [Track]
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
     @State private var searchText = ""
+    @State private var selectedTracks = Set<Track.ID>()
     
     var filteredTracks: [Track] {
         if searchText.isEmpty {
@@ -31,12 +32,18 @@ struct TrackListView: View {
                 
                 Text("\(filteredTracks.count) tracks")
                     .foregroundColor(.secondary)
+                
+                if !selectedTracks.isEmpty {
+                    Text("\(selectedTracks.count) selected")
+                        .foregroundColor(.blue)
+                        .fontWeight(.medium)
+                }
             }
             .padding(.horizontal)
             .padding(.top)
             
             // Track table
-            Table(filteredTracks, sortOrder: $sortOrder) {
+            Table(filteredTracks, selection: $selectedTracks, sortOrder: $sortOrder) {
                 TableColumn("Title", value: \.title) { track in
                     VStack(alignment: .leading) {
                         Text(track.title)
@@ -87,6 +94,14 @@ struct TrackListView: View {
                 }
             }
             .tableStyle(.bordered)
+            .onKeyPress("a", phases: .down) { press in
+                if press.modifiers.contains(.command) {
+                    // Select all tracks
+                    selectedTracks = Set(filteredTracks.compactMap { $0.id })
+                    return .handled
+                }
+                return .ignored
+            }
         }
     }
     

@@ -55,7 +55,7 @@ struct TimeMarker: Codable, Identifiable, Equatable {
 }
 
 // MARK: - Track
-struct Track: Identifiable, Codable, Comparable, Equatable {
+struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
     let id: Int?
     let title: String
     let artist: String
@@ -170,6 +170,27 @@ struct Track: Identifiable, Codable, Comparable, Equatable {
         
         // If source types are equal, sort by title
         return lhs.title.lowercased() < rhs.title.lowercased()
+    }
+    
+    // MARK: - Hashable
+    func hash(into hasher: inout Hasher) {
+        // Use id if available, otherwise use a combination of path and title for uniqueness
+        if let id = id {
+            hasher.combine(id)
+        } else {
+            hasher.combine(path)
+            hasher.combine(title)
+            hasher.combine(artist)
+        }
+    }
+    
+    static func == (lhs: Track, rhs: Track) -> Bool {
+        // If both have IDs, compare by ID
+        if let lhsId = lhs.id, let rhsId = rhs.id {
+            return lhsId == rhsId
+        }
+        // Otherwise, compare by path and title
+        return lhs.path == rhs.path && lhs.title == rhs.title && lhs.artist == rhs.artist
     }
 }
 
