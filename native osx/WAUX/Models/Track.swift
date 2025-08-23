@@ -146,6 +146,21 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
         return title
     }
     
+    // MARK: - Sort helpers (non-optional, Comparable)
+    var idSortValue: Int { id ?? Int.max }
+    var idDisplay: String { id.map(String.init) ?? "" }
+    var albumArtistText: String { albumArtist ?? "" }
+    var composerText: String { composer ?? "" }
+    var genreText: String { genre ?? "" }
+    var yearSortValue: Int { year ?? Int.min }
+    var trackNumberSortValue: Int { trackNumber ?? Int.min }
+    var discNumberSortValue: Int { discNumber ?? Int.min }
+    var bpmSortValue: Int { bpm ?? Int.min }
+    var isUrlSortValue: Int { isUrl ? 1 : 0 }
+    var timeMarkersCount: Int { timeMarkers.count }
+    var waveformPointCount: Int { waveformData?.count ?? 0 }
+    var generalTagsText: String { generalTags.joined(separator: ", ") }
+    
     // MARK: - Comparable
     static func < (lhs: Track, rhs: Track) -> Bool {
         // First compare by rating (higher ratings first)
