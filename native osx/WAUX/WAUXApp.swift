@@ -7,13 +7,35 @@
 
 import SwiftUI
 
+// Shared state for menu actions
+class MenuActionState: ObservableObject {
+    @Published var shouldOpenFolder = false
+    @Published var shouldImportAudio = false
+}
+
 @main
 struct WAUXApp: App {
+    @StateObject private var menuActionState = MenuActionState()
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(menuActionState)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Open Folder...") {
+                    menuActionState.shouldOpenFolder = true
+                }
+                .keyboardShortcut("o", modifiers: .command)
+                
+                Button("Import Audio...") {
+                    menuActionState.shouldImportAudio = true
+                }
+                .keyboardShortcut("i", modifiers: .command)
+            }
+        }
     }
 }
