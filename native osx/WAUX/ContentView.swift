@@ -6,9 +6,14 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var audioService = AudioService()
+    @StateObject private var collectionService = CollectionService()
+    @State private var showingDatabasePicker = false
+    @State private var showingError = false
+    @State private var errorMessage = ""
     
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +24,11 @@ struct ContentView: View {
                     .fontWeight(.bold)
                 
                 Spacer()
+                
+                Button("Open Database") {
+                    showingDatabasePicker = true
+                }
+                .buttonStyle(.borderedProminent)
                 
                 Button("Import Audio") {
                     // TODO: Implement file import
@@ -49,7 +59,13 @@ struct ContentView: View {
                 
                 // Main area
                 VStack {
-                    if audioService.currentTrack != nil {
+                    if collectionService.isLoading {
+                        ProgressView("Loading collection...")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if !collectionService.tracks.isEmpty {
+                        // Show tracks
+                        TrackListView(tracks: collectionService.tracks)
+                    } else if audioService.currentTrack != nil {
                         AudioPlayerView(audioService: audioService)
                             .padding()
                     } else {
@@ -67,12 +83,12 @@ struct ContentView: View {
                                 .font(.title2)
                                 .foregroundColor(.secondary)
                             
-                            Text("Import your audio files to get started")
+                            Text("Open a database to view your collection")
                                 .font(.body)
                                 .foregroundColor(.secondary)
                             
-                            Button("Import Audio Files") {
-                                // TODO: Implement file import
+                            Button("Open Database") {
+                                showingDatabasePicker = true
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.large)
@@ -84,6 +100,67 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 800, minHeight: 600)
+        .fileImporter(
+            isPresented: $showingDatabasePicker,
+            allowedContentTypes: [UTType(filenameExtension: "db")!],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    Task {
+                        await openDatabase(url: url)
+                    }
+                }
+            case .failure(let error):
+                errorMessage = "File selection failed: \(error.localizedDescription)"
+                showingError = true
+            }
+        }
+        .alert("Error", isPresented: $showingError) {
+            Button("OK") { }
+        } message: {
+            Text(errorMessage)
+        }
+    }
+    
+    private func openDatabase(url: URL) async {
+        do {
+            print("Selected database URL: \(url)")
+            print("Database path: \(url.path)")
+            
+            // Start accessing the security-scoped resource
+            guard url.startAccessingSecurityScopedResource() else {
+                throw NSError(domain: "DatabaseError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Cannot access the selected file"])
+            }
+            
+            defer {
+                url.stopAccessingSecurityScopedResource()
+            }
+            
+            // Test database connection first
+            let canConnect = collectionService.testDatabaseConnection(path: url.path)
+            if !canConnect {
+                throw NSError(domain: "DatabaseError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Cannot connect to database file"])
+            }
+            
+            let definition = CollectionDefinition(
+                id: UUID().uuidString,
+                name: url.lastPathComponent,
+                type: .local,
+                dbPath: url.path
+            )
+            
+            try await collectionService.openCollection(definition)
+            try await collectionService.loadAllTracks()
+            
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to open database: \(error.localizedDescription)"
+                showingError = true
+            }
+            print("Error opening database: \(error)")
+        }
     }
 }
 

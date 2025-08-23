@@ -1,122 +1,109 @@
-# WAUX - Audio Collection Manager
+# WAUX - Native macOS Audio Collection Manager
 
-A native macOS application for managing and playing audio collections, built with SwiftUI and AVFoundation.
+A native macOS application for managing audio collections, built with SwiftUI.
 
-## 🎵 Features
+## Features
 
-- **Native macOS audio player** with full playback controls
-- **Audio collection management** with metadata extraction
-- **Playlist support** for organizing your music
-- **Modern SwiftUI interface** with native macOS design
-- **Audio metadata extraction** from ID3 tags and file properties
-- **File organization** with tags, ratings, and notes
+### Collection Service
+- **Database Reading**: Can read SQLite databases created by the Flutter audio_looker app
+- **Track Management**: Displays tracks with metadata including title, artist, album, duration, rating, and source type
+- **Search Functionality**: Search tracks by title, artist, album, or comment
+- **Sorting**: Sort tracks by various criteria with configurable sort order
+- **Path Resolution**: Handles both local and shared collection types with proper path resolution
 
-## 🏗️ Project Structure
+### Audio Player
+- Basic audio playback functionality
+- Play, pause, stop controls
+- Volume control
+- Progress tracking
 
-```
-WAUX/
-├── WAUX.xcodeproj/          # Xcode project files
-├── WAUX/                    # Main app source code
-│   ├── WAUXApp.swift        # App entry point
-│   ├── ContentView.swift    # Main interface
-│   ├── Views/               # SwiftUI views
-│   │   └── AudioPlayerView.swift
-│   ├── Models/              # Data models
-│   │   ├── AudioTrack.swift
-│   │   └── Playlist.swift
-│   ├── Services/            # Business logic
-│   │   └── AudioService.swift
-│   ├── Utils/               # Utility functions
-│   └── Assets.xcassets/     # App assets
-├── WAUXTests/               # Unit tests
-├── WAUXUITests/             # UI tests
-└── README.md               # This file
-```
+### UI Features
+- Modern SwiftUI interface
+- Table view for track listing with sortable columns
+- Search bar for filtering tracks
+- Rating display with star icons
+- Source type indicators (local, YouTube, URL)
 
-## 🚀 Getting Started
-
-### Requirements
-- macOS 14.0 or later
-- Xcode 15.0 or later
-- Swift 5.9 or later
-
-### Building and Running
-1. Open `WAUX.xcodeproj` in Xcode
-2. Select the WAUX target
-3. Choose your development team for code signing
-4. Build and run (⌘+R)
-
-## 🎯 Current Status
-
-✅ **Task 1.1: Create Xcode Project Structure** - COMPLETED
-- [x] Create new macOS app project in Xcode
-- [x] Set up project with SwiftUI and AppKit
-- [x] Configure app bundle identifier and signing
-- [x] Set up folder structure for organized code
-- [x] Configure build settings for macOS deployment target
-
-✅ **Core Features Implemented**
-- [x] Basic audio player with play/pause controls
-- [x] Audio metadata extraction from files
-- [x] AudioTrack and Playlist data models
-- [x] Modern SwiftUI interface with sidebar
-- [x] Progress tracking and time display
-
-## 🔧 Architecture
+## Architecture
 
 ### Models
-- **AudioTrack**: Represents individual audio files with metadata
-- **Playlist**: Collections of audio tracks with management functions
+- `Track`: Represents an audio track with all metadata fields
+- `TimeMarker`: Represents time-based markers for tracks
+- `CollectionDefinition`: Defines collection types (local/shared)
+- `AudioTrack`: Legacy model for basic audio functionality
 
 ### Services
-- **AudioService**: Handles audio playback, metadata extraction, and file management
+- `CollectionService`: Manages database operations and track loading
+- `AudioService`: Handles audio playback functionality
 
 ### Views
-- **ContentView**: Main application interface with sidebar and content area
-- **AudioPlayerView**: Dedicated audio player controls and progress display
+- `TrackListView`: Displays tracks in a sortable table format
+- `AudioPlayerView`: Audio player controls
+- `ContentView`: Main application interface
 
-## 🎵 Audio Support
+## Database Schema
 
-The app supports common audio formats through AVFoundation:
-- MP3, AAC, WAV, FLAC, and other formats supported by macOS
-- Automatic metadata extraction from ID3 tags
-- File properties (duration, file size, bitrate, etc.)
+The app reads SQLite databases with the following structure:
+- `music` table: Contains track information
+- `playlists` table: Playlist definitions
+- `playlist_tracks` table: Playlist-track relationships
+- `local_root_folders` table: Root folder paths for local collections
+- `ui_settings` table: UI configuration settings
 
-## 🔮 Next Steps
+## Usage
 
-### Planned Features
-- [ ] File import dialog and drag-and-drop support
-- [ ] Track list view with sorting and filtering
-- [ ] Playlist creation and management
-- [ ] Audio visualization and waveform display
-- [ ] Library management and organization
-- [ ] Search and filtering capabilities
-- [ ] Export and sharing features
+1. Launch the application
+2. Click "Open Database" to select a SQLite database file
+3. The app will load and display all tracks in the database
+4. Use the search bar to filter tracks
+5. Click column headers to sort by different criteria
+6. Use the audio player controls to play tracks
 
-### Technical Improvements
-- [ ] Core Data integration for persistent storage
-- [ ] Background audio playback
-- [ ] Audio effects and equalizer
-- [ ] Multi-track selection and batch operations
-- [ ] Cloud sync and backup
+## Development
 
-## 🛠️ Development
+### Requirements
+- macOS 14.6+
+- Xcode 15.0+
+- Swift 5.9+
 
-### Adding New Features
-1. Create models in the `Models/` directory
-2. Add business logic in the `Services/` directory
-3. Create UI components in the `Views/` directory
-4. Update the main ContentView to integrate new features
+### Building
+```bash
+cd "native osx"
+xcodebuild -project WAUX.xcodeproj -scheme WAUX -configuration Debug build
+```
 
-### Testing
-- Unit tests are in `WAUXTests/`
-- UI tests are in `WAUXUITests/`
-- Run tests with ⌘+U
+### Project Structure
+```
+WAUX/
+├── Models/
+│   ├── Track.swift          # Track model with full metadata
+│   ├── AudioTrack.swift     # Legacy audio track model
+│   └── Playlist.swift       # Playlist model
+├── Services/
+│   ├── CollectionService.swift  # Database and collection management
+│   └── AudioService.swift       # Audio playback
+├── Views/
+│   ├── TrackListView.swift      # Track table view
+│   └── AudioPlayerView.swift    # Audio player controls
+├── ContentView.swift            # Main application view
+└── WAUXApp.swift               # App entry point
+```
 
-## 📝 License
+## Migration from Flutter
 
-This project is part of the Flutter to Native macOS conversion plan.
+This native macOS app is designed to read databases created by the Flutter audio_looker application. The collection service implements the same database schema and data structures to ensure compatibility.
 
-## 🤝 Contributing
+### Key Differences from Flutter Version
+- Uses native SQLite3 instead of sqflite
+- SwiftUI instead of Flutter widgets
+- Native macOS UI patterns and conventions
+- Simplified architecture focused on reading existing databases
 
-This is a learning project for converting Flutter apps to native macOS applications. The focus is on understanding SwiftUI, AVFoundation, and native macOS development patterns.
+## Future Enhancements
+
+- Write operations (add, edit, delete tracks)
+- Playlist management
+- Audio file import
+- Waveform visualization
+- Advanced filtering and tagging
+- Sync with cloud storage
