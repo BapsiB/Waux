@@ -127,20 +127,44 @@ struct TrackListView: View {
                             .frame(height: 36)
                         } else {
                             // Check if this track has empty waveform data (indicating missing file)
+                            // Note: Empty waveform data could also indicate corrupted data that needs regeneration
                             if let waveformData = track.waveformData, waveformData.isEmpty {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "exclamationmark.triangle")
-                                        .foregroundColor(.orange)
-                                    Text("File missing")
-                                        .font(.caption)
-                                        .foregroundColor(.orange)
+                                // For empty waveform data, we need to check if the file actually exists
+                                // If the file exists, it means the waveform data is corrupted and needs regeneration
+                                // If the file doesn't exist, then it's truly missing
+                                let resolvedPath = collectionService.resolveTrackPathForWaveform(track)
+                                let url = URL(fileURLWithPath: resolvedPath)
+                                let fileExists = FileManager.default.fileExists(atPath: url.path)
+                                
+                                if fileExists {
+                                    // File exists but waveform is empty/corrupted - trigger analysis
+                                    HStack(spacing: 6) {
+                                        ProgressView().controlSize(.small)
+                                        Text("Analyzing…")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .onAppear {
+                                        print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (regenerating corrupted waveform)")
+                                        waveformServiceHolder.ensure(collectionService: collectionService)
+                                        waveformServiceHolder.service?.analyzeIfMissing(track)
+                                    }
+                                } else {
+                                    // File truly missing
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle")
+                                            .foregroundColor(.orange)
+                                        Text("File missing")
+                                            .font(.caption)
+                                            .foregroundColor(.orange)
+                                    }
                                 }
                             } else {
                                 HStack(spacing: 6) {
                                     ProgressView().controlSize(.small)
                                     Text("Analyzing…")
                                         .font(.caption)
-                                        .foregroundColor(.secondary)
+                                    .foregroundColor(.secondary)
                                 }
                                 .onAppear {
                                     print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title)")

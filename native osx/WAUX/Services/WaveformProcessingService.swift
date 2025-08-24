@@ -21,8 +21,10 @@ class WaveformProcessingService: ObservableObject {
             print("[Waveform] Track has no ID, ignoring: \(track.title)")
             return 
         }
-        guard track.waveformData == nil else { 
-            print("[Waveform] Track \(id) already has waveform data, skipping")
+        // Check if track has valid waveform data (not nil and not empty)
+        // Empty waveform data indicates corrupted data that needs regeneration
+        guard track.waveformData == nil || track.waveformData?.isEmpty == true else { 
+            print("[Waveform] Track \(id) already has valid waveform data, skipping")
             return 
         }
         guard !track.isUrl else { 
