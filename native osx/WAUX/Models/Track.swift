@@ -206,6 +206,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
                 && lhs.rating == rhs.rating
                 && lhs.comment == rhs.comment
                 && lhs.generalTags == rhs.generalTags
+                && lhs.waveformPointCount == rhs.waveformPointCount
         }
         // Otherwise, compare by key identity plus user-editable fields
         return lhs.path == rhs.path
@@ -214,6 +215,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
             && lhs.rating == rhs.rating
             && lhs.comment == rhs.comment
             && lhs.generalTags == rhs.generalTags
+            && lhs.waveformPointCount == rhs.waveformPointCount
     }
 }
 

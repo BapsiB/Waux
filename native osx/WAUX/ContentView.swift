@@ -245,22 +245,18 @@ struct ContentView: View {
             if !rootContents.isEmpty {
                 print("[OpenFolder] First 5 items: \(rootContents.prefix(5).map{ $0.lastPathComponent })")
             }
+            let preferredDBURL = url.appendingPathComponent("waux.db")
             let dbAtRoot = rootContents.first { $0.pathExtension.lowercased() == "db" }
             var dbURL: URL
-            if let existing = dbAtRoot {
+            if FileManager.default.fileExists(atPath: preferredDBURL.path) {
+                dbURL = preferredDBURL
+                print("[OpenFolder] Found WAUX database at root: \(dbURL.path)")
+            } else if let existing = dbAtRoot {
                 dbURL = existing
                 print("[OpenFolder] Found database at root: \(dbURL.path)")
             } else {
-                // No DB at root: create one in Application Support and import all audio files
-                let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                let wauxFolder = appSupportURL.appendingPathComponent("WAUX")
-                
-                // Create WAUX folder if it doesn't exist
-                try FileManager.default.createDirectory(at: wauxFolder, withIntermediateDirectories: true, attributes: nil)
-                
-                // Create a unique database name based on the folder path
-                let folderHash = String(url.path.hash)
-                dbURL = wauxFolder.appendingPathComponent("waux_\(folderHash).db")
+                // No DB at root: create one at the folder root
+                dbURL = preferredDBURL
                 print("[OpenFolder] No database found at root. Creating new database at: \(dbURL.path)")
                 try collectionService.createNewLocalDatabase(at: dbURL.path)
                 print("[OpenFolder] Database created at: \(dbURL.path)")

@@ -49,9 +49,9 @@ enum TrackColumn: String, CaseIterable, Hashable {
 }
 
 struct TrackListView: View {
-    let tracks: [Track]
-    let collectionService: CollectionService
+    @ObservedObject var collectionService: CollectionService
     @ObservedObject var audioService: AudioService
+    let tracksFilter: [Track]? // If provided, only show these tracks; otherwise show all tracks
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
     @State private var searchText = ""
@@ -70,6 +70,12 @@ struct TrackListView: View {
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
     
+    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil) {
+        self.collectionService = collectionService
+        self.audioService = audioService
+        self.tracksFilter = tracksFilter
+    }
+    
     private class WaveformServiceHolder: ObservableObject {
         @Published var service: WaveformProcessingService?
         func ensure(collectionService: CollectionService) {
@@ -78,10 +84,12 @@ struct TrackListView: View {
     }
     
     var filteredTracks: [Track] {
+        let baseTracks = tracksFilter ?? collectionService.tracks
+        
         if searchText.isEmpty {
-            return tracks.sorted(using: sortOrder)
+            return baseTracks.sorted(using: sortOrder)
         } else {
-            return tracks.filter { track in
+            return baseTracks.filter { track in
                 track.title.localizedCaseInsensitiveContains(searchText) ||
                 track.artist.localizedCaseInsensitiveContains(searchText) ||
                 track.album.localizedCaseInsensitiveContains(searchText)
@@ -99,48 +107,50 @@ struct TrackListView: View {
                 TableColumn("Waveform", value: \Track.waveformPointCount) { track in
                     // Debug logging to see what's happening
                     let _ = print("[TrackListView] Rendering waveform for track \(track.id ?? -1): hasData=\(track.waveformData != nil), isEmpty=\(track.waveformData?.isEmpty ?? true)")
-                    
-                    if let waveformData = track.waveformData, !waveformData.isEmpty {
-                        let progress: Double = {
-                            if let current = audioService.currentTrack?.id,
-                               let id = track.id,
-                               current == id,
-                               audioService.duration > 0 {
-                                return min(1.0, max(0.0, audioService.currentTime / audioService.duration))
-                            }
-                            return 0.0
-                        }()
-                        WaveformView(
-                            waveformData: waveformData,
-                            progress: progress,
-                            markers: track.timeMarkers,
-                            durationMs: track.duration
-                        )
-                        .frame(height: 36)
-                    } else {
-                        // Check if this track has empty waveform data (indicating missing file)
-                        if let waveformData = track.waveformData, waveformData.isEmpty {
-                            HStack(spacing: 6) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .foregroundColor(.orange)
-                                Text("File missing")
-                                    .font(.caption)
-                                    .foregroundColor(.orange)
-                            }
+                    Group {
+                        if let waveformData = track.waveformData, !waveformData.isEmpty {
+                            let progress: Double = {
+                                if let current = audioService.currentTrack?.id,
+                                   let id = track.id,
+                                   current == id,
+                                   audioService.duration > 0 {
+                                    return min(1.0, max(0.0, audioService.currentTime / audioService.duration))
+                                }
+                                return 0.0
+                            }()
+                            WaveformView(
+                                waveformData: waveformData,
+                                progress: progress,
+                                markers: track.timeMarkers,
+                                durationMs: track.duration
+                            )
+                            .frame(height: 36)
                         } else {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text("Analyzing…")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .onAppear {
-                                print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title)")
-                                waveformServiceHolder.ensure(collectionService: collectionService)
-                                waveformServiceHolder.service?.analyzeIfMissing(track)
+                            // Check if this track has empty waveform data (indicating missing file)
+                            if let waveformData = track.waveformData, waveformData.isEmpty {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .foregroundColor(.orange)
+                                    Text("File missing")
+                                        .font(.caption)
+                                        .foregroundColor(.orange)
+                                }
+                            } else {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Analyzing…")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .onAppear {
+                                    print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title)")
+                                    waveformServiceHolder.ensure(collectionService: collectionService)
+                                    waveformServiceHolder.service?.analyzeIfMissing(track)
+                                }
                             }
                         }
                     }
+                    .id("waveform-\(track.id ?? -1)-\(track.waveformPointCount)")
                 }
                 .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
                 
@@ -865,28 +875,9 @@ private struct FileChangesSheet: View {
 }
 
 #Preview {
-    TrackListView(
-        tracks: [
-            Track(
-                title: "Sample Track 1",
-                artist: "Sample Artist",
-                album: "Sample Album",
-                path: "/path/to/track1.mp3",
-                isUrl: false,
-                duration: 180000,
-                rating: 4
-            ),
-            Track(
-                title: "Sample Track 2",
-                artist: "Another Artist",
-                album: "Another Album",
-                path: "https://example.com/track2.mp3",
-                isUrl: true,
-                duration: 240000,
-                rating: 3
-            )
-        ],
-        collectionService: CollectionService(),
+    let collectionService = CollectionService()
+    return TrackListView(
+        collectionService: collectionService,
         audioService: AudioService()
     )
 }

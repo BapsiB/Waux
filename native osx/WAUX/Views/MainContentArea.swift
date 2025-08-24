@@ -55,7 +55,7 @@ struct MainContentArea: View {
                         ProgressView("Loading playlist tracks...")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if !playlistTracks.isEmpty {
-                        TrackListView(tracks: playlistTracks, collectionService: collectionService, audioService: audioService)
+                        TrackListView(collectionService: collectionService, audioService: audioService, tracksFilter: playlistTracks)
                     } else {
                         // Empty playlist content
                         VStack(spacing: 20) {
@@ -90,7 +90,7 @@ struct MainContentArea: View {
                     .padding(.horizontal)
                     .padding(.top)
                     
-                    TrackListView(tracks: collectionService.tracks, collectionService: collectionService, audioService: audioService)
+                    TrackListView(collectionService: collectionService, audioService: audioService)
                 }
             } else {
                 // Welcome screen
