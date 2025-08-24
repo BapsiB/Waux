@@ -24,10 +24,6 @@ struct ContentView: View {
         VStack(spacing: 0) {
             // Header with integrated audio player
             HStack(spacing: 16) {
-                // App title
-                Text("WAUX Audio Player")
-                    .font(.title)
-                    .fontWeight(.bold)
                 
                 Spacer()
                 
@@ -333,6 +329,14 @@ struct ContentView: View {
             if shouldImport {
                 // TODO: Implement file import
                 menuActionState.shouldImportAudio = false
+            }
+        }
+        .onChange(of: collectionService.tracks) { _, newTracks in
+            print("[ContentView] tracks changed, count=\(newTracks.count)")
+            // Keep playlistTracks in sync when tags/ratings change in the library
+            if let playlist = selectedPlaylist {
+                print("[ContentView] reloading playlist tracks for \(playlist.name)")
+                Task { await loadPlaylistTracks(playlist) }
             }
         }
     }

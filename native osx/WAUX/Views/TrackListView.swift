@@ -58,6 +58,7 @@ struct TrackListView: View {
     @State private var showingRatingError = false
     @State private var ratingErrorMessage = ""
     @State private var visibleColumns: Set<TrackColumn> = [.title, .artist, .album, .duration, .rating, .type]
+    @State private var showTagEditor = false
     
     var filteredTracks: [Track] {
         if searchText.isEmpty {
@@ -221,11 +222,18 @@ struct TrackListView: View {
 //                }
                 if visibleColumns.contains(.generalTags) {
                     TableColumn("Tags", value: \Track.generalTagsText) { track in
-                        Text(track.generalTagsText)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        InteractiveTagsView(
+                            track: track,
+                            onUpdate: { tags in
+                                Task {
+                                    do {
+                                        try await collectionService.setTagsForTrack(trackId: track.id ?? 0, newTags: tags)
+                                    } catch {
+                                        print("[Tags] Failed to set tags: \(error)")
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -276,6 +284,10 @@ struct TrackListView: View {
             Button("OK") { }
         } message: {
             Text(ratingErrorMessage)
+        }
+        .sheet(isPresented: $showTagEditor) {
+            let selected = filteredTracks.filter { selectedTracks.contains($0.id) }
+            TagEditorView(collectionService: collectionService, tracks: selected.isEmpty ? [] : selected)
         }
     }
     
@@ -369,6 +381,9 @@ struct TrackListView: View {
                         audioService.play()
                     }
                 }
+            }
+            Button("Edit Tags…") {
+                showTagEditor = true
             }
             Divider()
         }

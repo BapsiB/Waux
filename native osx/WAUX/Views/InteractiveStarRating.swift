@@ -18,6 +18,7 @@ struct InteractiveStarRating: View {
                         if hovering {
                             hoveredStar = star
                             isHovering = true
+                            print("[Rating] hover star=\\(star) track=\\(track.id ?? -1)")
                         } else {
                             if hoveredStar == star {
                                 isHovering = false
@@ -28,6 +29,7 @@ struct InteractiveStarRating: View {
                     .onTapGesture {
                         // Optimistic UI update
                         currentRating = star
+                        print("[Rating] tap star=\\(star) track=\\(track.id ?? -1)")
                         onRatingChanged(star)
                     }
                     .scaleEffect(isHovering && hoveredStar >= star ? 1.1 : 1.0)
@@ -46,9 +48,10 @@ struct InteractiveStarRating: View {
                     }
                 }
         )
-        .onAppear { currentRating = track.rating }
+        .onAppear { currentRating = track.rating; print("[Rating] appear track=\\(track.id ?? -1) rating=\\(track.rating)") }
         .onChange(of: track.rating) { newValue in
             // Sync from parent updates
+            print("[Rating] external update track=\\(track.id ?? -1) rating=\\(newValue)")
             currentRating = newValue
         }
     }
