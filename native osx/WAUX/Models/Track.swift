@@ -200,12 +200,20 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
     }
     
     static func == (lhs: Track, rhs: Track) -> Bool {
-        // If both have IDs, compare by ID
+        // If both have IDs, compare by stable ID and user-editable fields that affect UI
         if let lhsId = lhs.id, let rhsId = rhs.id {
             return lhsId == rhsId
+                && lhs.rating == rhs.rating
+                && lhs.comment == rhs.comment
+                && lhs.generalTags == rhs.generalTags
         }
-        // Otherwise, compare by path and title
-        return lhs.path == rhs.path && lhs.title == rhs.title && lhs.artist == rhs.artist
+        // Otherwise, compare by key identity plus user-editable fields
+        return lhs.path == rhs.path
+            && lhs.title == rhs.title
+            && lhs.artist == rhs.artist
+            && lhs.rating == rhs.rating
+            && lhs.comment == rhs.comment
+            && lhs.generalTags == rhs.generalTags
     }
 }
 

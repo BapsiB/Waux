@@ -234,6 +234,8 @@ struct TrackListView: View {
                                 }
                             }
                         )
+                        // Force cell refresh when tags change so the row updates immediately
+                        .id("tags-\(track.id ?? -1)-\(track.generalTagsText)")
                     }
                 }
             }
