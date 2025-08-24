@@ -106,7 +106,7 @@ struct TrackListView: View {
                 // Waveform column - always visible and first
                 TableColumn("Waveform", value: \Track.waveformPointCount) { track in
                     // Debug logging to see what's happening
-                    let _ = print("[TrackListView] Rendering waveform for track \(track.id ?? -1): hasData=\(track.waveformData != nil), isEmpty=\(track.waveformData?.isEmpty ?? true)")
+                    let _ = print("[TrackListView] Rendering waveform for track \(track.id ?? -1): hasData=\(track.waveformData != nil), isEmpty=\(track.waveformData?.isEmpty ?? true), bins=\(track.waveformData?.count ?? 0)")
                     Group {
                         if let waveformData = track.waveformData, !waveformData.isEmpty {
                             let progress: Double = {
@@ -145,7 +145,7 @@ struct TrackListView: View {
                                             .foregroundColor(.secondary)
                                     }
                                     .onAppear {
-                                        print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (regenerating corrupted waveform)")
+                                        print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (regenerating corrupted waveform; fileExists=\(fileExists))")
                                         waveformServiceHolder.ensure(collectionService: collectionService)
                                         waveformServiceHolder.service?.analyzeIfMissing(track)
                                     }
@@ -167,7 +167,7 @@ struct TrackListView: View {
                                     .foregroundColor(.secondary)
                                 }
                                 .onAppear {
-                                    print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title)")
+                                    print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (no waveform present)")
                                     waveformServiceHolder.ensure(collectionService: collectionService)
                                     waveformServiceHolder.service?.analyzeIfMissing(track)
                                 }

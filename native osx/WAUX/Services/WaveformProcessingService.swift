@@ -23,9 +23,11 @@ class WaveformProcessingService: ObservableObject {
         }
         // Check if track has valid waveform data (not nil and not empty)
         // Empty waveform data indicates corrupted data that needs regeneration
-        guard track.waveformData == nil || track.waveformData?.isEmpty == true else { 
-            print("[Waveform] Track \(id) already has valid waveform data, skipping")
-            return 
+        let hasWaveform = track.waveformData != nil && !(track.waveformData?.isEmpty ?? true)
+        print("[Waveform] Analyze gate for track \(id): waveformPresent=\(track.waveformData != nil), waveformEmpty=\(track.waveformData?.isEmpty ?? true), willAnalyze=\(!hasWaveform)")
+        guard !hasWaveform else {
+            print("[Waveform] Track \(id) already has valid waveform data (\(track.waveformData?.count ?? 0) bins), skipping")
+            return
         }
         guard !track.isUrl else { 
             print("[Waveform] Track \(id) is URL, skipping waveform analysis")

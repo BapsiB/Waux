@@ -34,6 +34,11 @@ class CollectionService: ObservableObject {
     private let columnComment = "comment"
     private let columnGeneralTags = "generalTags"
     
+    // Explicit column selection to guarantee order across different DB schemas
+    private var selectTrackColumns: String {
+        "\(columnId), \(columnTitle), \(columnArtist), \(columnAlbum), \(columnAlbumArtist), \(columnComposer), \(columnGenre), \(columnYear), \(columnTrackNumber), \(columnDiscNumber), \(columnBpm), \(columnPath), \(columnIsUrl), \(columnDuration), \(columnTimeMarkers), \(columnWaveformData), \(columnRating), \(columnComment), \(columnGeneralTags)"
+    }
+    
     // MARK: - Properties
     @Published var tracks: [Track] = []
     @Published var isLoading = false
@@ -444,7 +449,7 @@ class CollectionService: ObservableObject {
                         self.isLoading = true
                     }
                     
-                    let query = "SELECT * FROM \(self.tableMusic)"
+                    let query = "SELECT \(self.selectTrackColumns) FROM \(self.tableMusic)"
                     print("🔍 Executing query: \(query)")
                     var statement: OpaquePointer?
                     
@@ -1067,6 +1072,7 @@ class CollectionService: ObservableObject {
         let waveformData: [Double]?
         if sqlite3_column_type(statement, 15) != SQLITE_NULL {
             let waveformJson = String(cString: sqlite3_column_text(statement, 15))
+            print("[TrackParse] Track \(id) waveform JSON present, length=\(waveformJson.count), prefix='\(waveformJson.prefix(80))'")
             do {
                 waveformData = try parseWaveformData(from: waveformJson)
             } catch {
@@ -1206,8 +1212,19 @@ class CollectionService: ObservableObject {
         
         // Check if the data looks like it might be corrupted (contains non-JSON text)
         if trimmedString.contains("Unknown") || trimmedString.contains(".mp3") || trimmedString.contains("music") {
-            print("🚨 Waveform data appears to be corrupted (contains metadata text), returning empty array")
+            print("🚨 Waveform data appears to be corrupted (contains metadata text)")
             print("🚨 Corrupted data (first 200 chars): '\(trimmedString.prefix(200))'")
+            // Try to recover by extracting the JSON array substring
+            if let startIdx = trimmedString.firstIndex(of: "["), let endIdx = trimmedString.lastIndex(of: "]"), startIdx < endIdx {
+                let jsonSlice = String(trimmedString[startIdx...endIdx])
+                if let data = jsonSlice.data(using: .utf8), let decoded = try? JSONDecoder().decode([Double].self, from: data) {
+                    print("🔧 Recovered waveform array from corrupted field (length=\(decoded.count))")
+                    return decoded
+                } else {
+                    print("🚨 Failed to recover waveform array from corrupted field")
+                }
+            }
+            // Fall back to empty array to trigger regeneration
             return []
         }
         
@@ -1504,7 +1521,7 @@ class CollectionService: ObservableObject {
         let wildcardQuery = "%\(lowercaseQuery)%"
         
         let query = """
-            SELECT * FROM \(tableMusic)
+            SELECT \(selectTrackColumns) FROM \(tableMusic)
             WHERE LOWER(title) LIKE ? OR LOWER(artist) LIKE ? OR LOWER(album) LIKE ? OR LOWER(comment) LIKE ?
         """
         
@@ -1579,7 +1596,7 @@ class CollectionService: ObservableObject {
                     }
                     
                     print("[CollectionService] 🔗 Binding parameters...")
-                    sqlite3_bind_text(statement, 1, json, -1, nil)
+                    sqlite3_bind_text(statement, 1, json, -1, self.SQLITE_TRANSIENT)
                     sqlite3_bind_int(statement, 2, Int32(trackId))
                     
                     print("[CollectionService] ▶️ Executing statement...")
@@ -1591,6 +1608,27 @@ class CollectionService: ObservableObject {
                         return
                     }
                     print("[CollectionService] ✅ SQL execution successful")
+
+                    // Verify what was written by reading back the value
+                    let verifySQL = "SELECT \(self.columnWaveformData) FROM \(self.tableMusic) WHERE \(self.columnId) = ?"
+                    var verifyStmt: OpaquePointer?
+                    if sqlite3_prepare_v2(db, verifySQL, -1, &verifyStmt, nil) == SQLITE_OK {
+                        sqlite3_bind_int(verifyStmt, 1, Int32(trackId))
+                        if sqlite3_step(verifyStmt) == SQLITE_ROW {
+                            if let ptr = sqlite3_column_text(verifyStmt, 0) {
+                                let saved = String(cString: ptr)
+                                print("[CollectionService] 🔎 Read-back waveform JSON length=\(saved.count), prefix='\(saved.prefix(80))'")
+                            } else {
+                                print("[CollectionService] 🔎 Read-back waveform JSON is NULL")
+                            }
+                        } else {
+                            print("[CollectionService] 🔎 Read-back step failed for track \(trackId)")
+                        }
+                        sqlite3_finalize(verifyStmt)
+                    } else {
+                        let err = String(cString: sqlite3_errmsg(db))
+                        print("[CollectionService] 🔎 Read-back prepare failed: \(err)")
+                    }
 
                     // Update the track in the local array on the main thread
                     Task { @MainActor in
