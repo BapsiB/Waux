@@ -122,7 +122,10 @@ struct TrackListView: View {
                                 waveformData: waveformData,
                                 progress: progress,
                                 markers: track.timeMarkers,
-                                durationMs: track.duration
+                                durationMs: track.duration,
+                                onTap: { ratio in
+                                    handleWaveformTap(track: track, ratio: ratio)
+                                }
                             )
                             .frame(height: 36)
                         } else {
@@ -649,6 +652,22 @@ struct TrackListView: View {
             }
         } catch {
             print("🔍 [TrackListView] Scan failed: \(error)")
+        }
+    }
+    
+    // Handle waveform tap in track list
+    private func handleWaveformTap(track: Track, ratio: Double) {
+        Task {
+            // Load the track if it's not already loaded
+            if audioService.currentTrack?.id != track.id {
+                await audioService.loadTrack(track)
+            }
+            
+            // Seek to the clicked position
+            audioService.seekToRatio(ratio)
+            
+            // Start playing
+            audioService.play()
         }
     }
 }

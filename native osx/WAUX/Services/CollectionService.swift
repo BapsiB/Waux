@@ -1212,7 +1212,7 @@ class CollectionService: ObservableObject {
         
         // Check if the data looks like it might be corrupted (contains non-JSON text)
         if trimmedString.contains("Unknown") || trimmedString.contains(".mp3") || trimmedString.contains("music") {
-            print("🚨 Waveform data appears to be corrupted (contains metadata text)")
+             print("🚨 Waveform data appears to be corrupted (contains metadata text)")
             print("🚨 Corrupted data (first 200 chars): '\(trimmedString.prefix(200))'")
             // Try to recover by extracting the JSON array substring
             if let startIdx = trimmedString.firstIndex(of: "["), let endIdx = trimmedString.lastIndex(of: "]"), startIdx < endIdx {

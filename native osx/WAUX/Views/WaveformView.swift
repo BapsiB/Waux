@@ -10,6 +10,7 @@ struct WaveformView: View {
     var progressLineColor: Color = .red
     var markerColor: Color = .blue
     var lineWidth: CGFloat = 2.0
+    var onTap: ((Double) -> Void)? = nil // Callback for tap events with position ratio
 
     var body: some View {
         GeometryReader { geo in
@@ -101,7 +102,19 @@ struct WaveformView: View {
                 progressPath.addLine(to: CGPoint(x: progressX, y: size.height))
                 context.stroke(progressPath, with: .color(progressLineColor), lineWidth: 2)
             }
+            .contentShape(Rectangle()) // Make the entire area tappable
+            .onTapGesture { location in
+                handleTap(at: location, in: geo.size)
+            }
         }
+    }
+
+    private func handleTap(at location: CGPoint, in size: CGSize) {
+        guard onTap != nil else { return }
+        
+        // Calculate the ratio based on x position
+        let ratio = max(0.0, min(1.0, location.x / size.width))
+        onTap?(ratio)
     }
 
     private func downsample(_ source: [Double], to targetPoints: Int) -> [Double] {
