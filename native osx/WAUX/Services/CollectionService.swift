@@ -1571,30 +1571,38 @@ class CollectionService: ObservableObject {
         await MainActor.run {
             print("[CollectionService] 🔄 Updating tracks array on main thread...")
             if let index = tracks.firstIndex(where: { $0.id == trackId }) {
-                var updated = tracks
-                updated[index] = Track(
-                    id: updated[index].id,
-                    title: updated[index].title,
-                    artist: updated[index].artist,
-                    album: updated[index].album,
-                    albumArtist: updated[index].albumArtist,
-                    composer: updated[index].composer,
-                    genre: updated[index].genre,
-                    year: updated[index].year,
-                    trackNumber: updated[index].trackNumber,
-                    discNumber: updated[index].discNumber,
-                    bpm: updated[index].bpm,
-                    path: updated[index].path,
-                    isUrl: updated[index].isUrl,
-                    duration: updated[index].duration,
-                    timeMarkers: updated[index].timeMarkers,
+                // Create a completely new array to force SwiftUI to refresh
+                var newTracks = tracks
+                newTracks[index] = Track(
+                    id: tracks[index].id,
+                    title: tracks[index].title,
+                    artist: tracks[index].artist,
+                    album: tracks[index].album,
+                    albumArtist: tracks[index].albumArtist,
+                    composer: tracks[index].composer,
+                    genre: tracks[index].genre,
+                    year: tracks[index].year,
+                    trackNumber: tracks[index].trackNumber,
+                    discNumber: tracks[index].discNumber,
+                    bpm: tracks[index].bpm,
+                    path: tracks[index].path,
+                    isUrl: tracks[index].isUrl,
+                    duration: tracks[index].duration,
+                    timeMarkers: tracks[index].timeMarkers,
                     waveformData: waveformData,
-                    rating: updated[index].rating,
-                    comment: updated[index].comment,
-                    generalTags: updated[index].generalTags
+                    rating: tracks[index].rating,
+                    comment: tracks[index].comment,
+                    generalTags: tracks[index].generalTags
                 )
-                tracks = updated
+                
+                // Replace the entire array to force SwiftUI refresh
+                tracks = newTracks
                 print("[CollectionService] ✅ Successfully updated tracks array for track \(trackId)")
+                
+                // Force a UI refresh
+                DispatchQueue.main.async {
+                    self.objectWillChange.send()
+                }
             } else {
                 print("[CollectionService] ⚠️ Track \(trackId) not found in tracks array")
             }

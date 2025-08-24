@@ -97,6 +97,9 @@ struct TrackListView: View {
             Table(filteredTracks, selection: $selectedTracks, sortOrder: $sortOrder) {
                 // Waveform column - always visible and first
                 TableColumn("Waveform", value: \Track.waveformPointCount) { track in
+                    // Debug logging to see what's happening
+                    let _ = print("[TrackListView] Rendering waveform for track \(track.id ?? -1): hasData=\(track.waveformData != nil), isEmpty=\(track.waveformData?.isEmpty ?? true)")
+                    
                     if let waveformData = track.waveformData, !waveformData.isEmpty {
                         let progress: Double = {
                             if let current = audioService.currentTrack?.id,
