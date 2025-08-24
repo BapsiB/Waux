@@ -644,10 +644,18 @@ class CollectionService: ObservableObject {
             dbTracks = tracks
             print("🔍 [Scan] Loaded \(dbTracks.count) tracks from DB")
         }
-        let dbByPath: [String: Track] = Dictionary(uniqueKeysWithValues: dbTracks.map { t in
-            let norm = (t.path as NSString).standardizingPath
-            return (norm, t)
-        })
+        // Create dictionary from tracks, handling duplicates by keeping the first occurrence
+        var dbByPath: [String: Track] = [:]
+        for track in dbTracks {
+            let norm = (track.path as NSString).standardizingPath
+            if dbByPath[norm] == nil {
+                dbByPath[norm] = track
+            } else {
+                print("⚠️ [Scan] Duplicate track found for path: \(norm)")
+                print("⚠️ [Scan] Existing track ID: \(dbByPath[norm]?.id ?? -1), New track ID: \(track.id ?? -1)")
+                // Keep the first occurrence, skip the duplicate
+            }
+        }
         print("🔍 [Scan] DB tracks by normalized path: \(dbByPath.count)")
 
         // Compute diffs
@@ -1196,6 +1204,13 @@ class CollectionService: ObservableObject {
             return []
         }
         
+        // Check if the data looks like it might be corrupted (contains non-JSON text)
+        if trimmedString.contains("Unknown") || trimmedString.contains(".mp3") || trimmedString.contains("music") {
+            print("🚨 Waveform data appears to be corrupted (contains metadata text), returning empty array")
+            print("🚨 Corrupted data (first 200 chars): '\(trimmedString.prefix(200))'")
+            return []
+        }
+        
         // Clean up control characters that might be present
         let cleanedString = trimmedString.filter { char in
             // Allow printable characters, spaces, and common JSON characters
@@ -1237,7 +1252,9 @@ class CollectionService: ObservableObject {
                 print("🚨 JSON is valid but not an array: \(type(of: jsonObject))")
             }
             
-            throw error
+            // Instead of throwing an error, return empty array for corrupted data
+            print("🔧 Returning empty array for corrupted waveform data")
+            return []
         }
     }
     
@@ -1522,231 +1539,277 @@ class CollectionService: ObservableObject {
     func updateTrackWaveformData(trackId: Int, waveformData: [Double]) async throws {
         print("[CollectionService] 💾 Updating waveform data for track \(trackId), data size: \(waveformData.count)")
         
-        // Ensure security access for database operations
-        let securityAccess = ensureSecurityAccess()
-        defer { if securityAccess { stopSecurityAccess() } }
-        
-        guard let db = database else { 
-            print("[CollectionService] ❌ Database not open")
-            throw CollectionError.databaseNotOpen 
-        }
-        if isReadOnlyMode { 
-            print("[CollectionService] ❌ Database in read-only mode")
-            throw CollectionError.queryFailed(message: "Cannot update waveform in read-only mode.") 
-        }
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    // Ensure security access for database operations
+                    let securityAccess = self.ensureSecurityAccess()
+                    defer { if securityAccess { self.stopSecurityAccess() } }
+                    
+                    guard let db = self.database else { 
+                        print("[CollectionService] ❌ Database not open")
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    if self.isReadOnlyMode { 
+                        print("[CollectionService] ❌ Database in read-only mode")
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot update waveform in read-only mode."))
+                        return
+                    }
 
-        print("[CollectionService] 🔧 Setting journal mode to DELETE")
-        _ = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
+                    print("[CollectionService] 🔧 Setting journal mode to DELETE")
+                    _ = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
 
-        let encoder = JSONEncoder()
-        let data = try encoder.encode(waveformData)
-        let json = String(data: data, encoding: .utf8) ?? "[]"
-        print("[CollectionService] 📝 Encoded waveform data to JSON, length: \(json.count)")
+                    let encoder = JSONEncoder()
+                    let data = try encoder.encode(waveformData)
+                    let json = String(data: data, encoding: .utf8) ?? "[]"
+                    print("[CollectionService] 📝 Encoded waveform data to JSON, length: \(json.count)")
 
-        let sql = "UPDATE \(tableMusic) SET \(columnWaveformData) = ? WHERE \(columnId) = ?"
-        print("[CollectionService] 🔍 Executing SQL: \(sql)")
-        
-        var statement: OpaquePointer?
-        let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
-        defer { sqlite3_finalize(statement) }
-        if result != SQLITE_OK { 
-            let errorMsg = String(cString: sqlite3_errmsg(db))
-            print("[CollectionService] ❌ SQL prepare failed: \(errorMsg)")
-            throw CollectionError.queryFailed(message: errorMsg) 
-        }
-        
-        print("[CollectionService] 🔗 Binding parameters...")
-        sqlite3_bind_text(statement, 1, json, -1, nil)
-        sqlite3_bind_int(statement, 2, Int32(trackId))
-        
-        print("[CollectionService] ▶️ Executing statement...")
-        let stepResult = sqlite3_step(statement)
-        if stepResult != SQLITE_DONE {
-            let errorMsg = String(cString: sqlite3_errmsg(db))
-            print("[CollectionService] ❌ SQL execution failed: \(errorMsg)")
-            throw CollectionError.queryFailed(message: errorMsg)
-        }
-        print("[CollectionService] ✅ SQL execution successful")
+                    let sql = "UPDATE \(self.tableMusic) SET \(self.columnWaveformData) = ? WHERE \(self.columnId) = ?"
+                    print("[CollectionService] 🔍 Executing SQL: \(sql)")
+                    
+                    var statement: OpaquePointer?
+                    let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    if result != SQLITE_OK { 
+                        let errorMsg = String(cString: sqlite3_errmsg(db))
+                        print("[CollectionService] ❌ SQL prepare failed: \(errorMsg)")
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMsg))
+                        return
+                    }
+                    
+                    print("[CollectionService] 🔗 Binding parameters...")
+                    sqlite3_bind_text(statement, 1, json, -1, nil)
+                    sqlite3_bind_int(statement, 2, Int32(trackId))
+                    
+                    print("[CollectionService] ▶️ Executing statement...")
+                    let stepResult = sqlite3_step(statement)
+                    if stepResult != SQLITE_DONE {
+                        let errorMsg = String(cString: sqlite3_errmsg(db))
+                        print("[CollectionService] ❌ SQL execution failed: \(errorMsg)")
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMsg))
+                        return
+                    }
+                    print("[CollectionService] ✅ SQL execution successful")
 
-        await MainActor.run {
-            print("[CollectionService] 🔄 Updating tracks array on main thread...")
-            if let index = tracks.firstIndex(where: { $0.id == trackId }) {
-                // Create a completely new array to force SwiftUI to refresh
-                var newTracks = tracks
-                newTracks[index] = Track(
-                    id: tracks[index].id,
-                    title: tracks[index].title,
-                    artist: tracks[index].artist,
-                    album: tracks[index].album,
-                    albumArtist: tracks[index].albumArtist,
-                    composer: tracks[index].composer,
-                    genre: tracks[index].genre,
-                    year: tracks[index].year,
-                    trackNumber: tracks[index].trackNumber,
-                    discNumber: tracks[index].discNumber,
-                    bpm: tracks[index].bpm,
-                    path: tracks[index].path,
-                    isUrl: tracks[index].isUrl,
-                    duration: tracks[index].duration,
-                    timeMarkers: tracks[index].timeMarkers,
-                    waveformData: waveformData,
-                    rating: tracks[index].rating,
-                    comment: tracks[index].comment,
-                    generalTags: tracks[index].generalTags
-                )
-                
-                // Replace the entire array to force SwiftUI refresh
-                tracks = newTracks
-                print("[CollectionService] ✅ Successfully updated tracks array for track \(trackId)")
-                
-                // Force a UI refresh
-                DispatchQueue.main.async {
-                    self.objectWillChange.send()
+                    // Update the track in the local array on the main thread
+                    Task { @MainActor in
+                        print("[CollectionService] 🔄 Updating tracks array on main thread...")
+                        if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
+                            // Create a completely new array to force SwiftUI to refresh
+                            var newTracks = self.tracks
+                            newTracks[index] = Track(
+                                id: self.tracks[index].id,
+                                title: self.tracks[index].title,
+                                artist: self.tracks[index].artist,
+                                album: self.tracks[index].album,
+                                albumArtist: self.tracks[index].albumArtist,
+                                composer: self.tracks[index].composer,
+                                genre: self.tracks[index].genre,
+                                year: self.tracks[index].year,
+                                trackNumber: self.tracks[index].trackNumber,
+                                discNumber: self.tracks[index].discNumber,
+                                bpm: self.tracks[index].bpm,
+                                path: self.tracks[index].path,
+                                isUrl: self.tracks[index].isUrl,
+                                duration: self.tracks[index].duration,
+                                timeMarkers: self.tracks[index].timeMarkers,
+                                waveformData: waveformData,
+                                rating: self.tracks[index].rating,
+                                comment: self.tracks[index].comment,
+                                generalTags: self.tracks[index].generalTags
+                            )
+                            
+                            // Replace the entire array to force SwiftUI refresh
+                            self.tracks = newTracks
+                            print("[CollectionService] ✅ Successfully updated tracks array for track \(trackId)")
+                            
+                            // Force a UI refresh
+                            self.objectWillChange.send()
+                        } else {
+                            print("[CollectionService] ⚠️ Track \(trackId) not found in tracks array")
+                        }
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
                 }
-            } else {
-                print("[CollectionService] ⚠️ Track \(trackId) not found in tracks array")
             }
         }
-        print("[CollectionService] ✅ Waveform update completed for track \(trackId)")
     }
     func updateTrackRating(trackId: Int, newRating: Int) async throws {
-        guard let db = database else {
-            throw CollectionError.databaseNotOpen
-        }
-        
-        if isReadOnlyMode {
-            throw CollectionError.queryFailed(message: "Cannot update ratings in read-only mode. Please ensure the database file is writable.")
-        }
-        
-        // First, ensure we're using DELETE journal mode to avoid permission issues
-        let journalResult = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
-        if journalResult != SQLITE_OK {
-            print("Warning: Could not set journal mode to DELETE for update operation")
-        }
-        
-        let query = "UPDATE \(tableMusic) SET \(columnRating) = ? WHERE \(columnId) = ?"
-        var statement: OpaquePointer?
-        
-        let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
-        defer { sqlite3_finalize(statement) }
-        
-        if result != SQLITE_OK {
-            let errorMessage = String(cString: sqlite3_errmsg(db))
-            throw CollectionError.queryFailed(message: errorMessage)
-        }
-        
-        // Bind parameters
-        sqlite3_bind_int(statement, 1, Int32(newRating))
-        sqlite3_bind_int(statement, 2, Int32(trackId))
-        
-        let stepResult = sqlite3_step(statement)
-        if stepResult != SQLITE_DONE {
-            let errorMessage = String(cString: sqlite3_errmsg(db))
-            throw CollectionError.queryFailed(message: errorMessage)
-        }
-        
-        // Update the track in the local array on the main thread
-        await MainActor.run {
-            if let index = tracks.firstIndex(where: { $0.id == trackId }) {
-                var updatedTracks = tracks
-                updatedTracks[index] = Track(
-                    id: tracks[index].id,
-                    title: tracks[index].title,
-                    artist: tracks[index].artist,
-                    album: tracks[index].album,
-                    albumArtist: tracks[index].albumArtist,
-                    composer: tracks[index].composer,
-                    genre: tracks[index].genre,
-                    year: tracks[index].year,
-                    trackNumber: tracks[index].trackNumber,
-                    discNumber: tracks[index].discNumber,
-                    bpm: tracks[index].bpm,
-                    path: tracks[index].path,
-                    isUrl: tracks[index].isUrl,
-                    duration: tracks[index].duration,
-                    timeMarkers: tracks[index].timeMarkers,
-                    waveformData: tracks[index].waveformData,
-                    rating: newRating,
-                    comment: tracks[index].comment,
-                    generalTags: tracks[index].generalTags
-                )
-                tracks = updatedTracks
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else {
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    
+                    if self.isReadOnlyMode {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot update ratings in read-only mode. Please ensure the database file is writable."))
+                        return
+                    }
+                    
+                    // First, ensure we're using DELETE journal mode to avoid permission issues
+                    let journalResult = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
+                    if journalResult != SQLITE_OK {
+                        print("Warning: Could not set journal mode to DELETE for update operation")
+                    }
+                    
+                    let query = "UPDATE \(self.tableMusic) SET \(self.columnRating) = ? WHERE \(self.columnId) = ?"
+                    var statement: OpaquePointer?
+                    
+                    let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    // Bind parameters
+                    sqlite3_bind_int(statement, 1, Int32(newRating))
+                    sqlite3_bind_int(statement, 2, Int32(trackId))
+                    
+                    let stepResult = sqlite3_step(statement)
+                    if stepResult != SQLITE_DONE {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    // Update the track in the local array on the main thread
+                    Task { @MainActor in
+                        if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
+                            var updatedTracks = self.tracks
+                            updatedTracks[index] = Track(
+                                id: self.tracks[index].id,
+                                title: self.tracks[index].title,
+                                artist: self.tracks[index].artist,
+                                album: self.tracks[index].album,
+                                albumArtist: self.tracks[index].albumArtist,
+                                composer: self.tracks[index].composer,
+                                genre: self.tracks[index].genre,
+                                year: self.tracks[index].year,
+                                trackNumber: self.tracks[index].trackNumber,
+                                discNumber: self.tracks[index].discNumber,
+                                bpm: self.tracks[index].bpm,
+                                path: self.tracks[index].path,
+                                isUrl: self.tracks[index].isUrl,
+                                duration: self.tracks[index].duration,
+                                timeMarkers: self.tracks[index].timeMarkers,
+                                waveformData: self.tracks[index].waveformData,
+                                rating: newRating,
+                                comment: self.tracks[index].comment,
+                                generalTags: self.tracks[index].generalTags
+                            )
+                            self.tracks = updatedTracks
+                        }
+                    }
+                    
+                    print("Updated rating for track \(trackId) to \(newRating)")
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
         }
-        
-        print("Updated rating for track \(trackId) to \(newRating)")
     }
 
     // MARK: - Global Tags Persistence
     func loadGlobalTags() async throws {
-        guard let db = database else { throw CollectionError.databaseNotOpen }
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
 
-        // 1) Try to load from ui_settings
-        var statement: OpaquePointer?
-        let selectSQL = "SELECT value FROM \(tableUiSettings) WHERE key = ?"
-        if sqlite3_prepare_v2(db, selectSQL, -1, &statement, nil) != SQLITE_OK {
-            let errorMessage = String(cString: sqlite3_errmsg(db))
-            throw CollectionError.queryFailed(message: errorMessage)
-        }
-        defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, "global_tags", -1, nil)
+                    // 1) Try to load from ui_settings
+                    var statement: OpaquePointer?
+                    let selectSQL = "SELECT value FROM \(self.tableUiSettings) WHERE key = ?"
+                    if sqlite3_prepare_v2(db, selectSQL, -1, &statement, nil) != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    defer { sqlite3_finalize(statement) }
+                    sqlite3_bind_text(statement, 1, "global_tags", -1, nil)
 
-        var loaded: [TagDefinition] = []
-        if sqlite3_step(statement) == SQLITE_ROW {
-            if let textPtr = sqlite3_column_text(statement, 0) {
-                let json = String(cString: textPtr)
-                if let data = json.data(using: .utf8) {
-                    let decoder = JSONDecoder()
-                    loaded = (try? decoder.decode([TagDefinition].self, from: data)) ?? []
-                }
-            }
-        }
-
-        if !loaded.isEmpty {
-            await MainActor.run { self.globalTags = loaded }
-            return
-        }
-
-        // 2) If nothing stored, bootstrap from the music table directly (do NOT persist empty)
-        var derivedNames = Set<String>()
-        var stmt2: OpaquePointer?
-        let tagsQuery = "SELECT \(columnGeneralTags) FROM \(tableMusic) WHERE \(columnGeneralTags) IS NOT NULL AND LENGTH(TRIM(\(columnGeneralTags))) > 0"
-        if sqlite3_prepare_v2(db, tagsQuery, -1, &stmt2, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(stmt2) }
-            while sqlite3_step(stmt2) == SQLITE_ROW {
-                if let textPtr = sqlite3_column_text(stmt2, 0) {
-                    let json = String(cString: textPtr)
-                    if let data = json.data(using: .utf8) {
-                        let decoder = JSONDecoder()
-                        if let tags = try? decoder.decode([String].self, from: data) {
-                            for t in tags { derivedNames.insert(t) }
+                    var loaded: [TagDefinition] = []
+                    if sqlite3_step(statement) == SQLITE_ROW {
+                        if let textPtr = sqlite3_column_text(statement, 0) {
+                            let json = String(cString: textPtr)
+                            if let data = json.data(using: .utf8) {
+                                let decoder = JSONDecoder()
+                                loaded = (try? decoder.decode([TagDefinition].self, from: data)) ?? []
+                            }
                         }
                     }
+
+                    if !loaded.isEmpty {
+                        Task { @MainActor in
+                            self.globalTags = loaded
+                        }
+                        continuation.resume()
+                        return
+                    }
+
+                    // 2) If nothing stored, bootstrap from the music table directly (do NOT persist empty)
+                    var derivedNames = Set<String>()
+                    var stmt2: OpaquePointer?
+                    let tagsQuery = "SELECT \(self.columnGeneralTags) FROM \(self.tableMusic) WHERE \(self.columnGeneralTags) IS NOT NULL AND LENGTH(TRIM(\(self.columnGeneralTags))) > 0"
+                    if sqlite3_prepare_v2(db, tagsQuery, -1, &stmt2, nil) == SQLITE_OK {
+                        defer { sqlite3_finalize(stmt2) }
+                        while sqlite3_step(stmt2) == SQLITE_ROW {
+                            if let textPtr = sqlite3_column_text(stmt2, 0) {
+                                let json = String(cString: textPtr)
+                                if let data = json.data(using: .utf8) {
+                                    let decoder = JSONDecoder()
+                                    if let tags = try? decoder.decode([String].self, from: data) {
+                                        for t in tags { derivedNames.insert(t) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let derived = derivedNames.sorted { $0.lowercased() < $1.lowercased() }.map { TagDefinition(name: $0) }
+
+                    // If we derived non-empty tags, persist when possible; otherwise, just publish empty without saving
+                    if !derived.isEmpty {
+                        if !self.isReadOnlyMode {
+                            try self.saveGlobalTags(derived)
+                        } else {
+                            Task { @MainActor in
+                                self.globalTags = derived
+                            }
+                        }
+                    } else {
+                        Task { @MainActor in
+                            self.globalTags = []
+                        }
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
                 }
             }
-        }
-
-        let derived = derivedNames.sorted { $0.lowercased() < $1.lowercased() }.map { TagDefinition(name: $0) }
-
-        // If we derived non-empty tags, persist when possible; otherwise, just publish empty without saving
-        if !derived.isEmpty {
-            if !isReadOnlyMode {
-                try saveGlobalTags(derived)
-            } else {
-                await MainActor.run { self.globalTags = derived }
-            }
-        } else {
-            await MainActor.run { self.globalTags = [] }
         }
     }
 
     private func saveGlobalTags(_ tags: [TagDefinition]) throws {
-        guard let db = database else { throw CollectionError.databaseNotOpen }
-        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot save UI settings in read-only mode.") }
+        guard let db = self.database else { throw CollectionError.databaseNotOpen }
+        if self.isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot save UI settings in read-only mode.") }
         let encoder = JSONEncoder()
         let data = try encoder.encode(tags)
         let json = String(data: data, encoding: .utf8) ?? "[]"
-        let upsertSQL = "REPLACE INTO \(tableUiSettings) (key, value) VALUES (?, ?)"
+        let upsertSQL = "REPLACE INTO \(self.tableUiSettings) (key, value) VALUES (?, ?)"
         var statement: OpaquePointer?
         let result = sqlite3_prepare_v2(db, upsertSQL, -1, &statement, nil)
         defer { sqlite3_finalize(statement) }
@@ -1760,7 +1823,7 @@ class CollectionService: ObservableObject {
             let errorMessage = String(cString: sqlite3_errmsg(db))
             throw CollectionError.queryFailed(message: errorMessage)
         }
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.globalTags = tags
         }
     }
@@ -1823,147 +1886,178 @@ class CollectionService: ObservableObject {
         for id in trackIds { try await removeTagFromTrack(trackId: id, tag: tag) }
     }
 
-    private func updateTrackTags(trackId: Int, transform: ([String]) -> [String]) async throws {
-        guard let db = database else { throw CollectionError.databaseNotOpen }
-        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot update tags in read-only mode.") }
-        
-        print("[Tags] updateTrackTags: database=\(db != nil), readOnly=\(isReadOnlyMode)")
-        
-        // Check database state
-        var journalMode: OpaquePointer?
-        if sqlite3_prepare_v2(db, "PRAGMA journal_mode", -1, &journalMode, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(journalMode) }
-            if sqlite3_step(journalMode) == SQLITE_ROW {
-                let mode = String(cString: sqlite3_column_text(journalMode, 0))
-                print("[Tags] Journal mode: \(mode)")
-            }
-        }
-        
-        // Check if database is writable
-        var writable: OpaquePointer?
-        if sqlite3_prepare_v2(db, "PRAGMA writable_schema", -1, &writable, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(writable) }
-            if sqlite3_step(writable) == SQLITE_ROW {
-                let writableSchema = sqlite3_column_int(writable, 0)
-                print("[Tags] Writable schema: \(writableSchema)")
-            }
-        }
-        
-        _ = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
-        
-        // Check schema on first update attempt
-        checkDatabaseSchema()
-        
-        // Get fresh tags from database instead of using potentially stale tracks array
-        let currentTags = try await getCurrentTagsFromDatabase(trackId: trackId)
-        let newTags = transform(currentTags)
-        print("[Tags] updateTrackTags: id=\(trackId) old=\(currentTags) new=\(newTags)")
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys // Ensure consistent output
-        let data = try encoder.encode(newTags)
-        let json = String(data: data, encoding: .utf8) ?? "[]"
-        print("[Tags] Encoded JSON data length: \(data.count) bytes")
-        print("[Tags] JSON string length: \(json.count) characters")
-        // Try direct SQL execution to avoid binding issues
-        let directSQL = "UPDATE \(tableMusic) SET \(columnGeneralTags) = '\(json)' WHERE \(columnId) = \(trackId)"
-        print("[Tags] Direct SQL: \(directSQL)")
-        
-        let execResult = sqlite3_exec(db, directSQL, nil, nil, nil)
-        print("[Tags] Direct SQL result: \(execResult)")
-        if execResult != SQLITE_OK {
-            let errorMessage = String(cString: sqlite3_errmsg(db))
-            print("[Tags] Direct SQL error: \(errorMessage)")
-            throw CollectionError.queryFailed(message: errorMessage)
-        }
-        print("[Tags] Direct SQL successful, rows affected: \(sqlite3_changes(db))")
-        
-        // Force a commit to ensure the transaction is persisted
-        let commitResult = sqlite3_exec(db, "COMMIT", nil, nil, nil)
-        print("[Tags] Commit result: \(commitResult)")
-        
-        // Simple verification without complex statement management
-        let simpleVerify = "SELECT generalTags FROM music WHERE id = \(trackId)"
-        var simpleStatement: OpaquePointer?
-        if sqlite3_prepare_v2(db, simpleVerify, -1, &simpleStatement, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(simpleStatement) }
-            if sqlite3_step(simpleStatement) == SQLITE_ROW {
-                if sqlite3_column_type(simpleStatement, 0) != SQLITE_NULL {
-                    let stored = String(cString: sqlite3_column_text(simpleStatement, 0))
-                    print("[Tags] SIMPLE VERIFY: Track \(trackId) stored: '\(stored)'")
-                } else {
-                    print("[Tags] SIMPLE VERIFY: Track \(trackId) has NULL")
-                }
-            } else {
-                print("[Tags] SIMPLE VERIFY: Track \(trackId) not found in database")
-            }
-        } else {
-            let errorMessage = String(cString: sqlite3_errmsg(db))
-            print("[Tags] SIMPLE VERIFY: Failed to prepare query: \(errorMessage)")
-        }
-        // Test: Reload the specific track to see if it's corrupted
-        print("[Tags] Testing track reload after update...")
-        let testQuery = "SELECT * FROM \(tableMusic) WHERE \(columnId) = ?"
-        var testStatement: OpaquePointer?
-        if sqlite3_prepare_v2(db, testQuery, -1, &testStatement, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(testStatement) }
-            sqlite3_bind_int(testStatement, 1, Int32(trackId))
-            if sqlite3_step(testStatement) == SQLITE_ROW {
+    private func updateTrackTags(trackId: Int, transform: @escaping ([String]) -> [String]) async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
                 do {
-                    let reloadedTrack = try parseTrackFromRow(testStatement)
-                    print("[Tags] RELOAD TEST: Track \(trackId) reloaded successfully - title: '\(reloadedTrack.title)', tags: \(reloadedTrack.generalTags)")
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    if self.isReadOnlyMode { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot update tags in read-only mode."))
+                        return
+                    }
+                    
+                    print("[Tags] updateTrackTags: database=\(db != nil), readOnly=\(self.isReadOnlyMode)")
+                    
+                    // Check database state
+                    var journalMode: OpaquePointer?
+                    if sqlite3_prepare_v2(db, "PRAGMA journal_mode", -1, &journalMode, nil) == SQLITE_OK {
+                        defer { sqlite3_finalize(journalMode) }
+                        if sqlite3_step(journalMode) == SQLITE_ROW {
+                            let mode = String(cString: sqlite3_column_text(journalMode, 0))
+                            print("[Tags] Journal mode: \(mode)")
+                        }
+                    }
+                    
+                    // Check if database is writable
+                    var writable: OpaquePointer?
+                    if sqlite3_prepare_v2(db, "PRAGMA writable_schema", -1, &writable, nil) == SQLITE_OK {
+                        defer { sqlite3_finalize(writable) }
+                        if sqlite3_step(writable) == SQLITE_ROW {
+                            let writableSchema = sqlite3_column_int(writable, 0)
+                            print("[Tags] Writable schema: \(writableSchema)")
+                        }
+                    }
+                    
+                    _ = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
+                    
+                    // Check schema on first update attempt
+                    self.checkDatabaseSchema()
+                    
+                    // Get fresh tags from database instead of using potentially stale tracks array
+                    let currentTags = try self.getCurrentTagsFromDatabaseSync(trackId: trackId)
+                    let newTags = transform(currentTags)
+                    print("[Tags] updateTrackTags: id=\(trackId) old=\(currentTags) new=\(newTags)")
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = .sortedKeys // Ensure consistent output
+                    let data = try encoder.encode(newTags)
+                    let json = String(data: data, encoding: .utf8) ?? "[]"
+                    print("[Tags] Encoded JSON data length: \(data.count) bytes")
+                    print("[Tags] JSON string length: \(json.count) characters")
+                    // Try direct SQL execution to avoid binding issues
+                    let directSQL = "UPDATE \(self.tableMusic) SET \(self.columnGeneralTags) = '\(json)' WHERE \(self.columnId) = \(trackId)"
+                    print("[Tags] Direct SQL: \(directSQL)")
+                    
+                    let execResult = sqlite3_exec(db, directSQL, nil, nil, nil)
+                    print("[Tags] Direct SQL result: \(execResult)")
+                    if execResult != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        print("[Tags] Direct SQL error: \(errorMessage)")
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    print("[Tags] Direct SQL successful, rows affected: \(sqlite3_changes(db))")
+                    
+                    // Force a commit to ensure the transaction is persisted
+                    let commitResult = sqlite3_exec(db, "COMMIT", nil, nil, nil)
+                    print("[Tags] Commit result: \(commitResult)")
+                    
+                    // Simple verification without complex statement management
+                    let simpleVerify = "SELECT generalTags FROM music WHERE id = \(trackId)"
+                    var simpleStatement: OpaquePointer?
+                    if sqlite3_prepare_v2(db, simpleVerify, -1, &simpleStatement, nil) == SQLITE_OK {
+                        defer { sqlite3_finalize(simpleStatement) }
+                        if sqlite3_step(simpleStatement) == SQLITE_ROW {
+                            if sqlite3_column_type(simpleStatement, 0) != SQLITE_NULL {
+                                let stored = String(cString: sqlite3_column_text(simpleStatement, 0))
+                                print("[Tags] SIMPLE VERIFY: Track \(trackId) has stored: '\(stored)'")
+                            } else {
+                                print("[Tags] SIMPLE VERIFY: Track \(trackId) has NULL")
+                            }
+                        } else {
+                            print("[Tags] SIMPLE VERIFY: Track \(trackId) not found in database")
+                        }
+                    } else {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        print("[Tags] SIMPLE VERIFY: Failed to prepare query: \(errorMessage)")
+                    }
+                    // Test: Reload the specific track to see if it's corrupted
+                    print("[Tags] Testing track reload after update...")
+                    let testQuery = "SELECT * FROM \(self.tableMusic) WHERE \(self.columnId) = ?"
+                    var testStatement: OpaquePointer?
+                    if sqlite3_prepare_v2(db, testQuery, -1, &testStatement, nil) == SQLITE_OK {
+                        defer { sqlite3_finalize(testStatement) }
+                        sqlite3_bind_int(testStatement, 1, Int32(trackId))
+                        if sqlite3_step(testStatement) == SQLITE_ROW {
+                            do {
+                                let reloadedTrack = try self.parseTrackFromRow(testStatement)
+                                print("[Tags] RELOAD TEST: Track \(trackId) reloaded successfully - title: '\(reloadedTrack.title)', tags: \(reloadedTrack.generalTags)")
+                            } catch {
+                                print("[Tags] RELOAD TEST: Failed to reload track \(trackId): \(error)")
+                            }
+                        } else {
+                            print("[Tags] RELOAD TEST: Track \(trackId) not found after update!")
+                        }
+                    }
+                    
+                    // Update the tracks array with fresh data
+                    Task { @MainActor in
+                        guard let index = self.tracks.firstIndex(where: { $0.id == trackId }) else { 
+                            print("[CollectionService] Warning: track \(trackId) not found in tracks array")
+                            return 
+                        }
+                        print("[CollectionService] updating track \(trackId) tags from \(self.tracks[index].generalTags) to \(newTags)")
+                        var updatedTracks = self.tracks
+                        updatedTracks[index] = Track(
+                            id: self.tracks[index].id,
+                            title: self.tracks[index].title,
+                            artist: self.tracks[index].artist,
+                            album: self.tracks[index].album,
+                            albumArtist: self.tracks[index].albumArtist,
+                            composer: self.tracks[index].composer,
+                            genre: self.tracks[index].genre,
+                            year: self.tracks[index].year,
+                            trackNumber: self.tracks[index].trackNumber,
+                            discNumber: self.tracks[index].discNumber,
+                            bpm: self.tracks[index].bpm,
+                            path: self.tracks[index].path,
+                            isUrl: self.tracks[index].isUrl,
+                            duration: self.tracks[index].duration,
+                            timeMarkers: self.tracks[index].timeMarkers,
+                            waveformData: self.tracks[index].waveformData,
+                            rating: self.tracks[index].rating,
+                            comment: self.tracks[index].comment,
+                            generalTags: newTags
+                        )
+                        self.tracks = updatedTracks
+                        print("[CollectionService] track \(trackId) updated, new tags: \(updatedTracks[index].generalTags)")
+                        print("[CollectionService] tracks array updated, count: \(self.tracks.count)")
+                        
+                        // Force a UI update cycle to ensure the change is propagated
+                        self.objectWillChange.send()
+                    }
+                    
+                    continuation.resume()
                 } catch {
-                    print("[Tags] RELOAD TEST: Failed to reload track \(trackId): \(error)")
+                    continuation.resume(throwing: error)
                 }
-            } else {
-                print("[Tags] RELOAD TEST: Track \(trackId) not found after update!")
-            }
-        }
-        
-        // Update the tracks array with fresh data
-        await MainActor.run {
-            guard let index = tracks.firstIndex(where: { $0.id == trackId }) else { 
-                print("[CollectionService] Warning: track \(trackId) not found in tracks array")
-                return 
-            }
-            print("[CollectionService] updating track \(trackId) tags from \(tracks[index].generalTags) to \(newTags)")
-            var updatedTracks = tracks
-            updatedTracks[index] = Track(
-                id: tracks[index].id,
-                title: tracks[index].title,
-                artist: tracks[index].artist,
-                album: tracks[index].album,
-                albumArtist: tracks[index].albumArtist,
-                composer: tracks[index].composer,
-                genre: tracks[index].genre,
-                year: tracks[index].year,
-                trackNumber: tracks[index].trackNumber,
-                discNumber: tracks[index].discNumber,
-                bpm: tracks[index].bpm,
-                path: tracks[index].path,
-                isUrl: tracks[index].isUrl,
-                duration: tracks[index].duration,
-                timeMarkers: tracks[index].timeMarkers,
-                waveformData: tracks[index].waveformData,
-                rating: tracks[index].rating,
-                comment: tracks[index].comment,
-                generalTags: newTags
-            )
-            tracks = updatedTracks
-            print("[CollectionService] track \(trackId) updated, new tags: \(updatedTracks[index].generalTags)")
-            print("[CollectionService] tracks array updated, count: \(tracks.count)")
-            
-            // Force a UI update cycle to ensure the change is propagated
-            DispatchQueue.main.async {
-                print("[CollectionService] forcing UI update cycle")
             }
         }
     }
     
-    // Get current tags directly from database (ensures fresh data)
+    // Get current tags directly from database (ensures fresh data) - async version
     private func getCurrentTagsFromDatabase(trackId: Int) async throws -> [String] {
-        guard let db = database else { throw CollectionError.databaseNotOpen }
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    let tags = try self.getCurrentTagsFromDatabaseSync(trackId: trackId)
+                    continuation.resume(returning: tags)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    // Get current tags directly from database (ensures fresh data) - sync version for internal use
+    private func getCurrentTagsFromDatabaseSync(trackId: Int) throws -> [String] {
+        guard let db = self.database else { 
+            throw CollectionError.databaseNotOpen
+        }
         
-        let query = "SELECT \(columnGeneralTags) FROM \(tableMusic) WHERE \(columnId) = ?"
+        let query = "SELECT \(self.columnGeneralTags) FROM \(self.tableMusic) WHERE \(self.columnId) = ?"
         var statement: OpaquePointer?
         
         let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
@@ -1981,29 +2075,29 @@ class CollectionService: ObservableObject {
                 let raw = String(cString: sqlite3_column_text(statement, 0))
                 let tagsJson = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 if tagsJson.isEmpty {
-                    print("[Tags] getCurrentTagsFromDatabase: id=\(trackId) empty string, returning []")
+                    print("[Tags] getCurrentTagsFromDatabaseSync: id=\(trackId) empty string, returning []")
                     return []
                 }
                 do {
-                    let currentTags = try parseGeneralTags(from: tagsJson)
-                    print("[Tags] getCurrentTagsFromDatabase: id=\(trackId) tags=\(currentTags)")
+                    let currentTags = try self.parseGeneralTags(from: tagsJson)
+                    print("[Tags] getCurrentTagsFromDatabaseSync: id=\(trackId) tags=\(currentTags)")
                     return currentTags
                 } catch {
-                    print("[Tags] getCurrentTagsFromDatabase decode error for id=\(trackId): \(error). Falling back to []")
+                    print("[Tags] getCurrentTagsFromDatabaseSync decode error for id=\(trackId): \(error). Falling back to []")
                     return []
                 }
             }
         }
         
-        print("[Tags] getCurrentTagsFromDatabase: id=\(trackId) no tags found, returning empty")
+        print("[Tags] getCurrentTagsFromDatabaseSync: id=\(trackId) no tags found, returning empty")
         return []
     }
 
     // Check database schema to see if generalTags column exists
     private func checkDatabaseSchema() {
-        guard let db = database else { return }
+        guard let db = self.database else { return }
         
-        let schemaQuery = "PRAGMA table_info(\(tableMusic))"
+        let schemaQuery = "PRAGMA table_info(\(self.tableMusic))"
         var statement: OpaquePointer?
         
         if sqlite3_prepare_v2(db, schemaQuery, -1, &statement, nil) == SQLITE_OK {
@@ -2030,15 +2124,33 @@ class CollectionService: ObservableObject {
     
     // MARK: - Database Repair Utilities
     
-    /// Attempts to fix corrupted metadata for a specific track
+    /// Attempts to fix corrupted metadata for a specific track - async version
     func fixCorruptedTrackMetadata(trackId: Int) async throws {
-        guard let db = database else { throw CollectionError.databaseNotOpen }
-        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot fix metadata in read-only mode.") }
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    try self.fixCorruptedTrackMetadataSync(trackId: trackId)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /// Attempts to fix corrupted metadata for a specific track - sync version for internal use
+    private func fixCorruptedTrackMetadataSync(trackId: Int) throws {
+        guard let db = self.database else { 
+            throw CollectionError.databaseNotOpen
+        }
+        if self.isReadOnlyMode { 
+            throw CollectionError.queryFailed(message: "Cannot fix metadata in read-only mode.")
+        }
         
         print("🔧 Attempting to fix corrupted metadata for track \(trackId)")
         
         // Get the track's basic info first
-        let basicQuery = "SELECT title, artist, album FROM \(tableMusic) WHERE \(columnId) = ?"
+        let basicQuery = "SELECT title, artist, album FROM \(self.tableMusic) WHERE \(self.columnId) = ?"
         var basicStatement: OpaquePointer?
         
         let basicResult = sqlite3_prepare_v2(db, basicQuery, -1, &basicStatement, nil)
@@ -2063,11 +2175,11 @@ class CollectionService: ObservableObject {
         
         // Reset problematic JSON fields to empty arrays
         let fixSQL = """
-            UPDATE \(tableMusic) 
-            SET \(columnGeneralTags) = '[]',
-                \(columnTimeMarkers) = '[]',
-                \(columnWaveformData) = NULL
-            WHERE \(columnId) = ?
+            UPDATE \(self.tableMusic) 
+            SET \(self.columnGeneralTags) = '[]',
+                \(self.columnTimeMarkers) = '[]',
+                \(self.columnWaveformData) = NULL
+            WHERE \(self.columnId) = ?
         """
         
         var fixStatement: OpaquePointer?
@@ -2089,181 +2201,374 @@ class CollectionService: ObservableObject {
         print("✅ Successfully fixed metadata for track \(trackId)")
         
         // Reload the track in memory
-        await MainActor.run {
-            if let index = tracks.firstIndex(where: { $0.id == trackId }) {
-                var updatedTracks = tracks
+        Task { @MainActor in
+            if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
+                var updatedTracks = self.tracks
                 updatedTracks[index] = Track(
-                    id: tracks[index].id,
-                    title: tracks[index].title,
-                    artist: tracks[index].artist,
-                    album: tracks[index].album,
-                    albumArtist: tracks[index].albumArtist,
-                    composer: tracks[index].composer,
-                    genre: tracks[index].genre,
-                    year: tracks[index].year,
-                    trackNumber: tracks[index].trackNumber,
-                    discNumber: tracks[index].discNumber,
-                    bpm: tracks[index].bpm,
-                    path: tracks[index].path,
-                    isUrl: tracks[index].isUrl,
-                    duration: tracks[index].duration,
+                    id: self.tracks[index].id,
+                    title: self.tracks[index].title,
+                    artist: self.tracks[index].artist,
+                    album: self.tracks[index].album,
+                    albumArtist: self.tracks[index].albumArtist,
+                    composer: self.tracks[index].composer,
+                    genre: self.tracks[index].genre,
+                    year: self.tracks[index].year,
+                    trackNumber: self.tracks[index].trackNumber,
+                    discNumber: self.tracks[index].discNumber,
+                    bpm: self.tracks[index].bpm,
+                    path: self.tracks[index].path,
+                    isUrl: self.tracks[index].isUrl,
+                    duration: self.tracks[index].duration,
                     timeMarkers: [],
                     waveformData: nil,
-                    rating: tracks[index].rating,
-                    comment: tracks[index].comment,
+                    rating: self.tracks[index].rating,
+                    comment: self.tracks[index].comment,
                     generalTags: []
                 )
-                tracks = updatedTracks
+                self.tracks = updatedTracks
             }
         }
     }
     
     /// Automatically fixes common metadata corruption issues in the database
     func autoFixCorruptedMetadata() async throws {
-        guard let db = database else { throw CollectionError.databaseNotOpen }
-        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot fix metadata in read-only mode.") }
-        
-        print("🔧 Starting automatic metadata corruption fix...")
-        
-        // Find tracks with problematic metadata
-        let problematicQuery = """
-            SELECT \(columnId), \(columnTitle), \(columnGeneralTags), \(columnTimeMarkers), \(columnWaveformData)
-            FROM \(tableMusic)
-            WHERE (\(columnGeneralTags) IS NOT NULL AND \(columnGeneralTags) != '[]' AND \(columnGeneralTags) != '')
-               OR (\(columnTimeMarkers) IS NOT NULL AND \(columnTimeMarkers) != '[]' AND \(columnTimeMarkers) != '')
-               OR (\(columnWaveformData) IS NOT NULL AND \(columnWaveformData) != '[]' AND \(columnWaveformData) != '')
-        """
-        
-        var statement: OpaquePointer?
-        let result = sqlite3_prepare_v2(db, problematicQuery, -1, &statement, nil)
-        defer { sqlite3_finalize(statement) }
-        
-        if result != SQLITE_OK {
-            let errorMessage = String(cString: sqlite3_errmsg(db))
-            throw CollectionError.queryFailed(message: errorMessage)
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    if self.isReadOnlyMode { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot fix metadata in read-only mode."))
+                        return
+                    }
+                    
+                    print("🔧 Starting automatic metadata corruption fix...")
+                    
+                    // Find tracks with problematic metadata
+                    let problematicQuery = """
+                        SELECT \(self.columnId), \(self.columnTitle), \(self.columnGeneralTags), \(self.columnTimeMarkers), \(self.columnWaveformData)
+                        FROM \(self.tableMusic)
+                        WHERE (\(self.columnGeneralTags) IS NOT NULL AND \(self.columnGeneralTags) != '[]' AND \(self.columnGeneralTags) != '')
+                           OR (\(self.columnTimeMarkers) IS NOT NULL AND \(self.columnTimeMarkers) != '[]' AND \(self.columnTimeMarkers) != '')
+                           OR (\(self.columnWaveformData) IS NOT NULL AND \(self.columnWaveformData) != '[]' AND \(self.columnWaveformData) != '')
+                    """
+                    
+                    var statement: OpaquePointer?
+                    let result = sqlite3_prepare_v2(db, problematicQuery, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    var fixedCount = 0
+                    
+                    while sqlite3_step(statement) == SQLITE_ROW {
+                        let trackId = Int(sqlite3_column_int(statement, 0))
+                        let title = String(cString: sqlite3_column_text(statement, 1))
+                        
+                        // Check each field for corruption
+                        var needsFix = false
+                        var fixFields: [String] = []
+                        
+                        // Check generalTags
+                        if sqlite3_column_type(statement, 2) != SQLITE_NULL {
+                            let tagsData = String(cString: sqlite3_column_text(statement, 2))
+                            if tagsData.isEmpty || tagsData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
+                                needsFix = true
+                                fixFields.append("generalTags")
+                            }
+                        }
+                        
+                        // Check timeMarkers
+                        if sqlite3_column_type(statement, 3) != SQLITE_NULL {
+                            let markersData = String(cString: sqlite3_column_text(statement, 3))
+                            if markersData.isEmpty || markersData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
+                                needsFix = true
+                                fixFields.append("timeMarkers")
+                            }
+                        }
+                        
+                        // Check waveformData
+                        if sqlite3_column_type(statement, 4) != SQLITE_NULL {
+                            let waveformData = String(cString: sqlite3_column_text(statement, 4))
+                            if waveformData.isEmpty || waveformData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
+                                needsFix = true
+                                fixFields.append("waveformData")
+                            }
+                        }
+                        
+                        if needsFix {
+                            print("🔧 Auto-fixing track \(trackId) (\(title)) - corrupted fields: \(fixFields)")
+                            try self.fixCorruptedTrackMetadataSync(trackId: trackId)
+                            fixedCount += 1
+                        }
+                    }
+                    
+                    print("✅ Auto-fix completed. Fixed \(fixedCount) tracks.")
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
-        
-        var fixedCount = 0
-        
-        while sqlite3_step(statement) == SQLITE_ROW {
-            let trackId = Int(sqlite3_column_int(statement, 0))
-            let title = String(cString: sqlite3_column_text(statement, 1))
-            
-            // Check each field for corruption
-            var needsFix = false
-            var fixFields: [String] = []
-            
-            // Check generalTags
-            if sqlite3_column_type(statement, 2) != SQLITE_NULL {
-                let tagsData = String(cString: sqlite3_column_text(statement, 2))
-                if tagsData.isEmpty || tagsData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
-                    needsFix = true
-                    fixFields.append("generalTags")
-                }
-            }
-            
-            // Check timeMarkers
-            if sqlite3_column_type(statement, 3) != SQLITE_NULL {
-                let markersData = String(cString: sqlite3_column_text(statement, 3))
-                if markersData.isEmpty || markersData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
-                    needsFix = true
-                    fixFields.append("timeMarkers")
-                }
-            }
-            
-            // Check waveformData
-            if sqlite3_column_type(statement, 4) != SQLITE_NULL {
-                let waveformData = String(cString: sqlite3_column_text(statement, 4))
-                if waveformData.isEmpty || waveformData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
-                    needsFix = true
-                    fixFields.append("waveformData")
-                }
-            }
-            
-            if needsFix {
-                print("🔧 Auto-fixing track \(trackId) (\(title)) - corrupted fields: \(fixFields)")
-                try await fixCorruptedTrackMetadata(trackId: trackId)
-                fixedCount += 1
-            }
-        }
-        
-        print("✅ Auto-fix completed. Fixed \(fixedCount) tracks.")
     }
     
     /// Scans the database for tracks with corrupted metadata and returns a list
     func scanForCorruptedTracks() async throws -> [(id: Int, title: String, issues: [String])] {
-        guard let db = database else { throw CollectionError.databaseNotOpen }
-        
-        print("🔍 Scanning database for corrupted tracks...")
-        
-        let query = "SELECT \(columnId), \(columnTitle), \(columnArtist), \(columnGeneralTags), \(columnTimeMarkers), \(columnWaveformData) FROM \(tableMusic)"
-        var statement: OpaquePointer?
-        
-        let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
-        defer { sqlite3_finalize(statement) }
-        
-        if result != SQLITE_OK {
-            let errorMessage = String(cString: sqlite3_errmsg(db))
-            throw CollectionError.queryFailed(message: errorMessage)
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    
+                    print("🔍 Scanning database for corrupted tracks...")
+                    
+                    let query = "SELECT \(self.columnId), \(self.columnTitle), \(self.columnArtist), \(self.columnGeneralTags), \(self.columnTimeMarkers), \(self.columnWaveformData) FROM \(self.tableMusic)"
+                    var statement: OpaquePointer?
+                    
+                    let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    var corruptedTracks: [(id: Int, title: String, issues: [String])] = []
+                    
+                    while sqlite3_step(statement) == SQLITE_ROW {
+                        let id = Int(sqlite3_column_int(statement, 0))
+                        let title = String(cString: sqlite3_column_text(statement, 1))
+                        let artist = String(cString: sqlite3_column_text(statement, 2))
+                        var issues: [String] = []
+                        
+                        // Check generalTags
+                        if sqlite3_column_type(statement, 3) != SQLITE_NULL {
+                            let tagsData = String(cString: sqlite3_column_text(statement, 3))
+                            if let data = tagsData.data(using: .utf8) {
+                                do {
+                                    let _ = try JSONDecoder().decode([String].self, from: data)
+                                } catch {
+                                    issues.append("Corrupted generalTags JSON")
+                                }
+                            } else {
+                                issues.append("Invalid generalTags encoding")
+                            }
+                        }
+                        
+                        // Check timeMarkers
+                        if sqlite3_column_type(statement, 4) != SQLITE_NULL {
+                            let markersData = String(cString: sqlite3_column_text(statement, 4))
+                            if let data = markersData.data(using: .utf8) {
+                                do {
+                                    let _ = try JSONDecoder().decode([TimeMarker].self, from: data)
+                                } catch {
+                                    issues.append("Corrupted timeMarkers JSON")
+                                }
+                            } else {
+                                issues.append("Invalid timeMarkers encoding")
+                            }
+                        }
+                        
+                        // Check waveformData
+                        if sqlite3_column_type(statement, 5) != SQLITE_NULL {
+                            let waveformData = String(cString: sqlite3_column_text(statement, 5))
+                            if let data = waveformData.data(using: .utf8) {
+                                do {
+                                    let _ = try JSONDecoder().decode([Double].self, from: data)
+                                } catch {
+                                    issues.append("Corrupted waveformData JSON")
+                                }
+                            } else {
+                                issues.append("Invalid waveformData encoding")
+                            }
+                        }
+                        
+                        if !issues.isEmpty {
+                            corruptedTracks.append((id: id, title: "\(title) - \(artist)", issues: issues))
+                        }
+                    }
+                    
+                    print("🔍 Found \(corruptedTracks.count) tracks with corrupted metadata")
+                    continuation.resume(returning: corruptedTracks)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
-        
-        var corruptedTracks: [(id: Int, title: String, issues: [String])] = []
-        
-        while sqlite3_step(statement) == SQLITE_ROW {
-            let id = Int(sqlite3_column_int(statement, 0))
-            let title = String(cString: sqlite3_column_text(statement, 1))
-            let artist = String(cString: sqlite3_column_text(statement, 2))
-            var issues: [String] = []
-            
-            // Check generalTags
-            if sqlite3_column_type(statement, 3) != SQLITE_NULL {
-                let tagsData = String(cString: sqlite3_column_text(statement, 3))
-                if let data = tagsData.data(using: .utf8) {
-                    do {
-                        let _ = try JSONDecoder().decode([String].self, from: data)
-                    } catch {
-                        issues.append("Corrupted generalTags JSON")
+    }
+    
+    /// Fixes corrupted waveform data by resetting it to null
+    func fixCorruptedWaveformData(trackId: Int) async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
                     }
-                } else {
-                    issues.append("Invalid generalTags encoding")
-                }
-            }
-            
-            // Check timeMarkers
-            if sqlite3_column_type(statement, 4) != SQLITE_NULL {
-                let markersData = String(cString: sqlite3_column_text(statement, 4))
-                if let data = markersData.data(using: .utf8) {
-                    do {
-                        let _ = try JSONDecoder().decode([TimeMarker].self, from: data)
-                    } catch {
-                        issues.append("Corrupted timeMarkers JSON")
+                    if self.isReadOnlyMode { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot fix waveform data in read-only mode."))
+                        return
                     }
-                } else {
-                    issues.append("Invalid timeMarkers encoding")
-                }
-            }
-            
-            // Check waveformData
-            if sqlite3_column_type(statement, 5) != SQLITE_NULL {
-                let waveformData = String(cString: sqlite3_column_text(statement, 5))
-                if let data = waveformData.data(using: .utf8) {
-                    do {
-                        let _ = try JSONDecoder().decode([Double].self, from: data)
-                    } catch {
-                        issues.append("Corrupted waveformData JSON")
+                    
+                    print("🔧 Fixing corrupted waveform data for track \(trackId)")
+                    
+                    let sql = "UPDATE \(self.tableMusic) SET \(self.columnWaveformData) = NULL WHERE \(self.columnId) = ?"
+                    var statement: OpaquePointer?
+                    
+                    let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
                     }
-                } else {
-                    issues.append("Invalid waveformData encoding")
+                    
+                    sqlite3_bind_int(statement, 1, Int32(trackId))
+                    
+                    if sqlite3_step(statement) != SQLITE_DONE {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    print("✅ Successfully fixed waveform data for track \(trackId)")
+                    
+                    // Update the track in memory
+                    Task { @MainActor in
+                        if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
+                            var updatedTracks = self.tracks
+                            updatedTracks[index] = Track(
+                                id: self.tracks[index].id,
+                                title: self.tracks[index].title,
+                                artist: self.tracks[index].artist,
+                                album: self.tracks[index].album,
+                                albumArtist: self.tracks[index].albumArtist,
+                                composer: self.tracks[index].composer,
+                                genre: self.tracks[index].genre,
+                                year: self.tracks[index].year,
+                                trackNumber: self.tracks[index].trackNumber,
+                                discNumber: self.tracks[index].discNumber,
+                                bpm: self.tracks[index].bpm,
+                                path: self.tracks[index].path,
+                                isUrl: self.tracks[index].isUrl,
+                                duration: self.tracks[index].duration,
+                                timeMarkers: self.tracks[index].timeMarkers,
+                                waveformData: nil,
+                                rating: self.tracks[index].rating,
+                                comment: self.tracks[index].comment,
+                                generalTags: self.tracks[index].generalTags
+                            )
+                            self.tracks = updatedTracks
+                        }
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
                 }
-            }
-            
-            if !issues.isEmpty {
-                corruptedTracks.append((id: id, title: "\(title) - \(artist)", issues: issues))
             }
         }
-        
-        print("🔍 Found \(corruptedTracks.count) tracks with corrupted metadata")
-        return corruptedTracks
+    }
+    
+    /// Removes duplicate tracks from the database (keeps the first occurrence)
+    func removeDuplicateTracks() async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    if self.isReadOnlyMode { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot remove duplicates in read-only mode."))
+                        return
+                    }
+                    
+                    print("🧹 Starting duplicate track cleanup...")
+                    
+                    // Find duplicates by path
+                    let duplicateQuery = """
+                        SELECT path, COUNT(*) as count, GROUP_CONCAT(id) as ids
+                        FROM \(self.tableMusic)
+                        GROUP BY path
+                        HAVING COUNT(*) > 1
+                    """
+                    
+                    var statement: OpaquePointer?
+                    let result = sqlite3_prepare_v2(db, duplicateQuery, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    var removedCount = 0
+                    
+                    while sqlite3_step(statement) == SQLITE_ROW {
+                        let path = String(cString: sqlite3_column_text(statement, 0))
+                        let count = Int(sqlite3_column_int(statement, 1))
+                        let idsString = String(cString: sqlite3_column_text(statement, 2))
+                        
+                        let ids = idsString.components(separatedBy: ",").compactMap { Int($0) }
+                        
+                        if ids.count > 1 {
+                            print("🧹 Found \(count) duplicates for path: \(path)")
+                            print("🧹 Track IDs: \(ids)")
+                            
+                            // Keep the first ID, remove the rest
+                            let idsToRemove = Array(ids.dropFirst())
+                            
+                            for idToRemove in idsToRemove {
+                                let deleteSQL = "DELETE FROM \(self.tableMusic) WHERE \(self.columnId) = ?"
+                                var deleteStatement: OpaquePointer?
+                                
+                                let deleteResult = sqlite3_prepare_v2(db, deleteSQL, -1, &deleteStatement, nil)
+                                defer { sqlite3_finalize(deleteStatement) }
+                                
+                                if deleteResult == SQLITE_OK {
+                                    sqlite3_bind_int(deleteStatement, 1, Int32(idToRemove))
+                                    
+                                    if sqlite3_step(deleteStatement) == SQLITE_DONE {
+                                        print("🧹 Removed duplicate track ID: \(idToRemove)")
+                                        removedCount += 1
+                                    } else {
+                                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                                        print("⚠️ Failed to remove duplicate track ID \(idToRemove): \(errorMessage)")
+                                    }
+                                } else {
+                                    let errorMessage = String(cString: sqlite3_errmsg(db))
+                                    print("⚠️ Failed to prepare delete statement for track ID \(idToRemove): \(errorMessage)")
+                                }
+                            }
+                        }
+                    }
+                    
+                    print("✅ Duplicate cleanup completed. Removed \(removedCount) duplicate tracks.")
+                    
+                    // Reload tracks to reflect changes
+                    Task { @MainActor in
+                        try? await self.loadAllTracks()
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 }
 
