@@ -12,12 +12,14 @@ struct ContentView: View {
     @StateObject private var audioService = AudioService()
     @StateObject private var collectionService = CollectionService()
     @StateObject private var playlistService = PlaylistService()
+    @StateObject private var preferenceService = PreferenceService.shared
     @State private var showingFolderPicker = false
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var selectedPlaylist: Playlist?
     @State private var playlistTracks: [Track] = []
     @State private var isLoadingPlaylistTracks = false
+    @State private var hasAttemptedAutoLoad = false
     @EnvironmentObject private var menuActionState: MenuActionState
     
     var body: some View {
@@ -331,6 +333,12 @@ struct ContentView: View {
                 menuActionState.shouldImportAudio = false
             }
         }
+        .onChange(of: menuActionState.shouldClearSavedFolder) { _, shouldClear in
+            if shouldClear {
+                preferenceService.clearLastFolder()
+                menuActionState.shouldClearSavedFolder = false
+            }
+        }
         .onChange(of: collectionService.tracks) { _, newTracks in
             print("[ContentView] tracks changed, count=\(newTracks.count)")
             // Keep playlistTracks in sync when tags/ratings change in the library
@@ -339,6 +347,32 @@ struct ContentView: View {
                 Task { await loadPlaylistTracks(playlist) }
             }
         }
+        .onAppear {
+            if !hasAttemptedAutoLoad {
+                hasAttemptedAutoLoad = true
+                Task {
+                    await attemptLoadLastFolder()
+                }
+            }
+        }
+    }
+    
+    private func attemptLoadLastFolder() async {
+        // Try to load the last folder using the bookmark first (for security-scoped access)
+        if let bookmarkURL = preferenceService.getLastFolderBookmarkURL() {
+            print("Attempting to load last folder using bookmark: \(bookmarkURL.path)")
+            await openFolder(url: bookmarkURL)
+            return
+        }
+        
+        // Fallback to path-based loading
+        if let pathURL = preferenceService.getLastFolderURL() {
+            print("Attempting to load last folder using path: \(pathURL.path)")
+            await openFolder(url: pathURL)
+            return
+        }
+        
+        print("No last folder to load or failed to load last folder")
     }
     
     private func loadPlaylistTracks(_ playlist: Playlist) async {
@@ -476,6 +510,9 @@ struct ContentView: View {
             // Load tracks then playlists sequentially to avoid concurrent access to the same SQLite connection
             try await collectionService.loadAllTracks()
             try await playlistService.loadPlaylists()
+            
+            // Save the folder preference for next time
+            preferenceService.saveLastFolder(url)
             
         } catch {
             await MainActor.run {

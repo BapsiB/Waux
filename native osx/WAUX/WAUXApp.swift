@@ -11,6 +11,7 @@ import SwiftUI
 class MenuActionState: ObservableObject {
     @Published var shouldOpenFolder = false
     @Published var shouldImportAudio = false
+    @Published var shouldClearSavedFolder = false
 }
 
 @main
@@ -35,6 +36,13 @@ struct WAUXApp: App {
                     menuActionState.shouldImportAudio = true
                 }
                 .keyboardShortcut("i", modifiers: .command)
+                
+                Divider()
+                
+                Button("Clear Saved Folder") {
+                    menuActionState.shouldClearSavedFolder = true
+                }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
             }
         }
     }

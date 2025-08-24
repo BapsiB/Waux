@@ -52,13 +52,28 @@ struct TrackListView: View {
     let tracks: [Track]
     let collectionService: CollectionService
     @ObservedObject var audioService: AudioService
+    @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
     @State private var searchText = ""
     @State private var selectedTracks = Set<Track.ID>()
     @State private var showingRatingError = false
     @State private var ratingErrorMessage = ""
-    @State private var visibleColumns: Set<TrackColumn> = [.title, .artist, .album, .duration, .rating, .type]
+    @State private var visibleColumns: Set<TrackColumn> = [.title, .artist, .album, .duration, .rating, .generalTags, .type]
     @State private var showTagEditor = false
+    @State private var columnWidths: [TrackColumn: CGFloat] = [:]
+    @State private var hasLoadedPreferences = false
+    @State private var showDatabaseRepair = false
+    @State private var corruptedTracks: [(id: Int, title: String, issues: [String])] = []
+    @State private var isScanningDatabase = false
+    private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
+    private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
+    
+    private class WaveformServiceHolder: ObservableObject {
+        @Published var service: WaveformProcessingService?
+        func ensure(collectionService: CollectionService) {
+            if service == nil { service = WaveformProcessingService(collectionService: collectionService) }
+        }
+    }
     
     var filteredTracks: [Track] {
         if searchText.isEmpty {
@@ -81,20 +96,20 @@ struct TrackListView: View {
                 TableColumn("Title", value: \.title) { track in
                     titleCell(for: track)
                 }
-                .width(min: 150, ideal: 250)
+                .width(min: 150, ideal: columnWidths[.title] ?? 250)
                 
                 if visibleColumns.contains(.artist) {
                     TableColumn("Artist", value: \.artist) { track in
                         Text(track.artist)
                     }
-                    .width(min: 100, ideal: 150)
+                    .width(min: 100, ideal: columnWidths[.artist] ?? 150)
                 }
                 
                 if visibleColumns.contains(.album) {
                     TableColumn("Album", value: \.album) { track in
                         Text(track.album)
                     }
-                    .width(min: 100, ideal: 150)
+                    .width(min: 100, ideal: columnWidths[.album] ?? 150)
                 }
                 
                 if visibleColumns.contains(.duration) {
@@ -102,21 +117,21 @@ struct TrackListView: View {
                         Text(track.formattedDuration)
                             .monospacedDigit()
                     }
-                    .width(70)
+                    .width(min: 50, ideal: columnWidths[.duration] ?? 70)
                 }
                 
                 if visibleColumns.contains(.rating) {
                     TableColumn("Rating", value: \.rating) { track in
                         ratingCell(for: track)
                     }
-                    .width(100)
+                    .width(min: 80, ideal: columnWidths[.rating] ?? 100)
                 }
                 
                 if visibleColumns.contains(.type) {
                     TableColumn("Type", value: \.sourceType.rawValue) { track in
                         typeCell(for: track)
                     }
-                    .width(80)
+                    .width(min: 60, ideal: columnWidths[.type] ?? 80)
                 }
                 
                 if visibleColumns.contains(.albumArtist) {
@@ -124,12 +139,14 @@ struct TrackListView: View {
                         Text(track.albumArtistText)
                             .foregroundColor(track.albumArtist?.isEmpty == false ? .primary : .secondary)
                     }
+                    .width(min: 100, ideal: columnWidths[.albumArtist] ?? 150)
                 }
                 if visibleColumns.contains(.composer) {
                     TableColumn("Composer", value: \Track.composerText) { track in
                         Text(track.composerText)
                             .foregroundColor(track.composer?.isEmpty == false ? .primary : .secondary)
                     }
+                    .width(min: 100, ideal: columnWidths[.composer] ?? 150)
                 }
 //                if visibleColumns.contains(.genre) {
 //                    TableColumn("Genre", value: \Track.genreText) { track in
@@ -201,16 +218,37 @@ struct TrackListView: View {
 //                }
                 if visibleColumns.contains(.waveformData) {
                     TableColumn("Waveform", value: \Track.waveformPointCount) { track in
-                        if let waveformData = track.waveformData {
-                            Text("\(waveformData.count) pts")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        if let waveformData = track.waveformData, !waveformData.isEmpty {
+                            let progress: Double = {
+                                if let current = audioService.currentTrack?.id,
+                                   let id = track.id,
+                                   current == id,
+                                   audioService.duration > 0 {
+                                    return min(1.0, max(0.0, audioService.currentTime / audioService.duration))
+                                }
+                                return 0.0
+                            }()
+                            WaveformView(
+                                waveformData: waveformData,
+                                progress: progress,
+                                markers: track.timeMarkers,
+                                durationMs: track.duration
+                            )
+                            .frame(height: 36)
                         } else {
-                            Text("—")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Analyzing…")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .onAppear {
+                                waveformServiceHolder.ensure(collectionService: collectionService)
+                                waveformServiceHolder.service?.analyzeIfMissing(track)
+                            }
                         }
                     }
+                    .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
                 }
 //                if visibleColumns.contains(.comment) {
 //                    TableColumn("Comment", value: \Track.comment) { track in
@@ -237,9 +275,11 @@ struct TrackListView: View {
                         // Force cell refresh when tags change so the row updates immediately
                         .id("tags-\(track.id ?? -1)-\(track.generalTagsText)")
                     }
+                    .width(min: 120, ideal: columnWidths[.generalTags] ?? 220, max: 320)
                 }
             }
             .tableStyle(.bordered)
+            .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: saveColumnWidths))
             .onTapGesture(count: 2) {
                 if let selectedTrack = selectedTracks.first,
                    let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
@@ -291,6 +331,17 @@ struct TrackListView: View {
             let selected = filteredTracks.filter { selectedTracks.contains($0.id) }
             TagEditorView(collectionService: collectionService, tracks: selected.isEmpty ? [] : selected)
         }
+        .sheet(isPresented: $showDatabaseRepair) {
+            DatabaseRepairView(
+                collectionService: collectionService,
+                corruptedTracks: $corruptedTracks,
+                isScanning: $isScanningDatabase
+            )
+        }
+        .onAppear(perform: loadPreferences)
+        .onChange(of: visibleColumns) { _, _ in
+            saveVisibleColumns()
+        }
     }
     
     // Removed additionalColumns and additionalTableColumn helpers; columns are inlined in the Table builder above.
@@ -314,6 +365,13 @@ struct TrackListView: View {
                     .foregroundColor(.blue)
                     .fontWeight(.medium)
             }
+            
+            Button("🔧 Database Repair") {
+                showDatabaseRepair = true
+            }
+            .buttonStyle(.borderless)
+            .font(.caption)
+            .foregroundColor(.orange)
         }
         .padding(.horizontal)
         .padding(.top)
@@ -417,7 +475,7 @@ struct TrackListView: View {
             visibleColumns = Set(TrackColumn.allCases)
         }
         Button("Show Default Columns") {
-            visibleColumns = [.title, .artist, .album, .duration, .rating, .type]
+            visibleColumns = [.title, .artist, .album, .duration, .rating, .generalTags, .type]
         }
     }
     
@@ -442,6 +500,146 @@ struct TrackListView: View {
             return .red
         case .url:
             return .green
+        }
+    }
+    
+    // MARK: - Column Width Persistence
+    
+    private func loadPreferences() {
+        guard !hasLoadedPreferences else { return }
+        hasLoadedPreferences = true
+        // Visible columns
+        if let stored = UserDefaults.standard.stringArray(forKey: visibleColumnsDefaultsKey) {
+            let set = Set(stored.compactMap { TrackColumn(rawValue: $0) })
+            if !set.isEmpty {
+                visibleColumns = set
+            }
+        }
+        // Column widths
+        if let dict = UserDefaults.standard.dictionary(forKey: columnWidthsDefaultsKey) as? [String: Double] {
+            var result: [TrackColumn: CGFloat] = [:]
+            for (key, value) in dict {
+                if let col = TrackColumn(rawValue: key) {
+                    result[col] = CGFloat(value)
+                }
+            }
+            columnWidths = result
+        }
+    }
+    
+    private func saveVisibleColumns() {
+        let arr = visibleColumns.map { $0.rawValue }
+        UserDefaults.standard.set(arr, forKey: visibleColumnsDefaultsKey)
+    }
+    
+    private func saveColumnWidths() {
+        var dict: [String: Double] = [:]
+        for (col, width) in columnWidths {
+            dict[col.rawValue] = Double(width)
+        }
+        UserDefaults.standard.set(dict, forKey: columnWidthsDefaultsKey)
+    }
+}
+
+// MARK: - Table Width Observer
+private struct TableWidthObserver: NSViewRepresentable {
+    @Binding var columnWidths: [TrackColumn: CGFloat]
+    let onWidthChange: () -> Void
+    
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // Find the NSTableView in the view hierarchy
+        if let tableView = findTableView(in: nsView) {
+            context.coordinator.setupObserver(for: tableView)
+        }
+    }
+    
+    private func findTableView(in view: NSView) -> NSTableView? {
+        if let tableView = view as? NSTableView {
+            return tableView
+        }
+        for subview in view.subviews {
+            if let tableView = findTableView(in: subview) {
+                return tableView
+            }
+        }
+        return nil
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(columnWidths: $columnWidths, onWidthChange: onWidthChange)
+    }
+    
+    class Coordinator: NSObject {
+        @Binding var columnWidths: [TrackColumn: CGFloat]
+        let onWidthChange: () -> Void
+        private var tableView: NSTableView?
+        private var timer: Timer?
+        
+        init(columnWidths: Binding<[TrackColumn: CGFloat]>, onWidthChange: @escaping () -> Void) {
+            self._columnWidths = columnWidths
+            self.onWidthChange = onWidthChange
+        }
+        
+        func setupObserver(for tableView: NSTableView) {
+            self.tableView = tableView
+            
+            // Start a timer to periodically check column widths
+            timer?.invalidate()
+            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                self?.checkColumnWidths()
+            }
+        }
+        
+        private func checkColumnWidths() {
+            guard let tableView = tableView else { return }
+            
+            var updated = false
+            let columnIdentifiers = ["Title", "Artist", "Album", "Duration", "Rating", "Type", "Album Artist", "Composer", "Waveform", "Tags"]
+            
+            for (index, identifier) in columnIdentifiers.enumerated() {
+                guard index < tableView.tableColumns.count else { break }
+                let column = tableView.tableColumns[index]
+                let width = column.width
+                
+                // Map identifier to TrackColumn
+                let trackColumn: TrackColumn? = {
+                    switch identifier {
+                    case "Title": return .title
+                    case "Artist": return .artist
+                    case "Album": return .album
+                    case "Duration": return .duration
+                    case "Rating": return .rating
+                    case "Type": return .type
+                    case "Album Artist": return .albumArtist
+                    case "Composer": return .composer
+                    case "Waveform": return .waveformData
+                    case "Tags": return .generalTags
+                    default: return nil
+                    }
+                }()
+                
+                if let trackColumn = trackColumn {
+                    let currentWidth = columnWidths[trackColumn] ?? 0
+                    if abs(currentWidth - width) > 1.0 { // Threshold to avoid noise
+                        columnWidths[trackColumn] = width
+                        updated = true
+                    }
+                }
+            }
+            
+            if updated {
+                onWidthChange()
+            }
+        }
+        
+        deinit {
+            timer?.invalidate()
         }
     }
 }

@@ -332,19 +332,108 @@ class CollectionService: ObservableObject {
         }
         
         var loadedTracks: [Track] = []
+        var failedTracks: [(id: Int, title: String, error: String, rawData: String)] = []
+        var rowCount = 0
         
         while sqlite3_step(statement) == SQLITE_ROW {
+            rowCount += 1
             do {
                 let track = try parseTrackFromRow(statement)
                 print("📝 Parsed track: \(track.title) (id: \(track.id ?? -1))")
                 let resolvedTrack = resolveTrackPath(track)
                 loadedTracks.append(resolvedTrack)
             } catch {
-                print("❌ Failed to parse track at row: \(error)")
-                // Log the raw data to see what's causing the parse failure
+                // Enhanced error logging for failed track parsing
                 let id = Int(sqlite3_column_int(statement, 0))
                 let title = String(cString: sqlite3_column_text(statement, 1))
-                print("❌ Raw track data - ID: \(id), Title: '\(title)'")
+                let artist = String(cString: sqlite3_column_text(statement, 2))
+                let album = String(cString: sqlite3_column_text(statement, 3))
+                
+                // Get raw data for problematic fields
+                var rawData = "ID: \(id), Title: '\(title)', Artist: '\(artist)', Album: '\(album)'"
+                
+                // Check for problematic generalTags data
+                if sqlite3_column_type(statement, 18) != SQLITE_NULL {
+                    let tagsData = String(cString: sqlite3_column_text(statement, 18))
+                    rawData += ", Tags: '\(tagsData)'"
+                    
+                    // Try to identify encoding issues in tags
+                    if let data = tagsData.data(using: .utf8) {
+                        do {
+                            let decoder = JSONDecoder()
+                            let _ = try decoder.decode([String].self, from: data)
+                            print("🔍 Tags JSON is valid for track \(id)")
+                        } catch {
+                            print("🚨 JSON decode error for track \(id) tags: \(error)")
+                            print("🚨 Raw tags data: '\(tagsData)'")
+                            print("🚨 Data length: \(data.count) bytes")
+                            
+                            // Try different encodings
+                            if let dataUTF16 = tagsData.data(using: .utf16) {
+                                print("🚨 UTF-16 data length: \(dataUTF16.count) bytes")
+                            }
+                            if let dataASCII = tagsData.data(using: .ascii) {
+                                print("🚨 ASCII data length: \(dataASCII.count) bytes")
+                            }
+                        }
+                    } else {
+                        print("🚨 Cannot convert tags data to UTF-8 for track \(id)")
+                        print("🚨 Raw tags string: '\(tagsData)'")
+                    }
+                }
+                
+                // Check for problematic timeMarkers data
+                if sqlite3_column_type(statement, 14) != SQLITE_NULL {
+                    let markersData = String(cString: sqlite3_column_text(statement, 14))
+                    rawData += ", Markers: '\(markersData)'"
+                    
+                    if let data = markersData.data(using: .utf8) {
+                        do {
+                            let decoder = JSONDecoder()
+                            let _ = try decoder.decode([TimeMarker].self, from: data)
+                            print("🔍 Markers JSON is valid for track \(id)")
+                        } catch {
+                            print("🚨 JSON decode error for track \(id) markers: \(error)")
+                            print("🚨 Raw markers data: '\(markersData)'")
+                        }
+                    }
+                }
+                
+                // Check for problematic waveformData
+                if sqlite3_column_type(statement, 15) != SQLITE_NULL {
+                    let waveformData = String(cString: sqlite3_column_text(statement, 15))
+                    rawData += ", Waveform: '\(waveformData.prefix(100))...'"
+                    
+                    if let data = waveformData.data(using: .utf8) {
+                        do {
+                            let decoder = JSONDecoder()
+                            let _ = try decoder.decode([Double].self, from: data)
+                            print("🔍 Waveform JSON is valid for track \(id)")
+                        } catch {
+                            print("🚨 JSON decode error for track \(id) waveform: \(error)")
+                            print("🚨 Raw waveform data (first 200 chars): '\(waveformData.prefix(200))'")
+                        }
+                    }
+                }
+                
+                failedTracks.append((id: id, title: title, error: error.localizedDescription, rawData: rawData))
+                print("❌ Failed to parse track at row \(rowCount): \(error)")
+                print("❌ Track details - \(rawData)")
+            }
+        }
+        
+        // Log summary of failed tracks
+        if !failedTracks.isEmpty {
+            print("🚨 DATABASE LOADING ERRORS SUMMARY:")
+            print("🚨 Total tracks processed: \(rowCount)")
+            print("🚨 Successfully loaded: \(loadedTracks.count)")
+            print("🚨 Failed to load: \(failedTracks.count)")
+            print("🚨 Failed tracks details:")
+            for failed in failedTracks {
+                print("   - ID: \(failed.id), Title: '\(failed.title)'")
+                print("     Error: \(failed.error)")
+                print("     Raw data: \(failed.rawData)")
+                print("")
             }
         }
         
@@ -354,6 +443,9 @@ class CollectionService: ObservableObject {
         }
         
         print("✅ Loaded \(loadedTracks.count) tracks from database")
+        if !failedTracks.isEmpty {
+            print("⚠️  \(failedTracks.count) tracks failed to load due to metadata encoding issues")
+        }
     }
     
     private func parseTrackFromRow(_ statement: OpaquePointer?) throws -> Track {
@@ -375,20 +467,32 @@ class CollectionService: ObservableObject {
         let isUrl = sqlite3_column_int(statement, 12) != 0
         let duration = Int(sqlite3_column_int(statement, 13))
         
-        // Parse time markers
+        // Parse time markers with enhanced error handling
         let timeMarkers: [TimeMarker]
         if sqlite3_column_type(statement, 14) != SQLITE_NULL {
             let markersJson = String(cString: sqlite3_column_text(statement, 14))
-            timeMarkers = try parseTimeMarkers(from: markersJson)
+            do {
+                timeMarkers = try parseTimeMarkers(from: markersJson)
+            } catch {
+                print("🚨 Failed to parse time markers for track \(id): \(error)")
+                print("🚨 Raw markers data: '\(markersJson)'")
+                throw CollectionError.invalidData
+            }
         } else {
             timeMarkers = []
         }
         
-        // Parse waveform data
+        // Parse waveform data with enhanced error handling
         let waveformData: [Double]?
         if sqlite3_column_type(statement, 15) != SQLITE_NULL {
             let waveformJson = String(cString: sqlite3_column_text(statement, 15))
-            waveformData = try parseWaveformData(from: waveformJson)
+            do {
+                waveformData = try parseWaveformData(from: waveformJson)
+            } catch {
+                print("🚨 Failed to parse waveform data for track \(id): \(error)")
+                print("🚨 Raw waveform data (first 200 chars): '\(waveformJson.prefix(200))'")
+                throw CollectionError.invalidData
+            }
         } else {
             waveformData = nil
         }
@@ -396,13 +500,36 @@ class CollectionService: ObservableObject {
         let rating = Int(sqlite3_column_int(statement, 16))
         let comment = sqlite3_column_type(statement, 17) != SQLITE_NULL ? String(cString: sqlite3_column_text(statement, 17)) : ""
         
-        // Parse general tags
+        // Parse general tags with enhanced error handling
         let generalTags: [String]
         if sqlite3_column_type(statement, 18) != SQLITE_NULL {
             let tagsJson = String(cString: sqlite3_column_text(statement, 18))
             print("[TrackParse] Track \(id) raw tags data: '\(tagsJson)'")
-            generalTags = try parseGeneralTags(from: tagsJson)
-            print("[TrackParse] Track \(id) parsed tags: \(generalTags)")
+            do {
+                generalTags = try parseGeneralTags(from: tagsJson)
+                print("[TrackParse] Track \(id) parsed tags: \(generalTags)")
+            } catch {
+                print("🚨 Failed to parse general tags for track \(id): \(error)")
+                print("🚨 Raw tags data: '\(tagsJson)'")
+                print("🚨 Tags data length: \(tagsJson.count) characters")
+                
+                // Try to identify the specific encoding issue
+                if let data = tagsJson.data(using: .utf8) {
+                    print("🚨 UTF-8 data length: \(data.count) bytes")
+                } else {
+                    print("🚨 Cannot convert tags to UTF-8 data")
+                }
+                
+                // Try alternative encodings
+                if let dataUTF16 = tagsJson.data(using: .utf16) {
+                    print("🚨 UTF-16 data length: \(dataUTF16.count) bytes")
+                }
+                if let dataASCII = tagsJson.data(using: .ascii) {
+                    print("🚨 ASCII data length: \(dataASCII.count) bytes")
+                }
+                
+                throw CollectionError.invalidData
+            }
         } else {
             print("[TrackParse] Track \(id) has NULL tags")
             generalTags = []
@@ -432,30 +559,185 @@ class CollectionService: ObservableObject {
     }
     
     private func parseTimeMarkers(from jsonString: String) throws -> [TimeMarker] {
-        guard let data = jsonString.data(using: .utf8) else {
+        // Handle edge cases first
+        let trimmedString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // If empty or just whitespace, return empty array
+        if trimmedString.isEmpty {
+            print("🔧 Empty time markers data, returning empty array")
             return []
         }
         
+        // Clean up control characters that might be present
+        let cleanedString = trimmedString.filter { char in
+            // Allow printable characters, spaces, and common JSON characters
+            // ASCII values 32-126 are printable characters
+            if let asciiValue = char.asciiValue {
+                return asciiValue >= 32 && asciiValue <= 126
+            }
+            return false
+        }
+        
+        if cleanedString != trimmedString {
+            print("🔧 Cleaned time markers data from '\(trimmedString)' to '\(cleanedString)'")
+        }
+        
+        // If after cleaning we have an empty string, return empty array
+        if cleanedString.isEmpty {
+            print("🔧 Time markers data became empty after cleaning, returning empty array")
+            return []
+        }
+        
+        guard let data = cleanedString.data(using: .utf8) else {
+            print("🚨 Cannot convert cleaned time markers JSON string to UTF-8 data")
+            print("🚨 Original string: '\(jsonString)'")
+            print("🚨 Cleaned string: '\(cleanedString)'")
+            throw CollectionError.invalidData
+        }
+        
         let decoder = JSONDecoder()
-        return try decoder.decode([TimeMarker].self, from: data)
+        do {
+            return try decoder.decode([TimeMarker].self, from: data)
+        } catch {
+            print("🚨 JSON decode error for time markers: \(error)")
+            print("🚨 Original JSON string: '\(jsonString)'")
+            print("🚨 Cleaned JSON string: '\(cleanedString)'")
+            print("🚨 Data length: \(data.count) bytes")
+            
+            // Try to identify the specific JSON parsing issue
+            if let jsonObject = try? JSONSerialization.jsonObject(with: data) {
+                print("🚨 JSON is valid but not an array: \(type(of: jsonObject))")
+            }
+            
+            throw error
+        }
     }
     
     private func parseWaveformData(from jsonString: String) throws -> [Double] {
-        guard let data = jsonString.data(using: .utf8) else {
+        // Handle edge cases first
+        let trimmedString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // If empty or just whitespace, return empty array
+        if trimmedString.isEmpty {
+            print("🔧 Empty waveform data, returning empty array")
             return []
         }
         
+        // Clean up control characters that might be present
+        let cleanedString = trimmedString.filter { char in
+            // Allow printable characters, spaces, and common JSON characters
+            // ASCII values 32-126 are printable characters
+            if let asciiValue = char.asciiValue {
+                return asciiValue >= 32 && asciiValue <= 126
+            }
+            return false
+        }
+        
+        if cleanedString != trimmedString {
+            print("🔧 Cleaned waveform data from '\(trimmedString.prefix(100))' to '\(cleanedString.prefix(100))'")
+        }
+        
+        // If after cleaning we have an empty string, return empty array
+        if cleanedString.isEmpty {
+            print("🔧 Waveform data became empty after cleaning, returning empty array")
+            return []
+        }
+        
+        guard let data = cleanedString.data(using: .utf8) else {
+            print("🚨 Cannot convert cleaned waveform JSON string to UTF-8 data")
+            print("🚨 Original string (first 200 chars): '\(jsonString.prefix(200))'")
+            print("🚨 Cleaned string (first 200 chars): '\(cleanedString.prefix(200))'")
+            throw CollectionError.invalidData
+        }
+        
         let decoder = JSONDecoder()
-        return try decoder.decode([Double].self, from: data)
+        do {
+            return try decoder.decode([Double].self, from: data)
+        } catch {
+            print("🚨 JSON decode error for waveform data: \(error)")
+            print("🚨 Original JSON string (first 200 chars): '\(jsonString.prefix(200))'")
+            print("🚨 Cleaned JSON string (first 200 chars): '\(cleanedString.prefix(200))'")
+            print("🚨 Data length: \(data.count) bytes")
+            
+            // Try to identify the specific JSON parsing issue
+            if let jsonObject = try? JSONSerialization.jsonObject(with: data) {
+                print("🚨 JSON is valid but not an array: \(type(of: jsonObject))")
+            }
+            
+            throw error
+        }
     }
     
     private func parseGeneralTags(from jsonString: String) throws -> [String] {
-        guard let data = jsonString.data(using: .utf8) else {
+        // Handle edge cases first
+        let trimmedString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // If empty or just whitespace, return empty array
+        if trimmedString.isEmpty {
+            print("🔧 Empty tags data, returning empty array")
             return []
         }
         
+        // Clean up control characters that might be present
+        let cleanedString = trimmedString.filter { char in
+            // Allow printable characters, spaces, and common JSON characters
+            // ASCII values 32-126 are printable characters
+            if let asciiValue = char.asciiValue {
+                return asciiValue >= 32 && asciiValue <= 126
+            }
+            return false
+        }
+        
+        if cleanedString != trimmedString {
+            print("🔧 Cleaned tags data from '\(trimmedString)' to '\(cleanedString)'")
+        }
+        
+        // If after cleaning we have an empty string, return empty array
+        if cleanedString.isEmpty {
+            print("🔧 Tags data became empty after cleaning, returning empty array")
+            return []
+        }
+        
+        guard let data = cleanedString.data(using: .utf8) else {
+            print("🚨 Cannot convert cleaned tags JSON string to UTF-8 data")
+            print("🚨 Original string: '\(jsonString)'")
+            print("🚨 Cleaned string: '\(cleanedString)'")
+            throw CollectionError.invalidData
+        }
+        
         let decoder = JSONDecoder()
-        return try decoder.decode([String].self, from: data)
+        do {
+            return try decoder.decode([String].self, from: data)
+        } catch {
+            print("🚨 JSON decode error for tags: \(error)")
+            print("🚨 Original JSON string: '\(jsonString)'")
+            print("🚨 Cleaned JSON string: '\(cleanedString)'")
+            print("🚨 Data length: \(data.count) bytes")
+            
+            // Try to identify the specific JSON parsing issue
+            if let jsonObject = try? JSONSerialization.jsonObject(with: data) {
+                print("🚨 JSON is valid but not an array: \(type(of: jsonObject))")
+            }
+            
+            // As a last resort, try to parse as a simple comma-separated string
+            if cleanedString.hasPrefix("[") && cleanedString.hasSuffix("]") {
+                let content = String(cleanedString.dropFirst().dropLast())
+                let tags = content.components(separatedBy: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .map { tag in
+                        // Remove quotes if present
+                        if tag.hasPrefix("\"") && tag.hasSuffix("\"") {
+                            return String(tag.dropFirst().dropLast())
+                        }
+                        return tag
+                    }
+                print("🔧 Fallback parsing successful, found tags: \(tags)")
+                return tags
+            }
+            
+            throw error
+        }
     }
     
     // MARK: - Path Resolution
@@ -590,6 +872,55 @@ class CollectionService: ObservableObject {
     }
     
     // MARK: - Track Updates
+    func updateTrackWaveformData(trackId: Int, waveformData: [Double]) async throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot update waveform in read-only mode.") }
+
+        _ = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(waveformData)
+        let json = String(data: data, encoding: .utf8) ?? "[]"
+
+        let sql = "UPDATE \(tableMusic) SET \(columnWaveformData) = ? WHERE \(columnId) = ?"
+        var statement: OpaquePointer?
+        let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+        defer { sqlite3_finalize(statement) }
+        if result != SQLITE_OK { throw CollectionError.queryFailed(message: String(cString: sqlite3_errmsg(db))) }
+        sqlite3_bind_text(statement, 1, json, -1, nil)
+        sqlite3_bind_int(statement, 2, Int32(trackId))
+        if sqlite3_step(statement) != SQLITE_DONE {
+            throw CollectionError.queryFailed(message: String(cString: sqlite3_errmsg(db)))
+        }
+
+        await MainActor.run {
+            if let index = tracks.firstIndex(where: { $0.id == trackId }) {
+                var updated = tracks
+                updated[index] = Track(
+                    id: updated[index].id,
+                    title: updated[index].title,
+                    artist: updated[index].artist,
+                    album: updated[index].album,
+                    albumArtist: updated[index].albumArtist,
+                    composer: updated[index].composer,
+                    genre: updated[index].genre,
+                    year: updated[index].year,
+                    trackNumber: updated[index].trackNumber,
+                    discNumber: updated[index].discNumber,
+                    bpm: updated[index].bpm,
+                    path: updated[index].path,
+                    isUrl: updated[index].isUrl,
+                    duration: updated[index].duration,
+                    timeMarkers: updated[index].timeMarkers,
+                    waveformData: waveformData,
+                    rating: updated[index].rating,
+                    comment: updated[index].comment,
+                    generalTags: updated[index].generalTags
+                )
+                tracks = updated
+            }
+        }
+    }
     func updateTrackRating(trackId: Int, newRating: Int) async throws {
         guard let db = database else {
             throw CollectionError.databaseNotOpen
@@ -1005,6 +1336,244 @@ class CollectionService: ObservableObject {
             let unique = Array(Set(newTags)).sorted { $0.lowercased() < $1.lowercased() }
             return unique
         }
+    }
+    
+    // MARK: - Database Repair Utilities
+    
+    /// Attempts to fix corrupted metadata for a specific track
+    func fixCorruptedTrackMetadata(trackId: Int) async throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot fix metadata in read-only mode.") }
+        
+        print("🔧 Attempting to fix corrupted metadata for track \(trackId)")
+        
+        // Get the track's basic info first
+        let basicQuery = "SELECT title, artist, album FROM \(tableMusic) WHERE \(columnId) = ?"
+        var basicStatement: OpaquePointer?
+        
+        let basicResult = sqlite3_prepare_v2(db, basicQuery, -1, &basicStatement, nil)
+        defer { sqlite3_finalize(basicStatement) }
+        
+        if basicResult != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        
+        sqlite3_bind_int(basicStatement, 1, Int32(trackId))
+        
+        guard sqlite3_step(basicStatement) == SQLITE_ROW else {
+            throw CollectionError.queryFailed(message: "Track \(trackId) not found")
+        }
+        
+        let title = String(cString: sqlite3_column_text(basicStatement, 0))
+        let artist = String(cString: sqlite3_column_text(basicStatement, 1))
+        let album = String(cString: sqlite3_column_text(basicStatement, 2))
+        
+        print("🔧 Fixing metadata for track: \(title) by \(artist)")
+        
+        // Reset problematic JSON fields to empty arrays
+        let fixSQL = """
+            UPDATE \(tableMusic) 
+            SET \(columnGeneralTags) = '[]',
+                \(columnTimeMarkers) = '[]',
+                \(columnWaveformData) = NULL
+            WHERE \(columnId) = ?
+        """
+        
+        var fixStatement: OpaquePointer?
+        let fixResult = sqlite3_prepare_v2(db, fixSQL, -1, &fixStatement, nil)
+        defer { sqlite3_finalize(fixStatement) }
+        
+        if fixResult != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        
+        sqlite3_bind_int(fixStatement, 1, Int32(trackId))
+        
+        if sqlite3_step(fixStatement) != SQLITE_DONE {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        
+        print("✅ Successfully fixed metadata for track \(trackId)")
+        
+        // Reload the track in memory
+        await MainActor.run {
+            if let index = tracks.firstIndex(where: { $0.id == trackId }) {
+                var updatedTracks = tracks
+                updatedTracks[index] = Track(
+                    id: tracks[index].id,
+                    title: tracks[index].title,
+                    artist: tracks[index].artist,
+                    album: tracks[index].album,
+                    albumArtist: tracks[index].albumArtist,
+                    composer: tracks[index].composer,
+                    genre: tracks[index].genre,
+                    year: tracks[index].year,
+                    trackNumber: tracks[index].trackNumber,
+                    discNumber: tracks[index].discNumber,
+                    bpm: tracks[index].bpm,
+                    path: tracks[index].path,
+                    isUrl: tracks[index].isUrl,
+                    duration: tracks[index].duration,
+                    timeMarkers: [],
+                    waveformData: nil,
+                    rating: tracks[index].rating,
+                    comment: tracks[index].comment,
+                    generalTags: []
+                )
+                tracks = updatedTracks
+            }
+        }
+    }
+    
+    /// Automatically fixes common metadata corruption issues in the database
+    func autoFixCorruptedMetadata() async throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot fix metadata in read-only mode.") }
+        
+        print("🔧 Starting automatic metadata corruption fix...")
+        
+        // Find tracks with problematic metadata
+        let problematicQuery = """
+            SELECT \(columnId), \(columnTitle), \(columnGeneralTags), \(columnTimeMarkers), \(columnWaveformData)
+            FROM \(tableMusic)
+            WHERE (\(columnGeneralTags) IS NOT NULL AND \(columnGeneralTags) != '[]' AND \(columnGeneralTags) != '')
+               OR (\(columnTimeMarkers) IS NOT NULL AND \(columnTimeMarkers) != '[]' AND \(columnTimeMarkers) != '')
+               OR (\(columnWaveformData) IS NOT NULL AND \(columnWaveformData) != '[]' AND \(columnWaveformData) != '')
+        """
+        
+        var statement: OpaquePointer?
+        let result = sqlite3_prepare_v2(db, problematicQuery, -1, &statement, nil)
+        defer { sqlite3_finalize(statement) }
+        
+        if result != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        
+        var fixedCount = 0
+        
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let trackId = Int(sqlite3_column_int(statement, 0))
+            let title = String(cString: sqlite3_column_text(statement, 1))
+            
+            // Check each field for corruption
+            var needsFix = false
+            var fixFields: [String] = []
+            
+            // Check generalTags
+            if sqlite3_column_type(statement, 2) != SQLITE_NULL {
+                let tagsData = String(cString: sqlite3_column_text(statement, 2))
+                if tagsData.isEmpty || tagsData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
+                    needsFix = true
+                    fixFields.append("generalTags")
+                }
+            }
+            
+            // Check timeMarkers
+            if sqlite3_column_type(statement, 3) != SQLITE_NULL {
+                let markersData = String(cString: sqlite3_column_text(statement, 3))
+                if markersData.isEmpty || markersData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
+                    needsFix = true
+                    fixFields.append("timeMarkers")
+                }
+            }
+            
+            // Check waveformData
+            if sqlite3_column_type(statement, 4) != SQLITE_NULL {
+                let waveformData = String(cString: sqlite3_column_text(statement, 4))
+                if waveformData.isEmpty || waveformData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
+                    needsFix = true
+                    fixFields.append("waveformData")
+                }
+            }
+            
+            if needsFix {
+                print("🔧 Auto-fixing track \(trackId) (\(title)) - corrupted fields: \(fixFields)")
+                try await fixCorruptedTrackMetadata(trackId: trackId)
+                fixedCount += 1
+            }
+        }
+        
+        print("✅ Auto-fix completed. Fixed \(fixedCount) tracks.")
+    }
+    
+    /// Scans the database for tracks with corrupted metadata and returns a list
+    func scanForCorruptedTracks() async throws -> [(id: Int, title: String, issues: [String])] {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        
+        print("🔍 Scanning database for corrupted tracks...")
+        
+        let query = "SELECT \(columnId), \(columnTitle), \(columnArtist), \(columnGeneralTags), \(columnTimeMarkers), \(columnWaveformData) FROM \(tableMusic)"
+        var statement: OpaquePointer?
+        
+        let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+        defer { sqlite3_finalize(statement) }
+        
+        if result != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        
+        var corruptedTracks: [(id: Int, title: String, issues: [String])] = []
+        
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let id = Int(sqlite3_column_int(statement, 0))
+            let title = String(cString: sqlite3_column_text(statement, 1))
+            let artist = String(cString: sqlite3_column_text(statement, 2))
+            var issues: [String] = []
+            
+            // Check generalTags
+            if sqlite3_column_type(statement, 3) != SQLITE_NULL {
+                let tagsData = String(cString: sqlite3_column_text(statement, 3))
+                if let data = tagsData.data(using: .utf8) {
+                    do {
+                        let _ = try JSONDecoder().decode([String].self, from: data)
+                    } catch {
+                        issues.append("Corrupted generalTags JSON")
+                    }
+                } else {
+                    issues.append("Invalid generalTags encoding")
+                }
+            }
+            
+            // Check timeMarkers
+            if sqlite3_column_type(statement, 4) != SQLITE_NULL {
+                let markersData = String(cString: sqlite3_column_text(statement, 4))
+                if let data = markersData.data(using: .utf8) {
+                    do {
+                        let _ = try JSONDecoder().decode([TimeMarker].self, from: data)
+                    } catch {
+                        issues.append("Corrupted timeMarkers JSON")
+                    }
+                } else {
+                    issues.append("Invalid timeMarkers encoding")
+                }
+            }
+            
+            // Check waveformData
+            if sqlite3_column_type(statement, 5) != SQLITE_NULL {
+                let waveformData = String(cString: sqlite3_column_text(statement, 5))
+                if let data = waveformData.data(using: .utf8) {
+                    do {
+                        let _ = try JSONDecoder().decode([Double].self, from: data)
+                    } catch {
+                        issues.append("Corrupted waveformData JSON")
+                    }
+                } else {
+                    issues.append("Invalid waveformData encoding")
+                }
+            }
+            
+            if !issues.isEmpty {
+                corruptedTracks.append((id: id, title: "\(title) - \(artist)", issues: issues))
+            }
+        }
+        
+        print("🔍 Found \(corruptedTracks.count) tracks with corrupted metadata")
+        return corruptedTracks
     }
 }
 
