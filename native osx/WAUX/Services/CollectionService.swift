@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import SQLite3
 import Combine
 import SwiftUI
@@ -38,12 +39,18 @@ class CollectionService: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var globalTags: [TagDefinition] = []
+    var pendingWaveformTrackIds: [Int] = []
     
     private var database: OpaquePointer?
     private var activeCollectionDefinition: CollectionDefinition?
     private var localCollectionRootFolders: [String] = []
     private var securityScopedURL: URL?
     private var isReadOnlyMode: Bool = false
+    private let supportedExtensions: Set<String> = ["mp3", "wav", "ogg", "m4a", "aac", "flac"]
+    private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    
+    // MARK: - Thread Safety
+    private let databaseQueue = DispatchQueue(label: "com.waux.collection.database", qos: .userInitiated)
     
     // MARK: - Initialization
     init() {
@@ -125,8 +132,8 @@ class CollectionService: ObservableObject {
         localCollectionRootFolders = []
         isReadOnlyMode = false
         
-        Task { @MainActor in
-            tracks = []
+        DispatchQueue.main.async {
+            self.tracks = []
         }
     }
     
@@ -140,6 +147,29 @@ class CollectionService: ObservableObject {
     
     func setSecurityScopedURL(_ url: URL) {
         securityScopedURL = url
+        print("[Security] Set security-scoped URL: \(url.path)")
+    }
+    
+    private func ensureSecurityAccess() -> Bool {
+        guard let url = securityScopedURL else {
+            print("[Security] No security-scoped URL set")
+            return false
+        }
+        
+        // Start accessing the security-scoped resource
+        let success = url.startAccessingSecurityScopedResource()
+        if success {
+            print("[Security] Successfully started accessing security-scoped resource")
+        } else {
+            print("[Security] Failed to start accessing security-scoped resource")
+        }
+        return success
+    }
+    
+    private func stopSecurityAccess() {
+        guard let url = securityScopedURL else { return }
+        url.stopAccessingSecurityScopedResource()
+        print("[Security] Stopped accessing security-scoped resource")
     }
     
     // MARK: - Database Operations
@@ -214,6 +244,97 @@ class CollectionService: ObservableObject {
         }
         
         print("Successfully opened database")
+    }
+
+    // MARK: - Database Creation (for new local collections)
+    /// Creates a new local database file at the given path with the required schema if it doesn't already exist.
+    func createNewLocalDatabase(at dbPath: String) throws {
+        print("[DBCreate] Requested new DB at: \(dbPath)")
+        let fm = FileManager.default
+        let cleanPath = dbPath.replacingOccurrences(of: "\\", with: "/")
+        let dbURL = URL(fileURLWithPath: cleanPath)
+
+        // Ensure parent directory exists
+        try fm.createDirectory(at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        print("[DBCreate] Ensured directory exists: \(dbURL.deletingLastPathComponent().path)")
+
+        // Create the file if needed (SQLite will also create, but we keep our openDatabase contract)
+        if !fm.fileExists(atPath: cleanPath) {
+            fm.createFile(atPath: cleanPath, contents: nil)
+            print("[DBCreate] Created empty file at: \(cleanPath)")
+        } else {
+            print("[DBCreate] File already exists, will initialize schema: \(cleanPath)")
+        }
+
+        // Open and initialize schema
+        try openDatabase(path: cleanPath)
+        print("[DBCreate] Opened DB for schema initialization")
+        defer {
+            if let db = database {
+                sqlite3_close(db)
+                database = nil
+            }
+        }
+
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+
+        let createMusicSQL = """
+        CREATE TABLE IF NOT EXISTS \(tableMusic) (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            artist TEXT,
+            album TEXT,
+            albumArtist TEXT,
+            composer TEXT,
+            genre TEXT,
+            year INTEGER,
+            trackNumber INTEGER,
+            discNumber INTEGER,
+            bpm INTEGER,
+            path TEXT NOT NULL,
+            isUrl INTEGER NOT NULL DEFAULT 0,
+            duration INTEGER,
+            timeMarkers TEXT,
+            waveformData TEXT,
+            rating INTEGER DEFAULT 0,
+            comment TEXT,
+            generalTags TEXT
+        )
+        """
+
+        let createPlaylistsSQL = """
+        CREATE TABLE IF NOT EXISTS \(tablePlaylists) (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL
+        )
+        """
+
+        let createPlaylistTracksSQL = """
+        CREATE TABLE IF NOT EXISTS \(tablePlaylistTracks) (
+            playlist_id TEXT NOT NULL,
+            track_path TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )
+        """
+
+        let createLocalRootsSQL = """
+        CREATE TABLE IF NOT EXISTS \(tableLocalRoots) (
+            path TEXT PRIMARY KEY
+        )
+        """
+
+        let statements = [createMusicSQL, createPlaylistsSQL, createPlaylistTracksSQL, createLocalRootsSQL]
+        for sql in statements {
+            print("[DBCreate] Executing SQL: \(sql.replacingOccurrences(of: "\n", with: " "))")
+            if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
+                let err = String(cString: sqlite3_errmsg(db))
+                throw CollectionError.queryFailed(message: "Schema creation failed: \(err)")
+            }
+        }
+
+        // Ensure ui_settings exists
+        try ensureUiSettingsTable()
+        print("[DBCreate] Schema created successfully")
     }
 
     private func ensureUiSettingsTable() throws {
@@ -296,156 +417,608 @@ class CollectionService: ObservableObject {
     // MARK: - Track Operations
     func loadAllTracks() async throws {
         print("🎵 loadAllTracks called")
-        guard let db = database else {
-            print("❌ Database not open")
-            throw CollectionError.databaseNotOpen
-        }
         
-        // Check for existing tracks with tags to understand the format
-        let sampleQuery = "SELECT id, \(columnGeneralTags) FROM \(tableMusic) WHERE \(columnGeneralTags) IS NOT NULL AND LENGTH(TRIM(\(columnGeneralTags))) > 0 LIMIT 3"
-        var sampleStatement: OpaquePointer?
-        if sqlite3_prepare_v2(db, sampleQuery, -1, &sampleStatement, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(sampleStatement) }
-            print("[Sample] Checking existing tag formats:")
-            while sqlite3_step(sampleStatement) == SQLITE_ROW {
-                let trackId = Int(sqlite3_column_int(sampleStatement, 0))
-                let tagsData = String(cString: sqlite3_column_text(sampleStatement, 1))
-                print("[Sample] Track \(trackId) existing tags format: '\(tagsData)'")
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else {
+                        print("❌ Database not open")
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    
+                    // Check for existing tracks with tags to understand the format
+                    let sampleQuery = "SELECT id, \(self.columnGeneralTags) FROM \(self.tableMusic) WHERE \(self.columnGeneralTags) IS NOT NULL AND LENGTH(TRIM(\(self.columnGeneralTags))) > 0 LIMIT 3"
+                    var sampleStatement: OpaquePointer?
+                    if sqlite3_prepare_v2(db, sampleQuery, -1, &sampleStatement, nil) == SQLITE_OK {
+                        defer { sqlite3_finalize(sampleStatement) }
+                        print("[Sample] Checking existing tag formats:")
+                        while sqlite3_step(sampleStatement) == SQLITE_ROW {
+                            let trackId = Int(sqlite3_column_int(sampleStatement, 0))
+                            let tagsData = String(cString: sqlite3_column_text(sampleStatement, 1))
+                            print("[Sample] Track \(trackId) existing tags format: '\(tagsData)'")
+                        }
+                    }
+                    
+                    DispatchQueue.main.async {
+                        self.isLoading = true
+                    }
+                    
+                    let query = "SELECT * FROM \(self.tableMusic)"
+                    print("🔍 Executing query: \(query)")
+                    var statement: OpaquePointer?
+                    
+                    let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        print("❌ Query failed: \(errorMessage)")
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    var loadedTracks: [Track] = []
+                    var failedTracks: [(id: Int, title: String, error: String, rawData: String)] = []
+                    var rowCount = 0
+                    
+                    while sqlite3_step(statement) == SQLITE_ROW {
+                        rowCount += 1
+                        do {
+                            let track = try self.parseTrackFromRow(statement)
+                            print("📝 Parsed track: \(track.title) (id: \(track.id ?? -1))")
+                            let resolvedTrack = self.resolveTrackPath(track)
+                            loadedTracks.append(resolvedTrack)
+                        } catch {
+                            // Enhanced error logging for failed track parsing
+                            let id = Int(sqlite3_column_int(statement, 0))
+                            let title = String(cString: sqlite3_column_text(statement, 1))
+                            let artist = String(cString: sqlite3_column_text(statement, 2))
+                            let album = String(cString: sqlite3_column_text(statement, 3))
+                            
+                            // Get raw data for problematic fields
+                            var rawData = "ID: \(id), Title: '\(title)', Artist: '\(artist)', Album: '\(album)'"
+                            
+                            // Check for problematic generalTags data
+                            if sqlite3_column_type(statement, 18) != SQLITE_NULL {
+                                let tagsData = String(cString: sqlite3_column_text(statement, 18))
+                                rawData += ", Tags: '\(tagsData)'"
+                                
+                                // Try to identify encoding issues in tags
+                                if let data = tagsData.data(using: .utf8) {
+                                    do {
+                                        let decoder = JSONDecoder()
+                                        let _ = try decoder.decode([String].self, from: data)
+                                        print("🔍 Tags JSON is valid for track \(id)")
+                                    } catch {
+                                        print("🚨 JSON decode error for track \(id) tags: \(error)")
+                                        print("🚨 Raw tags data: '\(tagsData)'")
+                                        print("🚨 Data length: \(data.count) bytes")
+                                        
+                                        // Try different encodings
+                                        if let dataUTF16 = tagsData.data(using: .utf16) {
+                                            print("🚨 UTF-16 data length: \(dataUTF16.count) bytes")
+                                        }
+                                        if let dataASCII = tagsData.data(using: .ascii) {
+                                            print("🚨 ASCII data length: \(dataASCII.count) bytes")
+                                        }
+                                    }
+                                } else {
+                                    print("🚨 Cannot convert tags data to UTF-8 for track \(id)")
+                                    print("🚨 Raw tags string: '\(tagsData)'")
+                                }
+                            }
+                            
+                            // Check for problematic timeMarkers data
+                            if sqlite3_column_type(statement, 14) != SQLITE_NULL {
+                                let markersData = String(cString: sqlite3_column_text(statement, 14))
+                                rawData += ", Markers: '\(markersData)'"
+                                
+                                if let data = markersData.data(using: .utf8) {
+                                    do {
+                                        let decoder = JSONDecoder()
+                                        let _ = try decoder.decode([TimeMarker].self, from: data)
+                                        print("🔍 Markers JSON is valid for track \(id)")
+                                    } catch {
+                                        print("🚨 JSON decode error for track \(id) markers: \(error)")
+                                        print("🚨 Raw markers data: '\(markersData)'")
+                                    }
+                                }
+                            }
+                            
+                            // Check for problematic waveformData
+                            if sqlite3_column_type(statement, 15) != SQLITE_NULL {
+                                let waveformData = String(cString: sqlite3_column_text(statement, 15))
+                                rawData += ", Waveform: '\(waveformData.prefix(100))...'"
+                                
+                                if let data = waveformData.data(using: .utf8) {
+                                    do {
+                                        let decoder = JSONDecoder()
+                                        let _ = try decoder.decode([Double].self, from: data)
+                                        print("🔍 Waveform JSON is valid for track \(id)")
+                                    } catch {
+                                        print("🚨 JSON decode error for track \(id) waveform: \(error)")
+                                        print("🚨 Raw waveform data (first 200 chars): '\(waveformData.prefix(200))'")
+                                    }
+                                }
+                            }
+                            
+                            failedTracks.append((id: id, title: title, error: error.localizedDescription, rawData: rawData))
+                            print("❌ Failed to parse track at row \(rowCount): \(error)")
+                            print("❌ Track details - \(rawData)")
+                        }
+                    }
+                    
+                    // Log summary of failed tracks
+                    if !failedTracks.isEmpty {
+                        print("🚨 DATABASE LOADING ERRORS SUMMARY:")
+                        print("🚨 Total tracks processed: \(rowCount)")
+                        print("🚨 Successfully loaded: \(loadedTracks.count)")
+                        print("🚨 Failed to load: \(failedTracks.count)")
+                        print("🚨 Failed tracks details:")
+                        for failed in failedTracks {
+                            print("   - ID: \(failed.id), Title: '\(failed.title)'")
+                            print("     Error: \(failed.error)")
+                            print("     Raw data: \(failed.rawData)")
+                            print("")
+                        }
+                    }
+                    
+
+                    
+                    DispatchQueue.main.async {
+                        self.tracks = loadedTracks.sorted()
+                        self.isLoading = false
+                    }
+                    
+                    print("✅ Loaded \(loadedTracks.count) tracks from database")
+                    if !failedTracks.isEmpty {
+                        print("⚠️  \(failedTracks.count) tracks failed to load due to metadata encoding issues")
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
         }
-        
-        await MainActor.run {
-            isLoading = true
+    }
+
+    // MARK: - Filesystem Scan and Change Application
+    struct MovedFileUpdate: Identifiable, Equatable {
+        let id = UUID()
+        let trackId: Int
+        let oldPath: String
+        let newPath: String
+        let trackTitle: String
+    }
+
+    /// Recursively find audio files in a directory tree.
+    private func findAudioFilesRecursively(in folder: String, into list: inout [String]) {
+        let fm = FileManager.default
+        let url = URL(fileURLWithPath: folder)
+        if let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) {
+            for case let fileURL as URL in enumerator {
+                do {
+                    let res = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+                    if res.isRegularFile == true {
+                        let ext = fileURL.pathExtension.lowercased()
+                        if supportedExtensions.contains(ext) {
+                            list.append(fileURL.path)
+                        }
+                    }
+                } catch {
+                    // Ignore unreadable entries
+                }
+            }
         }
-        
-        let query = "SELECT * FROM \(tableMusic)"
-        print("🔍 Executing query: \(query)")
-        var statement: OpaquePointer?
-        
-        let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
-        defer { sqlite3_finalize(statement) }
-        
-        if result != SQLITE_OK {
-            let errorMessage = String(cString: sqlite3_errmsg(db))
-            print("❌ Query failed: \(errorMessage)")
-            throw CollectionError.queryFailed(message: errorMessage)
+    }
+
+    /// Scans root folders vs DB and returns file system changes.
+    func scanFilesystemChanges() async throws -> (newFiles: [String], deletedTracks: [Track], movedUpdates: [MovedFileUpdate]) {
+        guard activeCollectionDefinition != nil else { return ([], [], []) }
+
+        print("🔍 [Scan] Starting filesystem scan...")
+
+        // Gather files on disk
+        var filesOnDiskList: [String] = []
+        let roots = getRootFolders()
+        print("🔍 [Scan] Root folders: \(roots)")
+        for root in roots {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: root, isDirectory: &isDir), isDir.boolValue {
+                print("🔍 [Scan] Scanning root: \(root)")
+                findAudioFilesRecursively(in: root, into: &filesOnDiskList)
+            }
         }
-        
-        var loadedTracks: [Track] = []
-        var failedTracks: [(id: Int, title: String, error: String, rawData: String)] = []
-        var rowCount = 0
-        
-        while sqlite3_step(statement) == SQLITE_ROW {
-            rowCount += 1
-            do {
-                let track = try parseTrackFromRow(statement)
-                print("📝 Parsed track: \(track.title) (id: \(track.id ?? -1))")
-                let resolvedTrack = resolveTrackPath(track)
-                loadedTracks.append(resolvedTrack)
-            } catch {
-                // Enhanced error logging for failed track parsing
-                let id = Int(sqlite3_column_int(statement, 0))
-                let title = String(cString: sqlite3_column_text(statement, 1))
-                let artist = String(cString: sqlite3_column_text(statement, 2))
-                let album = String(cString: sqlite3_column_text(statement, 3))
-                
-                // Get raw data for problematic fields
-                var rawData = "ID: \(id), Title: '\(title)', Artist: '\(artist)', Album: '\(album)'"
-                
-                // Check for problematic generalTags data
-                if sqlite3_column_type(statement, 18) != SQLITE_NULL {
-                    let tagsData = String(cString: sqlite3_column_text(statement, 18))
-                    rawData += ", Tags: '\(tagsData)'"
+        print("🔍 [Scan] Found \(filesOnDiskList.count) files on disk")
+        let normalizedDisk: Set<String> = Set(filesOnDiskList.map { ($0 as NSString).standardizingPath })
+        print("🔍 [Scan] Normalized disk files: \(normalizedDisk.count)")
+
+        // Get tracks in DB (use cached if available; otherwise load)
+        var dbTracks: [Track] = tracks
+        print("🔍 [Scan] Current tracks in memory: \(dbTracks.count)")
+        if dbTracks.isEmpty {
+            print("🔍 [Scan] No tracks in memory, loading from DB...")
+            try await loadAllTracks()
+            dbTracks = tracks
+            print("🔍 [Scan] Loaded \(dbTracks.count) tracks from DB")
+        }
+        let dbByPath: [String: Track] = Dictionary(uniqueKeysWithValues: dbTracks.map { t in
+            let norm = (t.path as NSString).standardizingPath
+            return (norm, t)
+        })
+        print("🔍 [Scan] DB tracks by normalized path: \(dbByPath.count)")
+
+        // Compute diffs
+        var newDiskOnly: [String] = []
+        var dbOnlyTracks: [Track] = []
+        for p in normalizedDisk { if dbByPath[p] == nil { newDiskOnly.append(p) } }
+        for (p, t) in dbByPath { if !normalizedDisk.contains(p) { dbOnlyTracks.append(t) } }
+        print("🔍 [Scan] New files on disk: \(newDiskOnly.count)")
+        print("🔍 [Scan] Missing files (in DB but not on disk): \(dbOnlyTracks.count)")
+
+        // Detect moved files by filename match
+        var moved: [MovedFileUpdate] = []
+        var newByFilename: [String: String] = Dictionary(uniqueKeysWithValues: newDiskOnly.map { (URL(fileURLWithPath: $0).lastPathComponent.lowercased(), $0) })
+        var trulyNew: [String] = []
+        for missing in dbOnlyTracks {
+            let filename = URL(fileURLWithPath: missing.path).lastPathComponent.lowercased()
+            if let newPath = newByFilename[filename], let id = missing.id {
+                moved.append(MovedFileUpdate(trackId: id, oldPath: (missing.path as NSString).standardizingPath, newPath: newPath, trackTitle: missing.title))
+                newByFilename.removeValue(forKey: filename)
+            }
+        }
+        trulyNew.append(contentsOf: newByFilename.values)
+        print("🔍 [Scan] Moved files: \(moved.count)")
+        print("🔍 [Scan] Truly new files: \(trulyNew.count)")
+
+        let result = (trulyNew.sorted(), dbOnlyTracks, moved)
+        print("🔍 [Scan] Final result - new: \(result.0.count), deleted: \(result.1.count), moved: \(result.2.count)")
+        return result
+    }
+
+    /// Adds a local file to the database. Returns the inserted Track.
+    func addLocalFile(at absolutePath: String) async throws -> Track {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return 
+                    }
+                    if self.isReadOnlyMode { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot add in read-only mode."))
+                        return 
+                    }
+
+                    let fm = FileManager.default
+                    guard fm.fileExists(atPath: absolutePath) else { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "File not found at path: \(absolutePath)"))
+                        return 
+                    }
+
+                    // Compute duration and extract metadata via AVFoundation
+                    let url = URL(fileURLWithPath: absolutePath)
+                    let asset = AVURLAsset(url: url)
+                    let durationSeconds = CMTimeGetSeconds(asset.duration)
+                    let durationMs = durationSeconds.isFinite && durationSeconds > 0 ? Int(durationSeconds * 1000) : 0
+                    let meta = self.extractAudioMetadata(from: asset)
+
+                    // Let's first check the actual database schema to understand the column order
+                    let schemaQuery = "PRAGMA table_info(\(self.tableMusic))"
+                    var schemaStatement: OpaquePointer?
+                    var columnOrder: [String] = []
                     
-                    // Try to identify encoding issues in tags
-                    if let data = tagsData.data(using: .utf8) {
-                        do {
-                            let decoder = JSONDecoder()
-                            let _ = try decoder.decode([String].self, from: data)
-                            print("🔍 Tags JSON is valid for track \(id)")
-                        } catch {
-                            print("🚨 JSON decode error for track \(id) tags: \(error)")
-                            print("🚨 Raw tags data: '\(tagsData)'")
-                            print("🚨 Data length: \(data.count) bytes")
-                            
-                            // Try different encodings
-                            if let dataUTF16 = tagsData.data(using: .utf16) {
-                                print("🚨 UTF-16 data length: \(dataUTF16.count) bytes")
-                            }
-                            if let dataASCII = tagsData.data(using: .ascii) {
-                                print("🚨 ASCII data length: \(dataASCII.count) bytes")
-                            }
+                    if sqlite3_prepare_v2(db, schemaQuery, -1, &schemaStatement, nil) == SQLITE_OK {
+                        defer { sqlite3_finalize(schemaStatement) }
+                        while sqlite3_step(schemaStatement) == SQLITE_ROW {
+                            let columnName = String(cString: sqlite3_column_text(schemaStatement, 1))
+                            columnOrder.append(columnName)
+                        }
+                    }
+                    
+                    print("🔍 [CollectionService] Database schema column order: \(columnOrder)")
+                    
+                    // Explicit INSERT with all relevant columns to ensure correct mapping
+                    let insertSQL = """
+                        INSERT INTO \(self.tableMusic) (
+                            \(self.columnTitle), \(self.columnArtist), \(self.columnAlbum), \(self.columnAlbumArtist), \(self.columnComposer), \(self.columnGenre), \(self.columnYear), \(self.columnTrackNumber), \(self.columnDiscNumber), \(self.columnBpm), \(self.columnPath), \(self.columnIsUrl), \(self.columnDuration), \(self.columnTimeMarkers), \(self.columnWaveformData), \(self.columnRating), \(self.columnComment), \(self.columnGeneralTags)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '[]', NULL, 0, '', '[]')
+                    """
+                    print("🔍 [CollectionService] addLocalFile - SQL: \(insertSQL)")
+                    var stmt: OpaquePointer?
+                    let prepareResult = sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil)
+                    guard prepareResult == SQLITE_OK else {
+                        let err = String(cString: sqlite3_errmsg(db))
+                        print("❌ [CollectionService] SQL prepare failed with result \(prepareResult): \(err)")
+                        continuation.resume(throwing: CollectionError.queryFailed(message: err))
+                        return
+                    }
+                    defer { sqlite3_finalize(stmt) }
+                    
+                    // Bind basics
+                    let filenameTitle = URL(fileURLWithPath: absolutePath).deletingPathExtension().lastPathComponent
+                    let title = meta.title ?? filenameTitle
+                    print("🔍 [CollectionService] addLocalFile - title: '\(title)', path: '\(absolutePath)'")
+                    print("🔍 [CollectionService] addLocalFile - path length: \(absolutePath.count), isEmpty: \(absolutePath.isEmpty)")
+                    
+                    // Check if path is valid
+                    guard !absolutePath.isEmpty else {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Path is empty"))
+                        return
+                    }
+                    
+                    // Normalize the path to handle any encoding issues
+                    let normalizedPath = (absolutePath as NSString).standardizingPath
+                    print("🔍 [CollectionService] addLocalFile - normalized path: '\(normalizedPath)'")
+                    
+                    // Verify the file still exists after normalization
+                    guard fm.fileExists(atPath: normalizedPath) else {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "File not found after path normalization: \(normalizedPath)"))
+                        return
+                    }
+                    
+                    // Convert to relative path for storage (like existing tracks)
+                    let relativePath: String
+                    if let rootFolder = self.localCollectionRootFolders.first {
+                        if normalizedPath.hasPrefix(rootFolder) {
+                            let relative = String(normalizedPath.dropFirst(rootFolder.count + 1)) // +1 for the slash
+                            relativePath = relative
+                            print("🔍 [CollectionService] Converting to relative path: '\(relativePath)'")
+                        } else {
+                            relativePath = normalizedPath
+                            print("🔍 [CollectionService] Path not under root folder, using absolute: '\(relativePath)'")
                         }
                     } else {
-                        print("🚨 Cannot convert tags data to UTF-8 for track \(id)")
-                        print("🚨 Raw tags string: '\(tagsData)'")
+                        relativePath = normalizedPath
+                        print("🔍 [CollectionService] No root folders, using absolute: '\(relativePath)'")
                     }
-                }
-                
-                // Check for problematic timeMarkers data
-                if sqlite3_column_type(statement, 14) != SQLITE_NULL {
-                    let markersData = String(cString: sqlite3_column_text(statement, 14))
-                    rawData += ", Markers: '\(markersData)'"
                     
-                    if let data = markersData.data(using: .utf8) {
-                        do {
-                            let decoder = JSONDecoder()
-                            let _ = try decoder.decode([TimeMarker].self, from: data)
-                            print("🔍 Markers JSON is valid for track \(id)")
-                        } catch {
-                            print("🚨 JSON decode error for track \(id) markers: \(error)")
-                            print("🚨 Raw markers data: '\(markersData)'")
+                    print("🔍 [CollectionService] Binding parameters:")
+                    print("  - Parameter 1 (title): '\(title)'")
+                    print("  - Parameter 2 (artist): '\(meta.artist ?? "Unknown")")
+                    print("  - Parameter 3 (album): '\(meta.album ?? "Unknown")")
+                    print("  - Parameter 4 (albumArtist): '\(meta.albumArtist ?? "")'")
+                    print("  - Parameter 5 (composer): '\(meta.composer ?? "")'")
+                    print("  - Parameter 6 (genre): '\(meta.genre ?? "")'")
+                    print("  - Parameter 7 (year): \(meta.year ?? -1)")
+                    print("  - Parameter 8 (trackNumber): \(meta.trackNumber ?? -1)")
+                    print("  - Parameter 9 (discNumber): \(meta.discNumber ?? -1)")
+                    print("  - Parameter 10 (bpm): \(meta.bpm ?? -1)")
+                    print("  - Parameter 11 (path): '\(relativePath)'")
+                    print("  - Parameter 12 (duration): \(durationMs)")
+                    
+                    // 1 title
+                    title.withCString { sqlite3_bind_text(stmt, 1, $0, -1, self.SQLITE_TRANSIENT) }
+                    // 2 artist
+                    if let v = meta.artist { v.withCString { sqlite3_bind_text(stmt, 2, $0, -1, self.SQLITE_TRANSIENT) } } else { "Unknown".withCString { sqlite3_bind_text(stmt, 2, $0, -1, self.SQLITE_TRANSIENT) } }
+                    // 3 album
+                    if let v = meta.album { v.withCString { sqlite3_bind_text(stmt, 3, $0, -1, self.SQLITE_TRANSIENT) } } else { "Unknown".withCString { sqlite3_bind_text(stmt, 3, $0, -1, self.SQLITE_TRANSIENT) } }
+                    // 4 albumArtist
+                    if let v = meta.albumArtist { v.withCString { sqlite3_bind_text(stmt, 4, $0, -1, self.SQLITE_TRANSIENT) } } else { sqlite3_bind_null(stmt, 4) }
+                    // 5 composer
+                    if let v = meta.composer { v.withCString { sqlite3_bind_text(stmt, 5, $0, -1, self.SQLITE_TRANSIENT) } } else { sqlite3_bind_null(stmt, 5) }
+                    // 6 genre
+                    if let v = meta.genre { v.withCString { sqlite3_bind_text(stmt, 6, $0, -1, self.SQLITE_TRANSIENT) } } else { sqlite3_bind_null(stmt, 6) }
+                    // 7 year
+                    if let v = meta.year { sqlite3_bind_int(stmt, 7, Int32(v)) } else { sqlite3_bind_null(stmt, 7) }
+                    // 8 trackNumber
+                    if let v = meta.trackNumber { sqlite3_bind_int(stmt, 8, Int32(v)) } else { sqlite3_bind_null(stmt, 8) }
+                    // 9 discNumber
+                    if let v = meta.discNumber { sqlite3_bind_int(stmt, 9, Int32(v)) } else { sqlite3_bind_null(stmt, 9) }
+                    // 10 bpm
+                    if let v = meta.bpm { sqlite3_bind_int(stmt, 10, Int32(v)) } else { sqlite3_bind_null(stmt, 10) }
+                    // 11 path
+                    relativePath.withCString { sqlite3_bind_text(stmt, 11, $0, -1, self.SQLITE_TRANSIENT) }
+                    // 12 duration
+                    sqlite3_bind_int(stmt, 12, Int32(durationMs))
+
+                    let stepResult = sqlite3_step(stmt)
+                    guard stepResult == SQLITE_DONE else {
+                        let err = String(cString: sqlite3_errmsg(db))
+                        print("❌ [CollectionService] SQL step failed with result \(stepResult): \(err)")
+                        continuation.resume(throwing: CollectionError.queryFailed(message: err))
+                        return
+                    }
+                    let newId = Int(sqlite3_last_insert_rowid(db))
+                    
+                    // Verify the insertion by reading back the track
+                    let verifySQL = "SELECT * FROM \(self.tableMusic) WHERE \(self.columnId) = ?"
+                    var verifyStmt: OpaquePointer?
+                    if sqlite3_prepare_v2(db, verifySQL, -1, &verifyStmt, nil) == SQLITE_OK {
+                        defer { sqlite3_finalize(verifyStmt) }
+                        sqlite3_bind_int(verifyStmt, 1, Int32(newId))
+                        if sqlite3_step(verifyStmt) == SQLITE_ROW {
+                            let storedTitle = String(cString: sqlite3_column_text(verifyStmt, 1))
+                            let storedArtist = String(cString: sqlite3_column_text(verifyStmt, 2))
+                            let storedAlbum = String(cString: sqlite3_column_text(verifyStmt, 3))
+                            let storedPath = String(cString: sqlite3_column_text(verifyStmt, 11))
+                            print("🔍 [CollectionService] Verification - stored data for ID \(newId):")
+                            print("  - Title: '\(storedTitle)'")
+                            print("  - Artist: '\(storedArtist)'")
+                            print("  - Album: '\(storedAlbum)'")
+                            print("  - Path: '\(storedPath)'")
+                            if storedPath != relativePath {
+                                print("❌ [CollectionService] PATH MISMATCH! Expected: '\(relativePath)', Stored: '\(storedPath)'")
+                            }
                         }
                     }
+
+                    let inserted = Track(
+                        id: newId,
+                        title: title,
+                        artist: meta.artist ?? "Unknown",
+                        album: meta.album ?? "Unknown",
+                        albumArtist: meta.albumArtist,
+                        composer: meta.composer,
+                        genre: meta.genre,
+                        year: meta.year,
+                        trackNumber: meta.trackNumber,
+                        discNumber: meta.discNumber,
+                        bpm: meta.bpm,
+                        path: relativePath,
+                        isUrl: false,
+                        duration: durationMs,
+                        timeMarkers: [],
+                        waveformData: nil,
+                        rating: 0,
+                        comment: "",
+                        generalTags: []
+                    )
+                    // Queue waveform processing
+                    self.pendingWaveformTrackIds.append(newId)
+                    continuation.resume(returning: inserted)
+                } catch {
+                    continuation.resume(throwing: error)
                 }
-                
-                // Check for problematic waveformData
-                if sqlite3_column_type(statement, 15) != SQLITE_NULL {
-                    let waveformData = String(cString: sqlite3_column_text(statement, 15))
-                    rawData += ", Waveform: '\(waveformData.prefix(100))...'"
-                    
-                    if let data = waveformData.data(using: .utf8) {
-                        do {
-                            let decoder = JSONDecoder()
-                            let _ = try decoder.decode([Double].self, from: data)
-                            print("🔍 Waveform JSON is valid for track \(id)")
-                        } catch {
-                            print("🚨 JSON decode error for track \(id) waveform: \(error)")
-                            print("🚨 Raw waveform data (first 200 chars): '\(waveformData.prefix(200))'")
-                        }
-                    }
-                }
-                
-                failedTracks.append((id: id, title: title, error: error.localizedDescription, rawData: rawData))
-                print("❌ Failed to parse track at row \(rowCount): \(error)")
-                print("❌ Track details - \(rawData)")
             }
         }
-        
-        // Log summary of failed tracks
-        if !failedTracks.isEmpty {
-            print("🚨 DATABASE LOADING ERRORS SUMMARY:")
-            print("🚨 Total tracks processed: \(rowCount)")
-            print("🚨 Successfully loaded: \(loadedTracks.count)")
-            print("🚨 Failed to load: \(failedTracks.count)")
-            print("🚨 Failed tracks details:")
-            for failed in failedTracks {
-                print("   - ID: \(failed.id), Title: '\(failed.title)'")
-                print("     Error: \(failed.error)")
-                print("     Raw data: \(failed.rawData)")
-                print("")
+    }
+
+    /// Recursively import all audio files under a root folder into the current database.
+    func importAllAudioFilesUnderRoot(rootFolderPath: String) async throws {
+        print("[Import] Starting import under root: \(rootFolderPath)")
+        guard let _ = database else { throw CollectionError.databaseNotOpen }
+        var files: [String] = []
+        findAudioFilesRecursively(in: rootFolderPath, into: &files)
+        print("[Import] Found \(files.count) audio files")
+        for p in files.sorted() {
+            do {
+                print("[Import] Adding: \(p)")
+                _ = try await addLocalFile(at: p)
+            } catch {
+                print("[Import] Failed to add \(p): \(error)")
             }
         }
+        print("[Import] Import complete")
+    }
+
+    // MARK: - Metadata Extraction
+    private func extractAudioMetadata(from asset: AVURLAsset) -> (title: String?, artist: String?, album: String?, albumArtist: String?, composer: String?, genre: String?, year: Int?, trackNumber: Int?, discNumber: Int?, bpm: Int?) {
+        var title: String?
+        var artist: String?
+        var album: String?
+        var albumArtist: String?
+        var composer: String?
+        var genre: String?
+        var year: Int?
+        var trackNumber: Int?
+        var discNumber: Int?
+        var bpm: Int?
+
+        // Common metadata
+        for item in asset.commonMetadata {
+            guard let key = item.commonKey?.rawValue else { continue }
+            switch key {
+            case "title":
+                title = item.stringValue ?? title
+            case "artist":
+                artist = item.stringValue ?? artist
+            case "albumName":
+                album = item.stringValue ?? album
+            case "composer":
+                composer = item.stringValue ?? composer
+            case "genre":
+                genre = item.stringValue ?? genre
+            default:
+                break
+            }
+        }
+
+        func parseInt(_ value: String?) -> Int? {
+            guard let v = value else { return nil }
+            // Supports formats like "5/12"
+            let parts = v.split(separator: "/")
+            if let first = parts.first, let n = Int(first.trimmingCharacters(in: .whitespaces)) { return n }
+            return Int(v.trimmingCharacters(in: .whitespaces))
+        }
+
+        // ID3 metadata
+        for item in asset.metadata(forFormat: .id3Metadata) {
+            guard let id = item.identifier?.rawValue.lowercased() else { continue }
+            let str = item.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if id.contains("albumartist") || id.contains("band") { albumArtist = str ?? albumArtist }
+            if id.contains("year") || id.contains("date") { year = year ?? parseInt(str) }
+            if id.contains("tracknumber") || id.contains("track") { trackNumber = trackNumber ?? parseInt(str) }
+            if id.contains("discnumber") || id.contains("partofset") { discNumber = discNumber ?? parseInt(str) }
+            if id.contains("beatspermin") || id.contains("bpm") { bpm = bpm ?? parseInt(str) }
+        }
+
+        // iTunes metadata
+        for item in asset.metadata(forFormat: .iTunesMetadata) {
+            guard let id = item.identifier?.rawValue.lowercased() else { continue }
+            let str = item.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if id.contains("albumartist") { albumArtist = str ?? albumArtist }
+            if id.contains("year") || id.contains("release") { year = year ?? parseInt(str) }
+            if id.contains("tracknumber") { trackNumber = trackNumber ?? parseInt(str) }
+            if id.contains("discnumber") { discNumber = discNumber ?? parseInt(str) }
+            if id.contains("beatspermin") || id.contains("bpm") { bpm = bpm ?? parseInt(str) }
+        }
+
+        return (title, artist, album, albumArtist, composer, genre, year, trackNumber, discNumber, bpm)
+    }
+
+    func deleteTrack(_ id: Int) throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot delete in read-only mode.") }
+        var stmt: OpaquePointer?
+        let sql = "DELETE FROM \(tableMusic) WHERE \(columnId) = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let err = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: err)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, Int32(id))
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            let err = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: err)
+        }
+    }
+
+    func updateTrackPath(trackId: Int, newPath: String) throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot update in read-only mode.") }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE \(tableMusic) SET \(columnPath) = ? WHERE \(columnId) = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let err = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: err)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, newPath, -1, nil)
+        sqlite3_bind_int(stmt, 2, Int32(trackId))
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            let err = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: err)
+        }
+    }
+
+    /// Apply selected filesystem changes and refresh in-memory tracks
+    func applyFilesystemChanges(newFiles: [String], deletedTrackIds: [Int], movedUpdates: [MovedFileUpdate]) async throws {
+        print("🔍 [CollectionService] applyFilesystemChanges called - newFiles: \(newFiles.count), deletedTrackIds: \(deletedTrackIds.count), movedUpdates: \(movedUpdates.count)")
         
-        await MainActor.run {
-            tracks = loadedTracks.sorted()
-            isLoading = false
+        // Apply moved updates first to preserve IDs
+        for upd in movedUpdates {
+            print("🔍 [CollectionService] Updating track path: \(upd.trackId) -> \(upd.newPath)")
+            try updateTrackPath(trackId: upd.trackId, newPath: upd.newPath)
         }
         
-        print("✅ Loaded \(loadedTracks.count) tracks from database")
-        if !failedTracks.isEmpty {
-            print("⚠️  \(failedTracks.count) tracks failed to load due to metadata encoding issues")
+        // Delete tracks
+        for id in deletedTrackIds {
+            print("🔍 [CollectionService] Deleting track: \(id)")
+            try deleteTrack(id)
         }
+        
+        // Add new files
+        for p in newFiles {
+            print("🔍 [CollectionService] Adding new file: \(p)")
+            _ = try await addLocalFile(at: p)
+        }
+        
+        print("🔍 [CollectionService] Reloading all tracks...")
+        try await loadAllTracks()
+        print("🔍 [CollectionService] Filesystem changes applied successfully")
     }
     
     private func parseTrackFromRow(_ statement: OpaquePointer?) throws -> Track {
@@ -741,17 +1314,56 @@ class CollectionService: ObservableObject {
     }
     
     // MARK: - Path Resolution
-    private func resolveTrackPath(_ track: Track) -> Track {
-        print("🔍 resolveTrackPath called for track: \(track.title)")
+    func resolveTrackPathForWaveform(_ track: Track) -> String {
+        print("🔍 resolveTrackPathForWaveform called for track: \(track.title)")
         print("   Original path: \(track.path)")
         print("   Is URL: \(track.isUrl)")
         print("   Collection type: \(activeCollectionDefinition?.type.rawValue ?? "unknown")")
         print("   Root folders: \(localCollectionRootFolders)")
         
+        // Ensure security access for file operations
+        let securityAccess = ensureSecurityAccess()
+        defer { if securityAccess { stopSecurityAccess() } }
+        
         guard let definition = activeCollectionDefinition,
               !track.isUrl else {
             print("   ⚠️ Skipping path resolution (no definition or is URL)")
-            return track
+            return track.path
+        }
+        
+        // Check if the path is already absolute (starts with /)
+        if track.path.hasPrefix("/") {
+            print("   📁 Path is already absolute, checking if file exists")
+            if FileManager.default.fileExists(atPath: track.path) {
+                print("   ✅ File exists at absolute path: \(track.path)")
+                return track.path
+            } else {
+                print("   ❌ File does not exist at absolute path: \(track.path)")
+                
+                // Try to find the file by filename in root folders
+                let filename = URL(fileURLWithPath: track.path).lastPathComponent
+                print("   🔍 Trying to find file by filename: \(filename)")
+                
+                for (index, rootFolder) in localCollectionRootFolders.enumerated() {
+                    let candidatePath = (rootFolder as NSString).appendingPathComponent(filename)
+                    print("   📂 Checking folder \(index + 1) for filename: \(candidatePath)")
+                    if FileManager.default.fileExists(atPath: candidatePath) {
+                        print("   ✅ Found file by filename at: \(candidatePath)")
+                        return candidatePath
+                    }
+                }
+                
+                // Also try searching recursively in the root folders
+                for (index, rootFolder) in localCollectionRootFolders.enumerated() {
+                    print("   🔍 Searching recursively in folder \(index + 1): \(rootFolder)")
+                    if let foundPath = findFileRecursively(filename: filename, in: rootFolder) {
+                        print("   ✅ Found file recursively at: \(foundPath)")
+                        return foundPath
+                    }
+                }
+                
+                print("   ❌ File not found by filename or recursive search")
+            }
         }
         
         var absolutePath: String
@@ -760,7 +1372,7 @@ class CollectionService: ObservableObject {
         case .shared:
             guard let rootPath = definition.rootPath else {
                 print("   ⚠️ No root path for shared collection")
-                return track
+                return track.path
             }
             absolutePath = (rootPath as NSString).appendingPathComponent(track.path)
             print("   📁 Shared collection resolved path: \(absolutePath)")
@@ -784,13 +1396,49 @@ class CollectionService: ObservableObject {
             // If not found in any root folder, use the first root folder as fallback
             if localCollectionRootFolders.isEmpty {
                 print("   ⚠️ No root folders available")
-                return track
+                return track.path
             }
             if !foundPath {
                 absolutePath = (localCollectionRootFolders[0] as NSString).appendingPathComponent(track.path)
                 print("   📁 Using fallback path: \(absolutePath)")
             }
         }
+        
+        print("   ✅ Resolved track path: \(track.path) -> \(absolutePath)")
+        return absolutePath
+    }
+    
+    private func findFileRecursively(filename: String, in folder: String) -> String? {
+        let fileManager = FileManager.default
+        
+        do {
+            let contents = try fileManager.contentsOfDirectory(atPath: folder)
+            
+            // Check if the file is directly in this folder
+            if contents.contains(filename) {
+                return (folder as NSString).appendingPathComponent(filename)
+            }
+            
+            // Search in subdirectories
+            for item in contents {
+                let itemPath = (folder as NSString).appendingPathComponent(item)
+                var isDirectory: ObjCBool = false
+                
+                if fileManager.fileExists(atPath: itemPath, isDirectory: &isDirectory) && isDirectory.boolValue {
+                    if let foundPath = findFileRecursively(filename: filename, in: itemPath) {
+                        return foundPath
+                    }
+                }
+            }
+        } catch {
+            print("   ⚠️ Error searching in folder \(folder): \(error)")
+        }
+        
+        return nil
+    }
+    
+    private func resolveTrackPath(_ track: Track) -> Track {
+        let resolvedPath = resolveTrackPathForWaveform(track)
         
         let resolvedTrack = Track(
             id: track.id,
@@ -804,7 +1452,7 @@ class CollectionService: ObservableObject {
             trackNumber: track.trackNumber,
             discNumber: track.discNumber,
             bpm: track.bpm,
-            path: absolutePath,
+            path: resolvedPath,
             isUrl: track.isUrl,
             duration: track.duration,
             timeMarkers: track.timeMarkers,
@@ -814,7 +1462,6 @@ class CollectionService: ObservableObject {
             generalTags: track.generalTags
         )
         
-        print("   ✅ Resolved track path: \(track.path) -> \(absolutePath)")
         return resolvedTrack
     }
     
@@ -873,27 +1520,56 @@ class CollectionService: ObservableObject {
     
     // MARK: - Track Updates
     func updateTrackWaveformData(trackId: Int, waveformData: [Double]) async throws {
-        guard let db = database else { throw CollectionError.databaseNotOpen }
-        if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot update waveform in read-only mode.") }
+        print("[CollectionService] 💾 Updating waveform data for track \(trackId), data size: \(waveformData.count)")
+        
+        // Ensure security access for database operations
+        let securityAccess = ensureSecurityAccess()
+        defer { if securityAccess { stopSecurityAccess() } }
+        
+        guard let db = database else { 
+            print("[CollectionService] ❌ Database not open")
+            throw CollectionError.databaseNotOpen 
+        }
+        if isReadOnlyMode { 
+            print("[CollectionService] ❌ Database in read-only mode")
+            throw CollectionError.queryFailed(message: "Cannot update waveform in read-only mode.") 
+        }
 
+        print("[CollectionService] 🔧 Setting journal mode to DELETE")
         _ = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
 
         let encoder = JSONEncoder()
         let data = try encoder.encode(waveformData)
         let json = String(data: data, encoding: .utf8) ?? "[]"
+        print("[CollectionService] 📝 Encoded waveform data to JSON, length: \(json.count)")
 
         let sql = "UPDATE \(tableMusic) SET \(columnWaveformData) = ? WHERE \(columnId) = ?"
+        print("[CollectionService] 🔍 Executing SQL: \(sql)")
+        
         var statement: OpaquePointer?
         let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
         defer { sqlite3_finalize(statement) }
-        if result != SQLITE_OK { throw CollectionError.queryFailed(message: String(cString: sqlite3_errmsg(db))) }
+        if result != SQLITE_OK { 
+            let errorMsg = String(cString: sqlite3_errmsg(db))
+            print("[CollectionService] ❌ SQL prepare failed: \(errorMsg)")
+            throw CollectionError.queryFailed(message: errorMsg) 
+        }
+        
+        print("[CollectionService] 🔗 Binding parameters...")
         sqlite3_bind_text(statement, 1, json, -1, nil)
         sqlite3_bind_int(statement, 2, Int32(trackId))
-        if sqlite3_step(statement) != SQLITE_DONE {
-            throw CollectionError.queryFailed(message: String(cString: sqlite3_errmsg(db)))
+        
+        print("[CollectionService] ▶️ Executing statement...")
+        let stepResult = sqlite3_step(statement)
+        if stepResult != SQLITE_DONE {
+            let errorMsg = String(cString: sqlite3_errmsg(db))
+            print("[CollectionService] ❌ SQL execution failed: \(errorMsg)")
+            throw CollectionError.queryFailed(message: errorMsg)
         }
+        print("[CollectionService] ✅ SQL execution successful")
 
         await MainActor.run {
+            print("[CollectionService] 🔄 Updating tracks array on main thread...")
             if let index = tracks.firstIndex(where: { $0.id == trackId }) {
                 var updated = tracks
                 updated[index] = Track(
@@ -918,8 +1594,12 @@ class CollectionService: ObservableObject {
                     generalTags: updated[index].generalTags
                 )
                 tracks = updated
+                print("[CollectionService] ✅ Successfully updated tracks array for track \(trackId)")
+            } else {
+                print("[CollectionService] ⚠️ Track \(trackId) not found in tracks array")
             }
         }
+        print("[CollectionService] ✅ Waveform update completed for track \(trackId)")
     }
     func updateTrackRating(trackId: Int, newRating: Int) async throws {
         guard let db = database else {
@@ -1072,7 +1752,9 @@ class CollectionService: ObservableObject {
             let errorMessage = String(cString: sqlite3_errmsg(db))
             throw CollectionError.queryFailed(message: errorMessage)
         }
-        Task { @MainActor in self.globalTags = tags }
+        DispatchQueue.main.async {
+            self.globalTags = tags
+        }
     }
 
     func addGlobalTag(_ name: String) throws {

@@ -58,13 +58,15 @@ struct TrackListView: View {
     @State private var selectedTracks = Set<Track.ID>()
     @State private var showingRatingError = false
     @State private var ratingErrorMessage = ""
-    @State private var visibleColumns: Set<TrackColumn> = [.title, .artist, .album, .duration, .rating, .generalTags, .type]
+    @State private var visibleColumns: Set<TrackColumn> = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type]
     @State private var showTagEditor = false
     @State private var columnWidths: [TrackColumn: CGFloat] = [:]
     @State private var hasLoadedPreferences = false
     @State private var showDatabaseRepair = false
     @State private var corruptedTracks: [(id: Int, title: String, issues: [String])] = []
     @State private var isScanningDatabase = false
+    @State private var showFileChangesSheet = false
+    @State private var fileChangesData: FileChangesData? = nil
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
     
@@ -93,6 +95,52 @@ struct TrackListView: View {
             
             // Simplified table with only essential columns visible by default
             Table(filteredTracks, selection: $selectedTracks, sortOrder: $sortOrder) {
+                // Waveform column - always visible and first
+                TableColumn("Waveform", value: \Track.waveformPointCount) { track in
+                    if let waveformData = track.waveformData, !waveformData.isEmpty {
+                        let progress: Double = {
+                            if let current = audioService.currentTrack?.id,
+                               let id = track.id,
+                               current == id,
+                               audioService.duration > 0 {
+                                return min(1.0, max(0.0, audioService.currentTime / audioService.duration))
+                            }
+                            return 0.0
+                        }()
+                        WaveformView(
+                            waveformData: waveformData,
+                            progress: progress,
+                            markers: track.timeMarkers,
+                            durationMs: track.duration
+                        )
+                        .frame(height: 36)
+                    } else {
+                        // Check if this track has empty waveform data (indicating missing file)
+                        if let waveformData = track.waveformData, waveformData.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .foregroundColor(.orange)
+                                Text("File missing")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                            }
+                        } else {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Analyzing…")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .onAppear {
+                                print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title)")
+                                waveformServiceHolder.ensure(collectionService: collectionService)
+                                waveformServiceHolder.service?.analyzeIfMissing(track)
+                            }
+                        }
+                    }
+                }
+                .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
+                
                 TableColumn("Title", value: \.title) { track in
                     titleCell(for: track)
                 }
@@ -216,40 +264,7 @@ struct TrackListView: View {
 //                            .foregroundColor(.secondary)
 //                    }
 //                }
-                if visibleColumns.contains(.waveformData) {
-                    TableColumn("Waveform", value: \Track.waveformPointCount) { track in
-                        if let waveformData = track.waveformData, !waveformData.isEmpty {
-                            let progress: Double = {
-                                if let current = audioService.currentTrack?.id,
-                                   let id = track.id,
-                                   current == id,
-                                   audioService.duration > 0 {
-                                    return min(1.0, max(0.0, audioService.currentTime / audioService.duration))
-                                }
-                                return 0.0
-                            }()
-                            WaveformView(
-                                waveformData: waveformData,
-                                progress: progress,
-                                markers: track.timeMarkers,
-                                durationMs: track.duration
-                            )
-                            .frame(height: 36)
-                        } else {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text("Analyzing…")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .onAppear {
-                                waveformServiceHolder.ensure(collectionService: collectionService)
-                                waveformServiceHolder.service?.analyzeIfMissing(track)
-                            }
-                        }
-                    }
-                    .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
-                }
+
 //                if visibleColumns.contains(.comment) {
 //                    TableColumn("Comment", value: \Track.comment) { track in
 //                        Text(track.comment)
@@ -338,7 +353,42 @@ struct TrackListView: View {
                 isScanning: $isScanningDatabase
             )
         }
+        .sheet(item: $fileChangesData) { data in
+            FileChangesSheet(
+                newFiles: data.newFiles,
+                deletedTracks: data.deletedTracks,
+                movedUpdates: data.movedUpdates,
+                onCancel: { fileChangesData = nil },
+                onApply: { adds, deletes, moves in
+                    Task {
+                        do {
+                            print("🔍 [TrackListView] Applying filesystem changes - adds: \(adds.count), deletes: \(deletes.count), moves: \(moves.count)")
+                            try await collectionService.applyFilesystemChanges(
+                                newFiles: adds,
+                                deletedTrackIds: deletes,
+                                movedUpdates: moves
+                            )
+                            print("🔍 [TrackListView] Successfully applied filesystem changes")
+                            await MainActor.run {
+                                fileChangesData = nil
+                            }
+                        } catch {
+                            print("❌ [TrackListView] Failed to apply filesystem changes: \(error)")
+                            await MainActor.run {
+                                // Show error alert to user
+                                ratingErrorMessage = "Failed to apply filesystem changes: \(error.localizedDescription)"
+                                showingRatingError = true
+                            }
+                        }
+                    }
+                }
+            )
+            .frame(minWidth: 640, minHeight: 420)
+        }
         .onAppear(perform: loadPreferences)
+        .task {
+            await scanForFileChanges()
+        }
         .onChange(of: visibleColumns) { _, _ in
             saveVisibleColumns()
         }
@@ -452,8 +502,8 @@ struct TrackListView: View {
         ForEach(TrackColumn.allCases, id: \.self) { column in
             Button {
                 if visibleColumns.contains(column) {
-                    // Always keep title column visible
-                    if column != .title && visibleColumns.count > 1 {
+                    // Always keep title and waveform columns visible
+                    if column != .title && column != .waveformData && visibleColumns.count > 2 {
                         visibleColumns.remove(column)
                     }
                 } else {
@@ -468,14 +518,14 @@ struct TrackListView: View {
                     }
                 }
             }
-            .disabled(column == .title) // Title column is always visible
+            .disabled(column == .title || column == .waveformData) // Title and waveform columns are always visible
         }
         Divider()
         Button("Show All Columns") {
             visibleColumns = Set(TrackColumn.allCases)
         }
         Button("Show Default Columns") {
-            visibleColumns = [.title, .artist, .album, .duration, .rating, .generalTags, .type]
+            visibleColumns = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type]
         }
     }
     
@@ -539,6 +589,31 @@ struct TrackListView: View {
         }
         UserDefaults.standard.set(dict, forKey: columnWidthsDefaultsKey)
     }
+
+    private func scanForFileChanges() async {
+        do {
+            print("🔍 [TrackListView] Starting scan...")
+            let changes = try await collectionService.scanFilesystemChanges()
+            print("🔍 [TrackListView] Scan completed - new: \(changes.newFiles.count), deleted: \(changes.deletedTracks.count), moved: \(changes.movedUpdates.count)")
+            
+            if !changes.newFiles.isEmpty || !changes.deletedTracks.isEmpty || !changes.movedUpdates.isEmpty {
+                print("🔍 [TrackListView] Changes detected, showing sheet...")
+                print("🔍 [TrackListView] New files: \(changes.newFiles.count), Deleted: \(changes.deletedTracks.count), Moved: \(changes.movedUpdates.count)")
+                
+                await MainActor.run {
+                    fileChangesData = FileChangesData(
+                        newFiles: changes.newFiles,
+                        deletedTracks: changes.deletedTracks,
+                        movedUpdates: changes.movedUpdates
+                    )
+                }
+            } else {
+                print("🔍 [TrackListView] No changes detected")
+            }
+        } catch {
+            print("🔍 [TrackListView] Scan failed: \(error)")
+        }
+    }
 }
 
 // MARK: - Table Width Observer
@@ -600,7 +675,7 @@ private struct TableWidthObserver: NSViewRepresentable {
             guard let tableView = tableView else { return }
             
             var updated = false
-            let columnIdentifiers = ["Title", "Artist", "Album", "Duration", "Rating", "Type", "Album Artist", "Composer", "Waveform", "Tags"]
+            let columnIdentifiers = ["Waveform", "Title", "Artist", "Album", "Duration", "Rating", "Type", "Album Artist", "Composer", "Tags"]
             
             for (index, identifier) in columnIdentifiers.enumerated() {
                 guard index < tableView.tableColumns.count else { break }
@@ -644,6 +719,148 @@ private struct TableWidthObserver: NSViewRepresentable {
     }
 }
 
+// MARK: - File Changes Sheet
+private struct FileChangesSheet: View {
+    let newFiles: [String]
+    let deletedTracks: [Track]
+    let movedUpdates: [CollectionService.MovedFileUpdate]
+    var onCancel: () -> Void
+    var onApply: (_ adds: [String], _ deletes: [Int], _ moves: [CollectionService.MovedFileUpdate]) -> Void
+
+    @State private var newFilesSelection: Set<String> = []
+    @State private var deletedSelection: Set<Int> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Filesystem Changes Detected")
+                .font(.title2)
+                .bold()
+            Text("Select which changes to apply to the library.")
+                .foregroundColor(.secondary)
+            
+            // Debug info
+            Text("DEBUG: newFiles.count = \(newFiles.count), deletedTracks.count = \(deletedTracks.count)")
+                .font(.caption)
+                .foregroundColor(.red)
+            Text("DEBUG: newFilesSelection.count = \(newFilesSelection.count), deletedSelection.count = \(deletedSelection.count)")
+                .font(.caption)
+                .foregroundColor(.blue)
+            Text("DEBUG: Button disabled = \(newFilesSelection.isEmpty && deletedSelection.isEmpty && movedUpdates.isEmpty)")
+                .font(.caption)
+                .foregroundColor(.green)
+
+            HStack(spacing: 16) {
+                // New files
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text("New Files (") + Text("\(newFiles.count)").bold() + Text(")")
+                        Spacer()
+                        Button(newFilesSelection.count == newFiles.count ? "Deselect All" : "Select All") {
+                            if newFilesSelection.count == newFiles.count { newFilesSelection.removeAll() }
+                            else { newFilesSelection = Set(newFiles) }
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(newFiles, id: \.self) { path in
+                                Toggle(isOn: Binding(
+                                    get: { newFilesSelection.contains(path) },
+                                    set: { checked in
+                                        if checked { newFilesSelection.insert(path) } else { newFilesSelection.remove(path) }
+                                    }
+                                )) {
+                                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                                        .help(path)
+                                }
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(minHeight: 140)
+                }
+
+                // Deleted files
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text("Missing Files (") + Text("\(deletedTracks.count)").bold() + Text(")")
+                        Spacer()
+                        Button(deletedSelection.count == deletedTracks.count ? "Deselect All" : "Select All") {
+                            let allIds = deletedTracks.compactMap { $0.id }
+                            if deletedSelection.count == allIds.count { deletedSelection.removeAll() }
+                            else { deletedSelection = Set(allIds) }
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(deletedTracks, id: \.id) { track in
+                                if let id = track.id {
+                                    Toggle(isOn: Binding(
+                                        get: { deletedSelection.contains(id) },
+                                        set: { checked in
+                                            if checked { deletedSelection.insert(id) } else { deletedSelection.remove(id) }
+                                        }
+                                    )) {
+                                        HStack {
+                                            Image(systemName: "exclamationmark.triangle").foregroundColor(.orange)
+                                            Text(track.displayTitle)
+                                            Spacer()
+                                            Text(URL(fileURLWithPath: track.path).lastPathComponent)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .help(track.path)
+                                    }
+                                    .toggleStyle(.checkbox)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(minHeight: 140)
+                }
+            }
+
+            if !movedUpdates.isEmpty {
+                VStack(alignment: .leading) {
+                    Text("Moved Files (") + Text("\(movedUpdates.count)").bold() + Text(") - will update paths")
+                    List(movedUpdates) { upd in
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.right.arrow.left").foregroundColor(.blue)
+                            Text(upd.trackTitle)
+                            Spacer()
+                            Text(URL(fileURLWithPath: upd.oldPath).lastPathComponent)
+                            Image(systemName: "arrow.right")
+                            Text(URL(fileURLWithPath: upd.newPath).lastPathComponent)
+                        }
+                        .help("\(upd.oldPath) -> \(upd.newPath)")
+                    }
+                    .frame(minHeight: 100)
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                Button("Apply Changes") {
+                    print("🔍 [FileChangesSheet] Apply button clicked - newFilesSelection: \(newFilesSelection.count), deletedSelection: \(deletedSelection.count), movedUpdates: \(movedUpdates.count)")
+                    onApply(Array(newFilesSelection), Array(deletedSelection), movedUpdates)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(newFilesSelection.isEmpty && deletedSelection.isEmpty && movedUpdates.isEmpty)
+            }
+        }
+        .padding()
+        .onAppear {
+            print("🔍 [FileChangesSheet] onAppear - newFiles.count = \(newFiles.count), deletedTracks.count = \(deletedTracks.count)")
+            newFilesSelection = Set(newFiles)
+            deletedSelection = Set(deletedTracks.compactMap { $0.id })
+            print("🔍 [FileChangesSheet] Set newFilesSelection.count = \(newFilesSelection.count), deletedSelection.count = \(deletedSelection.count)")
+        }
+    }
+}
+
 #Preview {
     TrackListView(
         tracks: [
@@ -669,4 +886,12 @@ private struct TableWidthObserver: NSViewRepresentable {
         collectionService: CollectionService(),
         audioService: AudioService()
     )
+}
+
+// MARK: - File Changes Data
+struct FileChangesData: Identifiable {
+    let id = UUID()
+    let newFiles: [String]
+    let deletedTracks: [Track]
+    let movedUpdates: [CollectionService.MovedFileUpdate]
 }
