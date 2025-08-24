@@ -41,10 +41,10 @@ struct ContentView: View {
                         collectionService: collectionService,
                         playlistService: playlistService,
                         audioService: audioService,
-                        selectedPlaylist: selectedPlaylist,
                         playlistTracks: playlistTracks,
                         isLoadingPlaylistTracks: isLoadingPlaylistTracks,
-                        showingFolderPicker: $showingFolderPicker
+                        showingFolderPicker: $showingFolderPicker,
+                        selectedPlaylist: $selectedPlaylist
                     )
                 }
             }

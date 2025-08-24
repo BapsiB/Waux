@@ -3,12 +3,30 @@ import SwiftUI
 struct PlaylistSidebar: View {
     @ObservedObject var playlistService: PlaylistService
     @Binding var selectedPlaylist: Playlist?
+    @State private var showingCreatePlaylistAlert = false
+    @State private var newPlaylistName = ""
+    @State private var showingErrorAlert = false
+    @State private var errorMessage = ""
     
     var body: some View {
         VStack {
-            Text("Library")
-                .font(.headline)
-                .padding()
+            HStack {
+                Text("Library")
+                    .font(.headline)
+                
+                Spacer()
+                
+                Button(action: {
+                    newPlaylistName = ""
+                    showingCreatePlaylistAlert = true
+                }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Create new playlist")
+            }
+            .padding()
             
             if playlistService.isLoading {
                 ProgressView("Loading playlists...")
@@ -58,5 +76,42 @@ struct PlaylistSidebar: View {
         }
         .frame(width: 200)
         .background(Color(.controlBackgroundColor))
+        .alert("Create New Playlist", isPresented: $showingCreatePlaylistAlert) {
+            TextField("Playlist name", text: $newPlaylistName)
+            Button("Cancel", role: .cancel) { }
+            Button("Create") {
+                createPlaylist()
+            }
+        } message: {
+            Text("Enter a name for your new playlist")
+        }
+        .alert("Error", isPresented: $showingErrorAlert) {
+            Button("OK") { }
+        } message: {
+            Text(errorMessage)
+        }
+    }
+    
+    private func createPlaylist() {
+        let trimmedName = newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty {
+            errorMessage = "Playlist name cannot be empty"
+            showingErrorAlert = true
+            return
+        }
+        
+        Task {
+            do {
+                let newPlaylist = try await playlistService.createPlaylist(name: trimmedName)
+                await MainActor.run {
+                    selectedPlaylist = newPlaylist
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                }
+            }
+        }
     }
 }

@@ -4,10 +4,10 @@ struct MainContentArea: View {
     @ObservedObject var collectionService: CollectionService
     @ObservedObject var playlistService: PlaylistService
     @ObservedObject var audioService: AudioService
-    let selectedPlaylist: Playlist?
     let playlistTracks: [Track]
     let isLoadingPlaylistTracks: Bool
     @Binding var showingFolderPicker: Bool
+    @Binding var selectedPlaylist: Playlist?
     
     private var activeCollection: CollectionDefinition? {
         collectionService.getActiveCollection()
@@ -22,43 +22,57 @@ struct MainContentArea: View {
             if collectionService.isLoading {
                 ProgressView("Loading collection...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let selectedPlaylist = selectedPlaylist {
+            } else if let playlist = selectedPlaylist {
                 // Show playlist tracks
-                if isLoadingPlaylistTracks {
-                    ProgressView("Loading playlist tracks...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if !playlistTracks.isEmpty {
-                    VStack {
-                        HStack {
-                            Text("Playlist: \(selectedPlaylist.name)")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                            
-                            Spacer()
-                            
+                VStack {
+                    // Playlist header with close button
+                    HStack {
+                        Text("Playlist: \(playlist.name)")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Spacer()
+                        
+                        if !playlistTracks.isEmpty {
                             Text("\(playlistTracks.count) tracks")
                                 .foregroundColor(.secondary)
                         }
-                        .padding(.horizontal)
-                        .padding(.top)
                         
+                        Button(action: {
+                            selectedPlaylist = nil
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Close playlist and return to all tracks")
+                    }
+                    .padding(.horizontal)
+                    .padding(.top)
+                    
+                    if isLoadingPlaylistTracks {
+                        ProgressView("Loading playlist tracks...")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if !playlistTracks.isEmpty {
                         TrackListView(tracks: playlistTracks, collectionService: collectionService, audioService: audioService)
+                    } else {
+                        // Empty playlist content
+                        VStack(spacing: 20) {
+                            Image(systemName: "music.note.list")
+                                .font(.system(size: 64))
+                                .foregroundColor(.blue)
+                            
+                            Text("Empty Playlist")
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                            
+                            Text("This playlist contains no tracks")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                } else {
-                    VStack(spacing: 20) {
-                        Image(systemName: "music.note.list")
-                            .font(.system(size: 64))
-                            .foregroundColor(.blue)
-                        
-                        Text("Empty Playlist")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                        
-                        Text("This playlist contains no tracks")
-                            .font(.title2)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else if activeCollection != nil {
                 // Show all tracks when no playlist is selected
