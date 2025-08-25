@@ -1,4 +1,6 @@
 import SwiftUI
+import UniformTypeIdentifiers
+import CoreTransferable
 
 enum TrackColumn: String, CaseIterable, Hashable {
     case id
@@ -70,81 +72,101 @@ struct TrackTable: View {
         Table(filteredTracks, selection: $selectedTracks, sortOrder: $sortOrder) {
             // Waveform column - always visible and first
             TableColumn("Waveform", value: \Track.waveformPointCount) { track in
-                WaveformColumn(
-                    track: track,
-                    audioService: audioService,
-                    waveformServiceHolder: waveformServiceHolder,
-                    collectionService: collectionService
-                )
-                .id("waveform-\(track.id ?? -1)-\(track.waveformPointCount)")
+                draggableCell(track: track) {
+                    WaveformColumn(
+                        track: track,
+                        audioService: audioService,
+                        waveformServiceHolder: waveformServiceHolder,
+                        collectionService: collectionService
+                    )
+                    .id("waveform-\(track.id ?? -1)-\(track.waveformPointCount)")
+                }
             }
             .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
             
             TableColumn("Title", value: \.title) { track in
-                titleCell(for: track)
+                draggableCell(track: track) {
+                    titleCell(for: track)
+                }
             }
             .width(min: 150, ideal: columnWidths[.title] ?? 250)
             
             if visibleColumns.contains(.artist) {
                 TableColumn("Artist", value: \.artist) { track in
-                    Text(track.artist)
+                    draggableCell(track: track) {
+                        Text(track.artist)
+                    }
                 }
                 .width(min: 100, ideal: columnWidths[.artist] ?? 150)
             }
             
             if visibleColumns.contains(.album) {
                 TableColumn("Album", value: \.album) { track in
-                    Text(track.album)
+                    draggableCell(track: track) {
+                        Text(track.album)
+                    }
                 }
                 .width(min: 100, ideal: columnWidths[.album] ?? 150)
             }
             
             if visibleColumns.contains(.duration) {
                 TableColumn("Duration", value: \.duration) { track in
-                    Text(track.formattedDuration)
-                        .monospacedDigit()
+                    draggableCell(track: track) {
+                        Text(track.formattedDuration)
+                            .monospacedDigit()
+                    }
                 }
                 .width(min: 50, ideal: columnWidths[.duration] ?? 70)
             }
             
             if visibleColumns.contains(.rating) {
                 TableColumn("Rating", value: \.rating) { track in
-                    ratingCell(for: track)
+                    draggableCell(track: track) {
+                        ratingCell(for: track)
+                    }
                 }
                 .width(min: 80, ideal: columnWidths[.rating] ?? 100)
             }
             
             if visibleColumns.contains(.type) {
                 TableColumn("Type", value: \.sourceType.rawValue) { track in
-                    typeCell(for: track)
+                    draggableCell(track: track) {
+                        typeCell(for: track)
+                    }
                 }
                 .width(min: 60, ideal: columnWidths[.type] ?? 80)
             }
             
             if visibleColumns.contains(.albumArtist) {
                 TableColumn("Album Artist", value: \Track.albumArtistText) { track in
-                    Text(track.albumArtistText)
-                        .foregroundColor(track.albumArtist?.isEmpty == false ? .primary : .secondary)
+                    draggableCell(track: track) {
+                        Text(track.albumArtistText)
+                            .foregroundColor(track.albumArtist?.isEmpty == false ? .primary : .secondary)
+                    }
                 }
                 .width(min: 100, ideal: columnWidths[.albumArtist] ?? 150)
             }
             
             if visibleColumns.contains(.composer) {
                 TableColumn("Composer", value: \Track.composerText) { track in
-                    Text(track.composerText)
-                        .foregroundColor(track.composer?.isEmpty == false ? .primary : .secondary)
+                    draggableCell(track: track) {
+                        Text(track.composerText)
+                            .foregroundColor(track.composer?.isEmpty == false ? .primary : .secondary)
+                    }
                 }
                 .width(min: 100, ideal: columnWidths[.composer] ?? 150)
             }
             
             if visibleColumns.contains(.generalTags) {
                 TableColumn("Tags", value: \Track.generalTagsText) { track in
-                    if let trackId = track.id {
-                        InteractiveTagsView_New(
-                            trackId: trackId,
-                            metadataManager: metadataManager,
-                            isTextFieldFocused: $isTextFieldFocused
-                        )
+                    draggableCell(track: track) {
+                        if let trackId = track.id {
+                            InteractiveTagsView_New(
+                                trackId: trackId,
+                                metadataManager: metadataManager,
+                                isTextFieldFocused: $isTextFieldFocused
+                            )
+                        }
                     }
                 }
                 .width(min: 120, ideal: columnWidths[.generalTags] ?? 220, max: 320)
@@ -231,6 +253,102 @@ struct TrackTable: View {
         case .url:
             return .green
         }
+    }
+
+    // MARK: - Drag support (Transferable + preview on macOS 13+)
+
+    struct DraggedTracks: Transferable {
+        let paths: [String]
+        static var transferRepresentation: some TransferRepresentation {
+            DataRepresentation(contentType: .plainText) { value in
+                (value.paths.joined(separator: "\n")).data(using: .utf8) ?? Data()
+            } importing: { data in
+                let string = String(data: data, encoding: .utf8) ?? ""
+                let paths = string.split(separator: "\n").map { String($0) }
+                return DraggedTracks(paths: paths)
+            }
+        }
+    }
+
+    private func tracksForDrag(from track: Track) -> [Track] {
+        let draggedIds = selectedTracks
+        if let tid = track.id, draggedIds.contains(tid), !draggedIds.isEmpty {
+            let selectedIdSet = draggedIds
+            return filteredTracks.filter { candidate in
+                if let cid = candidate.id { return selectedIdSet.contains(cid) }
+                return false
+            }
+        } else {
+            return [track]
+        }
+    }
+
+    private func dragPayload(for track: Track) -> DraggedTracks {
+        let paths = tracksForDrag(from: track).map { $0.path }
+        return DraggedTracks(paths: paths)
+    }
+
+    @ViewBuilder
+    private func dragPreview(for track: Track) -> some View {
+        let tracks = tracksForDrag(from: track)
+        HStack(spacing: 8) {
+            Image(systemName: "music.note.list")
+            if tracks.count == 1 {
+                Text(tracks.first?.displayTitle ?? "1 track")
+                    .lineLimit(1)
+            } else {
+                Text("\(tracks.count) tracks")
+            }
+        }
+        .padding(8)
+        .background(.regularMaterial)
+        .cornerRadius(8)
+        .shadow(radius: 2)
+    }
+
+    @ViewBuilder
+    private func draggableCell<Content: View>(track: Track, @ViewBuilder content: () -> Content) -> some View {
+        if #available(macOS 13.0, *) {
+            ZStack(alignment: .leading) {
+                Color.clear
+                content()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .draggable(dragPayload(for: track)) {
+                dragPreview(for: track)
+            }
+        } else {
+            ZStack(alignment: .leading) {
+                Color.clear
+                content()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onDrag { dragItem(for: track) }
+        }
+    }
+
+    private func dragItem(for track: Track) -> NSItemProvider {
+        // Determine which tracks to include in the drag: selected ones if the dragged
+        // track is selected, otherwise just the single row's track.
+        let draggedIds = selectedTracks
+        let tracksToExport: [Track]
+        if let tid = track.id, draggedIds.contains(tid), !draggedIds.isEmpty {
+            let selectedIdSet = draggedIds
+            tracksToExport = filteredTracks.filter { idTrack in
+                if let sid = idTrack.id {
+                    return selectedIdSet.contains(sid)
+                }
+                return false
+            }
+        } else {
+            tracksToExport = [track]
+        }
+
+        let paths = tracksToExport.map { $0.path }
+        let payload = paths.joined(separator: "\n") as NSString
+        return NSItemProvider(item: payload, typeIdentifier: UTType.plainText.identifier)
     }
 }
 

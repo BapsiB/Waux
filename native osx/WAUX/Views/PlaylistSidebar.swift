@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PlaylistSidebar: View {
     @ObservedObject var playlistService: PlaylistService
@@ -70,6 +71,9 @@ struct PlaylistSidebar: View {
                     .onTapGesture {
                         selectedPlaylist = playlist
                     }
+                    .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
+                        handleDrop(providers: providers, into: playlist)
+                    }
                 }
                 .listStyle(SidebarListStyle())
             }
@@ -113,5 +117,36 @@ struct PlaylistSidebar: View {
                 }
             }
         }
+    }
+
+    private func handleDrop(providers: [NSItemProvider], into playlist: Playlist) -> Bool {
+        var handled = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                    guard let nsText = object as? NSString else { return }
+                    let text = nsText as String
+                    let paths = text
+                        .split(separator: "\n")
+                        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if paths.isEmpty { return }
+                    Task {
+                        for path in paths {
+                            do {
+                                try await playlistService.addTrackToPlaylist(playlistId: playlist.id, absoluteTrackPath: path)
+                            } catch {
+                                await MainActor.run {
+                                    errorMessage = error.localizedDescription
+                                    showingErrorAlert = true
+                                }
+                            }
+                        }
+                    }
+                }
+                handled = true
+            }
+        }
+        return handled
     }
 }

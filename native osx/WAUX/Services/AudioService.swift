@@ -48,7 +48,6 @@ class AudioService: NSObject, ObservableObject {
     private func updateProgress() {
         guard let player = audioPlayer else { return }
         currentTime = player.currentTime
-        print("updateProgress: \(currentTime)")
         duration = player.duration
     }
     
