@@ -3,6 +3,7 @@ import SwiftUI
 struct InteractiveTagsView_New: View {
     let trackId: Int
     @ObservedObject var metadataManager: TrackMetadataManager
+    @Binding var isTextFieldFocused: Bool
     @State private var input: String = ""
     @FocusState private var focused: Bool
     
@@ -43,6 +44,9 @@ struct InteractiveTagsView_New: View {
                 .frame(width: 80)
                 .focused($focused)
                 .onSubmit { addCurrentInput() }
+                .onChange(of: focused) { _, newValue in
+                    isTextFieldFocused = newValue
+                }
         }
     }
     

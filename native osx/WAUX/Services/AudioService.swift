@@ -48,6 +48,7 @@ class AudioService: NSObject, ObservableObject {
     private func updateProgress() {
         guard let player = audioPlayer else { return }
         currentTime = player.currentTime
+        print("updateProgress: \(currentTime)")
         duration = player.duration
     }
     
@@ -136,6 +137,7 @@ class AudioService: NSObject, ObservableObject {
     }
     
     func stop() {
+        print("stop()")
         guard let player = audioPlayer else { return }
         player.stop()
         player.currentTime = 0
@@ -143,10 +145,11 @@ class AudioService: NSObject, ObservableObject {
         currentTime = 0
     }
     
-    func seek(to time: TimeInterval) {
+    func seek(to timeS: TimeInterval) {
+        print("seek(to: \(time))")
         guard let player = audioPlayer else { return }
-        player.currentTime = time
-        currentTime = time
+        player.currentTime = timeS
+        currentTime = timeS
     }
     
     func seekToRatio(_ ratio: Double) {
@@ -197,6 +200,7 @@ extension AudioService: AVAudioPlayerDelegate {
         DispatchQueue.main.async {
             self.isPlaying = false
             self.currentTime = 0
+            print("audioPlayerDidFinishPlaying")
         }
     }
     

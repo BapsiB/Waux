@@ -106,7 +106,8 @@ struct TrackListView_New: View {
                     if let trackId = track.id {
                         InteractiveTagsView_New(
                             trackId: trackId,
-                            metadataManager: metadataManager
+                            metadataManager: metadataManager,
+                            isTextFieldFocused: .constant(false) // Not needed in this example
                         )
                     }
                 }

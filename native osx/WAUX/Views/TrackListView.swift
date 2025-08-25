@@ -48,11 +48,198 @@ enum TrackColumn: String, CaseIterable, Hashable {
     }
 }
 
+// MARK: - Track Table Component
+
+struct TrackTable: View {
+    let filteredTracks: [Track]
+    @Binding var selectedTracks: Set<Track.ID>
+    @Binding var sortOrder: [KeyPathComparator<Track>]
+    @Binding var visibleColumns: Set<TrackColumn>
+    @Binding var columnWidths: [TrackColumn: CGFloat]
+    @Binding var isTextFieldFocused: Bool
+    @ObservedObject var audioService: AudioService
+    @ObservedObject var metadataManager: TrackMetadataManager
+    @ObservedObject var waveformServiceHolder: WaveformServiceHolder
+    @ObservedObject var collectionService: CollectionService
+    let onDoubleClick: (Track) -> Void
+    let contextMenu: () -> AnyView
+    let onKeyPressA: () -> Void
+    let onKeyPressSpace: () -> Void
+    
+    var body: some View {
+        Table(filteredTracks, selection: $selectedTracks, sortOrder: $sortOrder) {
+            // Waveform column - always visible and first
+            TableColumn("Waveform", value: \Track.waveformPointCount) { track in
+                WaveformColumn(
+                    track: track,
+                    audioService: audioService,
+                    waveformServiceHolder: waveformServiceHolder,
+                    collectionService: collectionService
+                )
+                .id("waveform-\(track.id ?? -1)-\(track.waveformPointCount)")
+            }
+            .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
+            
+            TableColumn("Title", value: \.title) { track in
+                titleCell(for: track)
+            }
+            .width(min: 150, ideal: columnWidths[.title] ?? 250)
+            
+            if visibleColumns.contains(.artist) {
+                TableColumn("Artist", value: \.artist) { track in
+                    Text(track.artist)
+                }
+                .width(min: 100, ideal: columnWidths[.artist] ?? 150)
+            }
+            
+            if visibleColumns.contains(.album) {
+                TableColumn("Album", value: \.album) { track in
+                    Text(track.album)
+                }
+                .width(min: 100, ideal: columnWidths[.album] ?? 150)
+            }
+            
+            if visibleColumns.contains(.duration) {
+                TableColumn("Duration", value: \.duration) { track in
+                    Text(track.formattedDuration)
+                        .monospacedDigit()
+                }
+                .width(min: 50, ideal: columnWidths[.duration] ?? 70)
+            }
+            
+            if visibleColumns.contains(.rating) {
+                TableColumn("Rating", value: \.rating) { track in
+                    ratingCell(for: track)
+                }
+                .width(min: 80, ideal: columnWidths[.rating] ?? 100)
+            }
+            
+            if visibleColumns.contains(.type) {
+                TableColumn("Type", value: \.sourceType.rawValue) { track in
+                    typeCell(for: track)
+                }
+                .width(min: 60, ideal: columnWidths[.type] ?? 80)
+            }
+            
+            if visibleColumns.contains(.albumArtist) {
+                TableColumn("Album Artist", value: \Track.albumArtistText) { track in
+                    Text(track.albumArtistText)
+                        .foregroundColor(track.albumArtist?.isEmpty == false ? .primary : .secondary)
+                }
+                .width(min: 100, ideal: columnWidths[.albumArtist] ?? 150)
+            }
+            
+            if visibleColumns.contains(.composer) {
+                TableColumn("Composer", value: \Track.composerText) { track in
+                    Text(track.composerText)
+                        .foregroundColor(track.composer?.isEmpty == false ? .primary : .secondary)
+                }
+                .width(min: 100, ideal: columnWidths[.composer] ?? 150)
+            }
+            
+            if visibleColumns.contains(.generalTags) {
+                TableColumn("Tags", value: \Track.generalTagsText) { track in
+                    if let trackId = track.id {
+                        InteractiveTagsView_New(
+                            trackId: trackId,
+                            metadataManager: metadataManager,
+                            isTextFieldFocused: $isTextFieldFocused
+                        )
+                    }
+                }
+                .width(min: 120, ideal: columnWidths[.generalTags] ?? 220, max: 320)
+            }
+        }
+        .tableStyle(.bordered)
+        .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: {}))
+        .onTapGesture(count: 2) {
+            if let selectedTrack = selectedTracks.first,
+               let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
+                onDoubleClick(track)
+            }
+        }
+        .contextMenu {
+            contextMenu()
+        }
+        .onKeyPress("a", phases: .down) { press in
+            if press.modifiers.contains(.command) {
+                onKeyPressA()
+                return .handled
+            }
+            return .ignored
+        }
+        .onKeyPress(.space, phases: .down) { press in
+            if !isTextFieldFocused && !selectedTracks.isEmpty {
+                onKeyPressSpace()
+                return .handled
+            }
+            return .ignored
+        }
+    }
+    
+    @ViewBuilder
+    private func titleCell(for track: Track) -> some View {
+        VStack(alignment: .leading) {
+            Text(track.title)
+                .fontWeight(.medium)
+            if !track.artist.isEmpty && track.artist != "Unknown" {
+                Text(track.artist)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func ratingCell(for track: Track) -> some View {
+        if let trackId = track.id {
+            InteractiveStarRating_New(
+                trackId: trackId,
+                metadataManager: metadataManager
+            )
+        }
+    }
+    
+    @ViewBuilder
+    private func typeCell(for track: Track) -> some View {
+        HStack {
+            Image(systemName: iconName(for: track.sourceType))
+                .foregroundColor(color(for: track.sourceType))
+            Text(track.sourceType.rawValue.capitalized)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+    
+    private func iconName(for sourceType: TrackSource) -> String {
+        switch sourceType {
+        case .local:
+            return "music.note"
+        case .youtube:
+            return "play.rectangle"
+        case .url:
+            return "link"
+        }
+    }
+    
+    private func color(for sourceType: TrackSource) -> Color {
+        switch sourceType {
+        case .local:
+            return .blue
+        case .youtube:
+            return .red
+        case .url:
+            return .green
+        }
+    }
+}
+
 struct TrackListView: View {
     @ObservedObject var collectionService: CollectionService
     @ObservedObject var audioService: AudioService
     let tracksFilter: [Track]? // If provided, only show these tracks; otherwise show all tracks
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
+    @StateObject private var metadataManager: TrackMetadataManager
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
     @State private var searchText = ""
     @State private var selectedTracks = Set<Track.ID>()
@@ -67,6 +254,7 @@ struct TrackListView: View {
     @State private var isScanningDatabase = false
     @State private var showFileChangesSheet = false
     @State private var fileChangesData: FileChangesData? = nil
+    @FocusState private var isTextFieldFocused: Bool
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
     
@@ -74,14 +262,10 @@ struct TrackListView: View {
         self.collectionService = collectionService
         self.audioService = audioService
         self.tracksFilter = tracksFilter
+        self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
     }
     
-    private class WaveformServiceHolder: ObservableObject {
-        @Published var service: WaveformProcessingService?
-        func ensure(collectionService: CollectionService) {
-            if service == nil { service = WaveformProcessingService(collectionService: collectionService) }
-        }
-    }
+
     
     var filteredTracks: [Track] {
         let baseTracks = tracksFilter ?? collectionService.tracks
@@ -101,243 +285,21 @@ struct TrackListView: View {
         VStack {
             searchBar
             
-            // Simplified table with only essential columns visible by default
-            Table(filteredTracks, selection: $selectedTracks, sortOrder: $sortOrder) {
-                // Waveform column - always visible and first
-                TableColumn("Waveform", value: \Track.waveformPointCount) { track in
-                    // Debug logging to see what's happening
-                    let _ = print("[TrackListView] Rendering waveform for track \(track.id ?? -1): hasData=\(track.waveformData != nil), isEmpty=\(track.waveformData?.isEmpty ?? true), bins=\(track.waveformData?.count ?? 0)")
-                    Group {
-                        if let waveformData = track.waveformData, !waveformData.isEmpty {
-                            let progress: Double = {
-                                if let current = audioService.currentTrack?.id,
-                                   let id = track.id,
-                                   current == id,
-                                   audioService.duration > 0 {
-                                    return min(1.0, max(0.0, audioService.currentTime / audioService.duration))
-                                }
-                                return 0.0
-                            }()
-                            WaveformView(
-                                waveformData: waveformData,
-                                progress: progress,
-                                markers: track.timeMarkers,
-                                durationMs: track.duration,
-                                onTap: { ratio in
-                                    handleWaveformTap(track: track, ratio: ratio)
-                                }
-                            )
-                            .frame(height: 36)
-                        } else {
-                            // Check if this track has empty waveform data (indicating missing file)
-                            // Note: Empty waveform data could also indicate corrupted data that needs regeneration
-                            if let waveformData = track.waveformData, waveformData.isEmpty {
-                                // For empty waveform data, we need to check if the file actually exists
-                                // If the file exists, it means the waveform data is corrupted and needs regeneration
-                                // If the file doesn't exist, then it's truly missing
-                                let resolvedPath = collectionService.resolveTrackPathForWaveform(track)
-                                let url = URL(fileURLWithPath: resolvedPath)
-                                let fileExists = FileManager.default.fileExists(atPath: url.path)
-                                
-                                if fileExists {
-                                    // File exists but waveform is empty/corrupted - trigger analysis
-                                    HStack(spacing: 6) {
-                                        ProgressView().controlSize(.small)
-                                        Text("Analyzing…")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .onAppear {
-                                        print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (regenerating corrupted waveform; fileExists=\(fileExists))")
-                                        waveformServiceHolder.ensure(collectionService: collectionService)
-                                        waveformServiceHolder.service?.analyzeIfMissing(track)
-                                    }
-                                } else {
-                                    // File truly missing
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "exclamationmark.triangle")
-                                            .foregroundColor(.orange)
-                                        Text("File missing")
-                                            .font(.caption)
-                                            .foregroundColor(.orange)
-                                    }
-                                }
-                            } else {
-                                HStack(spacing: 6) {
-                                    ProgressView().controlSize(.small)
-                                    Text("Analyzing…")
-                                        .font(.caption)
-                                    .foregroundColor(.secondary)
-                                }
-                                .onAppear {
-                                    print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (no waveform present)")
-                                    waveformServiceHolder.ensure(collectionService: collectionService)
-                                    waveformServiceHolder.service?.analyzeIfMissing(track)
-                                }
-                            }
-                        }
-                    }
-                    .id("waveform-\(track.id ?? -1)-\(track.waveformPointCount)")
-                }
-                .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
-                
-                TableColumn("Title", value: \.title) { track in
-                    titleCell(for: track)
-                }
-                .width(min: 150, ideal: columnWidths[.title] ?? 250)
-                
-                if visibleColumns.contains(.artist) {
-                    TableColumn("Artist", value: \.artist) { track in
-                        Text(track.artist)
-                    }
-                    .width(min: 100, ideal: columnWidths[.artist] ?? 150)
-                }
-                
-                if visibleColumns.contains(.album) {
-                    TableColumn("Album", value: \.album) { track in
-                        Text(track.album)
-                    }
-                    .width(min: 100, ideal: columnWidths[.album] ?? 150)
-                }
-                
-                if visibleColumns.contains(.duration) {
-                    TableColumn("Duration", value: \.duration) { track in
-                        Text(track.formattedDuration)
-                            .monospacedDigit()
-                    }
-                    .width(min: 50, ideal: columnWidths[.duration] ?? 70)
-                }
-                
-                if visibleColumns.contains(.rating) {
-                    TableColumn("Rating", value: \.rating) { track in
-                        ratingCell(for: track)
-                    }
-                    .width(min: 80, ideal: columnWidths[.rating] ?? 100)
-                }
-                
-                if visibleColumns.contains(.type) {
-                    TableColumn("Type", value: \.sourceType.rawValue) { track in
-                        typeCell(for: track)
-                    }
-                    .width(min: 60, ideal: columnWidths[.type] ?? 80)
-                }
-                
-                if visibleColumns.contains(.albumArtist) {
-                    TableColumn("Album Artist", value: \Track.albumArtistText) { track in
-                        Text(track.albumArtistText)
-                            .foregroundColor(track.albumArtist?.isEmpty == false ? .primary : .secondary)
-                    }
-                    .width(min: 100, ideal: columnWidths[.albumArtist] ?? 150)
-                }
-                if visibleColumns.contains(.composer) {
-                    TableColumn("Composer", value: \Track.composerText) { track in
-                        Text(track.composerText)
-                            .foregroundColor(track.composer?.isEmpty == false ? .primary : .secondary)
-                    }
-                    .width(min: 100, ideal: columnWidths[.composer] ?? 150)
-                }
-//                if visibleColumns.contains(.genre) {
-//                    TableColumn("Genre", value: \Track.genreText) { track in
-//                        Text(track.genreText)
-//                            .foregroundColor(track.genre?.isEmpty == false ? .primary : .secondary)
-//                    }
-//                }
-//                if visibleColumns.contains(.year) {
-//                    TableColumn("Year", value: \Track.yearSortValue) { track in
-//                        if let year = track.year {
-//                            Text(String(year))
-//                        } else {
-//                            Text("")
-//                                .foregroundColor(.secondary)
-//                        }
-//                    }
-//                }
-//                if visibleColumns.contains(.trackNumber) {
-//                    TableColumn("Track #", value: \Track.trackNumberSortValue) { track in
-//                        if let trackNumber = track.trackNumber {
-//                            Text(String(trackNumber))
-//                        } else {
-//                            Text("")
-//                                .foregroundColor(.secondary)
-//                        }
-//                    }
-//                }
-//                if visibleColumns.contains(.discNumber) {
-//                    TableColumn("Disc #", value: \Track.discNumberSortValue) { track in
-//                        if let discNumber = track.discNumber {
-//                            Text(String(discNumber))
-//                        } else {
-//                            Text("")
-//                                .foregroundColor(.secondary)
-//                        }
-//                    }
-//                }
-//                if visibleColumns.contains(.bpm) {
-//                    TableColumn("BPM", value: \Track.bpmSortValue) { track in
-//                        if let bpm = track.bpm {
-//                            Text(String(bpm))
-//                        } else {
-//                            Text("")
-//                                .foregroundColor(.secondary)
-//                        }
-//                    }
-//                }
-//                if visibleColumns.contains(.path) {
-//                    TableColumn("Path", value: \Track.path) { track in
-//                        Text(track.path)
-//                            .font(.caption)
-//                            .foregroundColor(.secondary)
-//                            .lineLimit(1)
-//                            .truncationMode(.middle)
-//                    }
-//                }
-//                if visibleColumns.contains(.isUrl) {
-//                    TableColumn("URL?", value: \Track.isUrlSortValue) { track in
-//                        Image(systemName: track.isUrl ? "checkmark.circle.fill" : "xmark.circle")
-//                            .foregroundColor(track.isUrl ? .green : .secondary)
-//                    }
-//                }
-//                if visibleColumns.contains(.timeMarkers) {
-//                    TableColumn("Markers", value: \Track.timeMarkersCount) { track in
-//                        Text("\(track.timeMarkers.count)")
-//                            .font(.caption)
-//                            .foregroundColor(.secondary)
-//                    }
-//                }
-
-//                if visibleColumns.contains(.comment) {
-//                    TableColumn("Comment", value: \Track.comment) { track in
-//                        Text(track.comment)
-//                            .lineLimit(1)
-//                            .truncationMode(.tail)
-//                            .foregroundColor(track.comment.isEmpty ? .secondary : .primary)
-//                    }
-//                }
-                if visibleColumns.contains(.generalTags) {
-                    TableColumn("Tags", value: \Track.generalTagsText) { track in
-                        InteractiveTagsView(
-                            track: track,
-                            onUpdate: { tags in
-                                Task {
-                                    do {
-                                        try await collectionService.setTagsForTrack(trackId: track.id ?? 0, newTags: tags)
-                                    } catch {
-                                        print("[Tags] Failed to set tags: \(error)")
-                                    }
-                                }
-                            }
-                        )
-                        // Force cell refresh when tags change so the row updates immediately
-                        .id("tags-\(track.id ?? -1)-\(track.generalTagsText)")
-                    }
-                    .width(min: 120, ideal: columnWidths[.generalTags] ?? 220, max: 320)
-                }
-            }
-            .tableStyle(.bordered)
-            .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: saveColumnWidths))
-            .onTapGesture(count: 2) {
-                if let selectedTrack = selectedTracks.first,
-                   let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
+            TrackTable(
+                filteredTracks: filteredTracks,
+                selectedTracks: $selectedTracks,
+                sortOrder: $sortOrder,
+                visibleColumns: $visibleColumns,
+                columnWidths: $columnWidths,
+                isTextFieldFocused: Binding(
+                    get: { isTextFieldFocused },
+                    set: { isTextFieldFocused = $0 }
+                ),
+                audioService: audioService,
+                metadataManager: metadataManager,
+                waveformServiceHolder: waveformServiceHolder,
+                collectionService: collectionService,
+                onDoubleClick: { track in
                     print("Double-clicked track: \(track.title)")
                     print("Track path: \(track.path)")
                     print("Is URL: \(track.isUrl)")
@@ -346,36 +308,23 @@ struct TrackListView: View {
                         await audioService.loadTrack(track)
                         audioService.play()
                     }
-                }
-            }
-            .contextMenu {
-                columnContextMenu
-            }
-            .onKeyPress("a", phases: .down) { press in
-                if press.modifiers.contains(.command) {
+                },
+                contextMenu: {
+                    AnyView(columnContextMenu)
+                },
+                onKeyPressA: {
                     selectedTracks = Set(filteredTracks.compactMap { $0.id })
-                    return .handled
-                }
-                return .ignored
-            }
-            .onKeyPress(.space, phases: .down) { press in
-                if !selectedTracks.isEmpty {
-                    audioService.togglePlayPause()
-                    return .handled
-                }
-                return .ignored
-            }
-            .onKeyPress(.return, phases: .down) { press in
-                if let selectedTrack = selectedTracks.first,
-                   let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
-                    Task {
-                        await audioService.loadTrack(track)
-                        audioService.play()
+                },
+                onKeyPressSpace: {
+                    if let selectedTrack = selectedTracks.first,
+                       let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
+                        Task {
+                            await audioService.loadTrack(track)
+                            audioService.play()
+                        }
                     }
-                    return .handled
                 }
-                return .ignored
-            }
+            )
         }
         .alert("Rating Update Error", isPresented: $showingRatingError) {
             Button("OK") { }
@@ -383,8 +332,15 @@ struct TrackListView: View {
             Text(ratingErrorMessage)
         }
         .sheet(isPresented: $showTagEditor) {
-            let selected = filteredTracks.filter { selectedTracks.contains($0.id) }
-            TagEditorView(collectionService: collectionService, tracks: selected.isEmpty ? [] : selected)
+            let selectedTrackIds = filteredTracks
+                .filter { selectedTracks.contains($0.id) }
+                .compactMap { $0.id }
+            
+            TagEditorView_New(
+                metadataManager: metadataManager,
+                collectionService: collectionService,
+                trackIds: selectedTrackIds
+            )
         }
         .sheet(isPresented: $showDatabaseRepair) {
             DatabaseRepairView(
@@ -431,85 +387,6 @@ struct TrackListView: View {
         }
         .onChange(of: visibleColumns) { _, _ in
             saveVisibleColumns()
-        }
-    }
-    
-    // Removed additionalColumns and additionalTableColumn helpers; columns are inlined in the Table builder above.
-    
-    @ViewBuilder
-    private var searchBar: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
-            
-            TextField("Search tracks...", text: $searchText)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-            
-            Spacer()
-            
-            Text("\(filteredTracks.count) tracks")
-                .foregroundColor(.secondary)
-            
-            if !selectedTracks.isEmpty {
-                Text("\(selectedTracks.count) selected")
-                    .foregroundColor(.blue)
-                    .fontWeight(.medium)
-            }
-            
-            Button("🔧 Database Repair") {
-                showDatabaseRepair = true
-            }
-            .buttonStyle(.borderless)
-            .font(.caption)
-            .foregroundColor(.orange)
-        }
-        .padding(.horizontal)
-        .padding(.top)
-    }
-    
-    // MARK: - Cell Views
-    
-    @ViewBuilder
-    private func titleCell(for track: Track) -> some View {
-        VStack(alignment: .leading) {
-            Text(track.title)
-                .fontWeight(.medium)
-            if !track.artist.isEmpty && track.artist != "Unknown" {
-                Text(track.artist)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-    
-    @ViewBuilder
-    private func ratingCell(for track: Track) -> some View {
-        InteractiveStarRating(track: track) { newRating in
-            Task {
-                do {
-                    try await collectionService.updateTrackRating(
-                        trackId: track.id ?? 0,
-                        newRating: newRating
-                    )
-                } catch {
-                    await MainActor.run {
-                        ratingErrorMessage = "Failed to update rating: \(error.localizedDescription)"
-                        showingRatingError = true
-                    }
-                    print("Error updating rating: \(error)")
-                }
-            }
-        }
-    }
-    
-    @ViewBuilder
-    private func typeCell(for track: Track) -> some View {
-        HStack {
-            Image(systemName: iconName(for: track.sourceType))
-                .foregroundColor(color(for: track.sourceType))
-            Text(track.sourceType.rawValue.capitalized)
-                .font(.caption)
-                .foregroundColor(.secondary)
         }
     }
     
@@ -566,6 +443,73 @@ struct TrackListView: View {
         }
         Button("Show Default Columns") {
             visibleColumns = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type]
+        }
+    }
+    
+    @ViewBuilder
+    private var searchBar: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary)
+            
+            TextField("Search tracks...", text: $searchText)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+            
+            Spacer()
+            
+            Text("\(filteredTracks.count) tracks")
+                .foregroundColor(.secondary)
+            
+            if !selectedTracks.isEmpty {
+                Text("\(selectedTracks.count) selected")
+                    .foregroundColor(.blue)
+                    .fontWeight(.medium)
+            }
+            
+            Button("🔧 Database Repair") {
+                showDatabaseRepair = true
+            }
+            .buttonStyle(.borderless)
+            .font(.caption)
+            .foregroundColor(.orange)
+        }
+        .padding(.horizontal)
+        .padding(.top)
+    }
+    
+    // MARK: - Cell Views
+    
+    @ViewBuilder
+    private func titleCell(for track: Track) -> some View {
+        VStack(alignment: .leading) {
+            Text(track.title)
+                .fontWeight(.medium)
+            if !track.artist.isEmpty && track.artist != "Unknown" {
+                Text(track.artist)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func ratingCell(for track: Track) -> some View {
+        if let trackId = track.id {
+            InteractiveStarRating_New(
+                trackId: trackId,
+                metadataManager: metadataManager
+            )
+        }
+    }
+    
+    @ViewBuilder
+    private func typeCell(for track: Track) -> some View {
+        HStack {
+            Image(systemName: iconName(for: track.sourceType))
+                .foregroundColor(color(for: track.sourceType))
+            Text(track.sourceType.rawValue.capitalized)
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
     }
     
@@ -655,21 +599,7 @@ struct TrackListView: View {
         }
     }
     
-    // Handle waveform tap in track list
-    private func handleWaveformTap(track: Track, ratio: Double) {
-        Task {
-            // Load the track if it's not already loaded
-            if audioService.currentTrack?.id != track.id {
-                await audioService.loadTrack(track)
-            }
-            
-            // Seek to the clicked position
-            audioService.seekToRatio(ratio)
-            
-            // Start playing
-            audioService.play()
-        }
-    }
+
 }
 
 // MARK: - Table Width Observer

@@ -1,5 +1,14 @@
 import SwiftUI
 
+// MARK: - Waveform Service Holder
+
+class WaveformServiceHolder: ObservableObject {
+    @Published var service: WaveformProcessingService?
+    func ensure(collectionService: CollectionService) {
+        if service == nil { service = WaveformProcessingService(collectionService: collectionService) }
+    }
+}
+
 struct WaveformView: View {
     let waveformData: [Double]
     let progress: Double // 0.0 - 1.0
@@ -141,6 +150,124 @@ struct WaveformView: View {
             result[i] = maxValue
         }
         return result
+    }
+}
+
+// MARK: - Table Column Component
+
+struct WaveformColumn: View {
+    let track: Track
+    @ObservedObject var audioService: AudioService
+    @ObservedObject var waveformServiceHolder: WaveformServiceHolder
+    @ObservedObject var collectionService: CollectionService
+    
+    var body: some View {
+        // Debug logging to see what's happening
+//        let _ = print("[TrackListView] Rendering waveform for track \(track.id ?? -1): hasData=\(track.waveformData != nil), isEmpty=\(track.waveformData?.isEmpty ?? true), bins=\(track.waveformData?.count ?? 0)")
+        
+        Group {
+            if let waveformData = track.waveformData, !waveformData.isEmpty {
+                let progress: Double = {
+                    if let current = audioService.currentTrack?.id,
+                       let id = track.id,
+                       current == id,
+                       audioService.duration > 0 {
+                        return min(1.0, max(0.0, audioService.currentTime / audioService.duration))
+                    }
+                    return 0.0
+                }()
+                
+                HStack(spacing: 4) {
+                    // Play button
+                    Button(action: {
+                        Task {
+                            await audioService.loadTrack(track)
+                            audioService.play()
+                        }
+                    }) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Play track")
+                    
+                    // Waveform view
+                    WaveformView(
+                        waveformData: waveformData,
+                        progress: progress,
+                        markers: track.timeMarkers,
+                        durationMs: track.duration,
+                        onTap: { ratio in
+                            handleWaveformTap(track: track, ratio: ratio)
+                        }
+                    )
+                    .frame(height: 36)
+                }
+            } else {
+                // Check if this track has empty waveform data (indicating missing file)
+                // Note: Empty waveform data could also indicate corrupted data that needs regeneration
+                if let waveformData = track.waveformData, waveformData.isEmpty {
+                    // For empty waveform data, we need to check if the file actually exists
+                    // If the file exists, it means the waveform data is corrupted and needs regeneration
+                    // If the file doesn't exist, then it's truly missing
+                    let resolvedPath = collectionService.resolveTrackPathForWaveform(track)
+                    let url = URL(fileURLWithPath: resolvedPath)
+                    let fileExists = FileManager.default.fileExists(atPath: url.path)
+                    
+                    if fileExists {
+                        // File exists but waveform is empty/corrupted - trigger analysis
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Analyzing…")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .onAppear {
+                            print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (regenerating corrupted waveform; fileExists=\(fileExists))")
+                            waveformServiceHolder.ensure(collectionService: collectionService)
+                            waveformServiceHolder.service?.analyzeIfMissing(track)
+                        }
+                    } else {
+                        // File truly missing
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundColor(.orange)
+                            Text("File missing")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Analyzing…")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .onAppear {
+                        print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (no waveform present)")
+                        waveformServiceHolder.ensure(collectionService: collectionService)
+                        waveformServiceHolder.service?.analyzeIfMissing(track)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func handleWaveformTap(track: Track, ratio: Double) {
+        if audioService.currentTrack?.id == track.id {
+            let newTime = Double(track.duration) * ratio
+            audioService.play()
+            audioService.seek(to: newTime / 1000)
+        } else {
+            Task {
+                await audioService.loadTrack(track)
+                audioService.play()
+                let newTime = Double(track.duration) * ratio
+                audioService.seek(to: newTime / 1000)
+            }
+        }
     }
 }
 
