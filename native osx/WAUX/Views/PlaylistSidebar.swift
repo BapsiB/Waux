@@ -106,10 +106,8 @@ struct PlaylistSidebar: View {
         
         Task {
             do {
-                let newPlaylist = try await playlistService.createPlaylist(name: trimmedName)
-                await MainActor.run {
-                    selectedPlaylist = newPlaylist
-                }
+                _ = try await playlistService.createPlaylist(name: trimmedName)
+                // Playlist is created but not automatically selected
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription

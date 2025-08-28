@@ -43,6 +43,39 @@ struct AudioPlayerView: View {
                             .foregroundColor(.secondary)
                     }
                 }
+                .padding(.bottom, 5)
+                
+                // Progress bar - moved under track title
+                VStack(spacing: 5) {
+                    // Seek bar
+                    SubtleSlider(
+                        value: Binding(
+                            get: { audioService.duration > 0 ? audioService.currentTime / audioService.duration : 0 },
+                            set: { ratio in
+                                audioService.seekToRatio(ratio)
+                            }
+                        ),
+                        onChanged: { ratio in
+                            audioService.seekToRatio(ratio)
+                        }
+                    )
+                    .disabled(audioService.currentTrack == nil || audioService.isLoading)
+                    
+                    HStack {
+                        Text(audioService.formatTime(audioService.currentTime))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                        
+                        Spacer()
+                        
+                        Text(audioService.formatTime(audioService.duration))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.horizontal)
                 .padding(.bottom, 10)
             } else {
                 Text("No track loaded")
@@ -98,36 +131,6 @@ struct AudioPlayerView: View {
                     .padding(.horizontal)
                 }
             }
-            
-            // Progress bar
-            VStack(spacing: 5) {
-                // Seek bar
-                Slider(
-                    value: Binding(
-                        get: { audioService.duration > 0 ? audioService.currentTime / audioService.duration : 0 },
-                        set: { ratio in
-                            audioService.seekToRatio(ratio)
-                        }
-                    ),
-                    in: 0...1
-                )
-                .disabled(audioService.currentTrack == nil || audioService.isLoading)
-                
-                HStack {
-                    Text(audioService.formatTime(audioService.currentTime))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
-                    
-                    Spacer()
-                    
-                    Text(audioService.formatTime(audioService.duration))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
-                }
-            }
-            .padding(.horizontal)
             
             // Loading indicator
             if audioService.isLoading {
@@ -407,6 +410,45 @@ struct HeaderAudioPlayerView: View {
             // Start playing
             audioService.play()
         }
+    }
+}
+
+// Custom subtle slider view
+struct SubtleSlider: View {
+    @Binding var value: Double
+    let onChanged: (Double) -> Void
+    
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Rectangle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(height: 2)
+            
+            Rectangle()
+                .fill(Color.gray)
+                .frame(width: max(0, value * 300), height: 2)
+            
+            // Small line thumb
+            Rectangle()
+                .fill(Color.gray)
+                .frame(width: 2, height: 12)
+                .offset(x: value * 300 - 1)
+        }
+        .frame(width: 300, height: 20)
+        .contentShape(Rectangle())
+        .onTapGesture { location in
+            let ratio = max(0, min(1, location.x / 300))
+            value = ratio
+            onChanged(ratio)
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { gestureValue in
+                    let ratio = max(0, min(1, gestureValue.location.x / 300))
+                    value = ratio
+                    onChanged(ratio)
+                }
+        )
     }
 }
 

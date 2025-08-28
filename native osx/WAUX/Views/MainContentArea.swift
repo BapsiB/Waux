@@ -8,6 +8,7 @@ struct MainContentArea: View {
     let isLoadingPlaylistTracks: Bool
     @Binding var showingFolderPicker: Bool
     @Binding var selectedPlaylist: Playlist?
+    @State private var searchText = ""
     
     private var activeCollection: CollectionDefinition? {
         collectionService.getActiveCollection()
@@ -18,44 +19,28 @@ struct MainContentArea: View {
     }
     
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
             if collectionService.isLoading {
                 ProgressView("Loading collection...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let playlist = selectedPlaylist {
                 // Show playlist tracks
-                VStack {
-                    // Playlist header with close button
-                    HStack {
-                        Text("Playlist: \(playlist.name)")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                        
-                        Spacer()
-                        
-                        if !playlistTracks.isEmpty {
-                            Text("\(playlistTracks.count) tracks")
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Button(action: {
-                            selectedPlaylist = nil
-                        }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .help("Close playlist and return to all tracks")
+                VStack(spacing: 0) {
+                    // Header with title, audio player, and search
+                    headerView(title: playlist.name, showCloseButton: true) {
+                        selectedPlaylist = nil
                     }
-                    .padding(.horizontal)
-                    .padding(.top)
                     
                     if isLoadingPlaylistTracks {
                         ProgressView("Loading playlist tracks...")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if !playlistTracks.isEmpty {
-                        TrackListView(collectionService: collectionService, audioService: audioService, tracksFilter: playlistTracks)
+                        TrackListView(
+                            collectionService: collectionService, 
+                            audioService: audioService, 
+                            tracksFilter: playlistTracks,
+                            searchText: $searchText
+                        )
                     } else {
                         // Empty playlist content
                         VStack(spacing: 20) {
@@ -76,21 +61,15 @@ struct MainContentArea: View {
                 }
             } else if activeCollection != nil {
                 // Show all tracks when no playlist is selected
-                VStack {
-                    HStack {
-                        Text("All Tracks")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                        
-                        Spacer()
-                        
-                        Text("\(tracksCount) tracks")
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal)
-                    .padding(.top)
+                VStack(spacing: 0) {
+                    // Header with title, audio player, and search
+                    headerView(title: "All Tracks", showCloseButton: false)
                     
-                    TrackListView(collectionService: collectionService, audioService: audioService)
+                    TrackListView(
+                        collectionService: collectionService, 
+                        audioService: audioService,
+                        searchText: $searchText
+                    )
                 }
             } else {
                 // Welcome screen
@@ -131,5 +110,50 @@ struct MainContentArea: View {
         .onChange(of: tracksCount) { _, _ in
             print("[UI] Tracks count changed - isLoading: \(collectionService.isLoading), activeCollection: \(activeCollection != nil), tracksCount: \(tracksCount)")
         }
+    }
+    
+    @ViewBuilder
+    private func headerView(title: String, showCloseButton: Bool = false, onClose: (() -> Void)? = nil) -> some View {
+        HStack(spacing: 16) {
+            // Title
+            Text(title)
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            if showCloseButton {
+                Button(action: {
+                    onClose?()
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Close playlist and return to all tracks")
+            }
+            
+            Spacer()
+            
+            // Audio player controls (only show when track is loaded)
+            if audioService.currentTrack != nil {
+                CompactAudioPlayerView(audioService: audioService)
+            }
+            
+            Spacer()
+            
+            // Search bar (smaller)
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 12))
+                
+                TextField("Search tracks...", text: $searchText)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .frame(width: 150)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top)
+        .background(Color(.controlBackgroundColor))
     }
 }

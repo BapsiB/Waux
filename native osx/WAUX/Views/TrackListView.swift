@@ -350,10 +350,10 @@ struct TrackListView: View {
     @ObservedObject var collectionService: CollectionService
     @ObservedObject var audioService: AudioService
     let tracksFilter: [Track]? // If provided, only show these tracks; otherwise show all tracks
+    @Binding var searchText: String
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @StateObject private var metadataManager: TrackMetadataManager
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
-    @State private var searchText = ""
     @State private var selectedTracks = Set<Track.ID>()
     @State private var showingRatingError = false
     @State private var ratingErrorMessage = ""
@@ -370,10 +370,11 @@ struct TrackListView: View {
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
     
-    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil) {
+    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil, searchText: Binding<String>) {
         self.collectionService = collectionService
         self.audioService = audioService
         self.tracksFilter = tracksFilter
+        self._searchText = searchText
         self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
     }
     
@@ -395,8 +396,6 @@ struct TrackListView: View {
     
     var body: some View {
         VStack {
-            searchBar
-            
             TrackTable(
                 filteredTracks: filteredTracks,
                 selectedTracks: $selectedTracks,
@@ -502,6 +501,13 @@ struct TrackListView: View {
         }
     }
     
+    // MARK: - Helper Functions
+    
+    private func revealInFinder(track: Track) {
+        let fileURL = URL(fileURLWithPath: track.path)
+        NSWorkspace.shared.selectFile(fileURL.path, inFileViewerRootedAtPath: fileURL.deletingLastPathComponent().path)
+    }
+    
     // MARK: - Context Menu
     
     @ViewBuilder
@@ -524,6 +530,16 @@ struct TrackListView: View {
             Button("Edit Tags…") {
                 showTagEditor = true
             }
+            
+            // Only show "Reveal in Finder" for local files
+            if let selectedTrack = selectedTracks.first,
+               let track = filteredTracks.first(where: { $0.id == selectedTrack }),
+               !track.isUrl {
+                Button("Reveal in Finder") {
+                    revealInFinder(track: track)
+                }
+            }
+            
             Divider()
         }
         
@@ -558,36 +574,7 @@ struct TrackListView: View {
         }
     }
     
-    @ViewBuilder
-    private var searchBar: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
-            
-            TextField("Search tracks...", text: $searchText)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-            
-            Spacer()
-            
-            Text("\(filteredTracks.count) tracks")
-                .foregroundColor(.secondary)
-            
-            if !selectedTracks.isEmpty {
-                Text("\(selectedTracks.count) selected")
-                    .foregroundColor(.blue)
-                    .fontWeight(.medium)
-            }
-            
-            Button("🔧 Database Repair") {
-                showDatabaseRepair = true
-            }
-            .buttonStyle(.borderless)
-            .font(.caption)
-            .foregroundColor(.orange)
-        }
-        .padding(.horizontal)
-        .padding(.top)
-    }
+
     
     // MARK: - Cell Views
     
@@ -961,9 +948,10 @@ private struct FileChangesSheet: View {
 
 #Preview {
     let collectionService = CollectionService()
-    return TrackListView(
+    TrackListView(
         collectionService: collectionService,
-        audioService: AudioService()
+        audioService: AudioService(),
+        searchText: .constant("")
     )
 }
 

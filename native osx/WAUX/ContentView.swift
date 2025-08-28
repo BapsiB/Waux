@@ -24,9 +24,6 @@ struct ContentView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header with integrated audio player
-            AudioPlayerHeader(audioService: audioService)
-            
             // Main content
             VStack(spacing: 0) {
                 HStack(spacing: 0) {

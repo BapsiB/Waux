@@ -673,16 +673,25 @@ class CollectionService: ObservableObject {
 
         // Detect moved files by filename match
         var moved: [MovedFileUpdate] = []
-        var newByFilename: [String: String] = Dictionary(uniqueKeysWithValues: newDiskOnly.map { (URL(fileURLWithPath: $0).lastPathComponent.lowercased(), $0) })
+        
+        // Convert absolute paths to relative paths for comparison
+        let newByRelativePath: [String: String] = Dictionary(uniqueKeysWithValues: newDiskOnly.compactMap { absolutePath in
+            let relativePath = self.convertToRelativePath(absolutePath)
+            return (relativePath, absolutePath)
+        })
+        
         var trulyNew: [String] = []
         for missing in dbOnlyTracks {
-            let filename = URL(fileURLWithPath: missing.path).lastPathComponent.lowercased()
-            if let newPath = newByFilename[filename], let id = missing.id {
-                moved.append(MovedFileUpdate(trackId: id, oldPath: (missing.path as NSString).standardizingPath, newPath: newPath, trackTitle: missing.title))
-                newByFilename.removeValue(forKey: filename)
+            // Use the stored relative path from the database
+            let missingRelativePath = missing.path
+            if let newAbsolutePath = newByRelativePath[missingRelativePath], let id = missing.id {
+                moved.append(MovedFileUpdate(trackId: id, oldPath: (missing.path as NSString).standardizingPath, newPath: newAbsolutePath, trackTitle: missing.title))
+                // Note: We don't remove from newByRelativePath here since we're using relative paths as keys
             }
         }
-        trulyNew.append(contentsOf: newByFilename.values)
+        
+        // Add all remaining new files as truly new
+        trulyNew.append(contentsOf: newByRelativePath.values)
         print("🔍 [Scan] Moved files: \(moved.count)")
         print("🔍 [Scan] Truly new files: \(trulyNew.count)")
 
@@ -773,20 +782,8 @@ class CollectionService: ObservableObject {
                     }
                     
                     // Convert to relative path for storage (like existing tracks)
-                    let relativePath: String
-                    if let rootFolder = self.localCollectionRootFolders.first {
-                        if normalizedPath.hasPrefix(rootFolder) {
-                            let relative = String(normalizedPath.dropFirst(rootFolder.count + 1)) // +1 for the slash
-                            relativePath = relative
-                            print("🔍 [CollectionService] Converting to relative path: '\(relativePath)'")
-                        } else {
-                            relativePath = normalizedPath
-                            print("🔍 [CollectionService] Path not under root folder, using absolute: '\(relativePath)'")
-                        }
-                    } else {
-                        relativePath = normalizedPath
-                        print("🔍 [CollectionService] No root folders, using absolute: '\(relativePath)'")
-                    }
+                    let relativePath = self.convertToRelativePath(normalizedPath)
+                    print("🔍 [CollectionService] Converting to relative path: '\(relativePath)'")
                     
                     print("🔍 [CollectionService] Binding parameters:")
                     print("  - Parameter 1 (title): '\(title)'")
@@ -1500,6 +1497,31 @@ class CollectionService: ObservableObject {
     }
     
     // MARK: - Utility Methods
+    
+    /// Converts an absolute path to a relative path based on the collection's root folders
+    private func convertToRelativePath(_ absolutePath: String) -> String {
+        let normalizedPath = (absolutePath as NSString).standardizingPath
+        
+        // For local collections, try to find the file in any of the root folders
+        for rootFolder in localCollectionRootFolders {
+            if normalizedPath.hasPrefix(rootFolder) {
+                let relative = String(normalizedPath.dropFirst(rootFolder.count + 1)) // +1 for the slash
+                return relative
+            }
+        }
+        
+        // For shared collections, use the root path
+        if let definition = activeCollectionDefinition, definition.type == .shared, let rootPath = definition.rootPath {
+            if normalizedPath.hasPrefix(rootPath) {
+                let relative = String(normalizedPath.dropFirst(rootPath.count + 1)) // +1 for the slash
+                return relative
+            }
+        }
+        
+        // If no root folder matches, return the normalized path as-is
+        return normalizedPath
+    }
+    
     func getRootFolders() -> [String] {
         if let definition = activeCollectionDefinition {
             switch definition.type {
