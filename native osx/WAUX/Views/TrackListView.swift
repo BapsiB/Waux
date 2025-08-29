@@ -23,6 +23,7 @@ enum TrackColumn: String, CaseIterable, Hashable {
     case comment
     case generalTags
     case type
+    case dateAdded
     
     var displayName: String {
         switch self {
@@ -46,6 +47,7 @@ enum TrackColumn: String, CaseIterable, Hashable {
         case .comment: return "Comment"
         case .generalTags: return "Tags"
         case .type: return "Type"
+        case .dateAdded: return "Date Added"
         }
     }
 }
@@ -129,13 +131,14 @@ struct TrackTable: View {
                 .width(min: 60, ideal: columnWidths[.type] ?? 80)
             }
             
-//            if visibleColumns.contains(.albumArtist) {
-//                TableColumn("Album Artist", value: \Track.albumArtistText) { track in
-//                    Text(track.albumArtistText)
-//                        .foregroundColor(track.albumArtist?.isEmpty == false ? .primary : .secondary)
-//                }
-//                .width(min: 100, ideal: columnWidths[.albumArtist] ?? 150)
-//            }
+            if visibleColumns.contains(.dateAdded) {
+                TableColumn("Date Added", value: \.dateAdded) { track in
+                    Text(track.formattedDateAdded)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
+            }
             
             if visibleColumns.contains(.composer) {
                 TableColumn("Composer", value: \Track.composerText) { track in
@@ -357,7 +360,7 @@ struct TrackListView: View {
     @State private var selectedTracks = Set<Track.ID>()
     @State private var showingRatingError = false
     @State private var ratingErrorMessage = ""
-    @State private var visibleColumns: Set<TrackColumn> = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type]
+    @State private var visibleColumns: Set<TrackColumn> = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
     @State private var showTagEditor = false
     @State private var columnWidths: [TrackColumn: CGFloat] = [:]
     @State private var hasLoadedPreferences = false
@@ -570,7 +573,7 @@ struct TrackListView: View {
             visibleColumns = Set(TrackColumn.allCases)
         }
         Button("Show Default Columns") {
-            visibleColumns = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type]
+            visibleColumns = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
         }
     }
     
@@ -760,7 +763,7 @@ private struct TableWidthObserver: NSViewRepresentable {
             guard let tableView = tableView else { return }
             
             var updated = false
-            let columnIdentifiers = ["", "Waveform", "Title", "Artist", "Album", "Duration", "Rating", "Type", "Album Artist", "Composer", "Tags"]
+            let columnIdentifiers = ["", "Waveform", "Title", "Artist", "Album", "Duration", "Rating", "Type", "Date Added", "Album Artist", "Composer", "Tags"]
             
             for (index, identifier) in columnIdentifiers.enumerated() {
                 guard index < tableView.tableColumns.count else { break }
@@ -776,6 +779,7 @@ private struct TableWidthObserver: NSViewRepresentable {
                     case "Duration": return .duration
                     case "Rating": return .rating
                     case "Type": return .type
+                    case "Date Added": return .dateAdded
                     case "Album Artist": return .albumArtist
                     case "Composer": return .composer
                     case "Waveform": return .waveformData

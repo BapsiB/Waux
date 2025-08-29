@@ -6,7 +6,7 @@ import SwiftUI
 
 class CollectionService: ObservableObject {
     // MARK: - Constants
-    private let databaseVersion = 5
+    private let databaseVersion = 6
     private let tableMusic = "music"
     private let tablePlaylists = "playlists"
     private let tablePlaylistTracks = "playlist_tracks"
@@ -33,10 +33,11 @@ class CollectionService: ObservableObject {
     private let columnRating = "rating"
     private let columnComment = "comment"
     private let columnGeneralTags = "generalTags"
+    private let columnDateAdded = "dateAdded"
     
     // Explicit column selection to guarantee order across different DB schemas
     private var selectTrackColumns: String {
-        "\(columnId), \(columnTitle), \(columnArtist), \(columnAlbum), \(columnAlbumArtist), \(columnComposer), \(columnGenre), \(columnYear), \(columnTrackNumber), \(columnDiscNumber), \(columnBpm), \(columnPath), \(columnIsUrl), \(columnDuration), \(columnTimeMarkers), \(columnWaveformData), \(columnRating), \(columnComment), \(columnGeneralTags)"
+        "\(columnId), \(columnTitle), \(columnArtist), \(columnAlbum), \(columnAlbumArtist), \(columnComposer), \(columnGenre), \(columnYear), \(columnTrackNumber), \(columnDiscNumber), \(columnBpm), \(columnPath), \(columnIsUrl), \(columnDuration), \(columnTimeMarkers), \(columnWaveformData), \(columnRating), \(columnComment), \(columnGeneralTags), \(columnDateAdded)"
     }
     
     // MARK: - Properties
@@ -249,6 +250,44 @@ class CollectionService: ObservableObject {
         }
         
         print("Successfully opened database")
+        
+        // Check and migrate database schema if needed
+        try migrateDatabaseSchema()
+    }
+    
+    // MARK: - Database Migration
+    private func migrateDatabaseSchema() throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        
+        // Check if dateAdded column exists
+        let checkColumnSQL = "PRAGMA table_info(\(tableMusic))"
+        var statement: OpaquePointer?
+        
+        if sqlite3_prepare_v2(db, checkColumnSQL, -1, &statement, nil) == SQLITE_OK {
+            defer { sqlite3_finalize(statement) }
+            
+            var hasDateAddedColumn = false
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let columnName = String(cString: sqlite3_column_text(statement, 1))
+                if columnName == columnDateAdded {
+                    hasDateAddedColumn = true
+                    break
+                }
+            }
+            
+            if !hasDateAddedColumn {
+                print("🔧 Adding dateAdded column to existing database...")
+                let addColumnSQL = "ALTER TABLE \(tableMusic) ADD COLUMN \(columnDateAdded) TEXT DEFAULT ''"
+                
+                if sqlite3_exec(db, addColumnSQL, nil, nil, nil) != SQLITE_OK {
+                    let errorMessage = String(cString: sqlite3_errmsg(db))
+                    print("⚠️ Failed to add dateAdded column: \(errorMessage)")
+                    // Don't throw error as this is not critical for basic functionality
+                } else {
+                    print("✅ Successfully added dateAdded column")
+                }
+            }
+        }
     }
 
     // MARK: - Database Creation (for new local collections)
@@ -303,7 +342,8 @@ class CollectionService: ObservableObject {
             waveformData TEXT,
             rating INTEGER DEFAULT 0,
             comment TEXT,
-            generalTags TEXT
+            generalTags TEXT,
+            dateAdded TEXT
         )
         """
 
@@ -745,8 +785,8 @@ class CollectionService: ObservableObject {
                     // Explicit INSERT with all relevant columns to ensure correct mapping
                     let insertSQL = """
                         INSERT INTO \(self.tableMusic) (
-                            \(self.columnTitle), \(self.columnArtist), \(self.columnAlbum), \(self.columnAlbumArtist), \(self.columnComposer), \(self.columnGenre), \(self.columnYear), \(self.columnTrackNumber), \(self.columnDiscNumber), \(self.columnBpm), \(self.columnPath), \(self.columnIsUrl), \(self.columnDuration), \(self.columnTimeMarkers), \(self.columnWaveformData), \(self.columnRating), \(self.columnComment), \(self.columnGeneralTags)
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '[]', NULL, 0, '', '[]')
+                            \(self.columnTitle), \(self.columnArtist), \(self.columnAlbum), \(self.columnAlbumArtist), \(self.columnComposer), \(self.columnGenre), \(self.columnYear), \(self.columnTrackNumber), \(self.columnDiscNumber), \(self.columnBpm), \(self.columnPath), \(self.columnIsUrl), \(self.columnDuration), \(self.columnTimeMarkers), \(self.columnWaveformData), \(self.columnRating), \(self.columnComment), \(self.columnGeneralTags), \(self.columnDateAdded)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '[]', NULL, 0, '', '[]', ?)
                     """
                     print("🔍 [CollectionService] addLocalFile - SQL: \(insertSQL)")
                     var stmt: OpaquePointer?
@@ -823,6 +863,9 @@ class CollectionService: ObservableObject {
                     relativePath.withCString { sqlite3_bind_text(stmt, 11, $0, -1, self.SQLITE_TRANSIENT) }
                     // 12 duration
                     sqlite3_bind_int(stmt, 12, Int32(durationMs))
+                    // 13 dateAdded
+                    let currentDate = ISO8601DateFormatter().string(from: Date())
+                    currentDate.withCString { sqlite3_bind_text(stmt, 13, $0, -1, self.SQLITE_TRANSIENT) }
 
                     let stepResult = sqlite3_step(stmt)
                     guard stepResult == SQLITE_DONE else {
@@ -874,7 +917,8 @@ class CollectionService: ObservableObject {
                         waveformData: nil,
                         rating: 0,
                         comment: "",
-                        generalTags: []
+                        generalTags: [],
+                        dateAdded: Date()
                     )
                     // Queue waveform processing
                     self.pendingWaveformTrackIds.append(newId)
@@ -1119,6 +1163,21 @@ class CollectionService: ObservableObject {
             generalTags = []
         }
         
+        // Parse dateAdded with fallback to current date for existing tracks
+        let dateAdded: Date
+        if sqlite3_column_type(statement, 19) != SQLITE_NULL {
+            let dateString = String(cString: sqlite3_column_text(statement, 19))
+            if let parsedDate = ISO8601DateFormatter().date(from: dateString) {
+                dateAdded = parsedDate
+            } else {
+                print("[TrackParse] Track \(id) has invalid dateAdded format, using current date")
+                dateAdded = Date()
+            }
+        } else {
+            print("[TrackParse] Track \(id) has NULL dateAdded, using current date")
+            dateAdded = Date()
+        }
+        
         return Track(
             id: id,
             title: title,
@@ -1138,7 +1197,8 @@ class CollectionService: ObservableObject {
             waveformData: waveformData,
             rating: rating,
             comment: comment,
-            generalTags: generalTags
+            generalTags: generalTags,
+            dateAdded: dateAdded
         )
     }
     
@@ -1490,7 +1550,8 @@ class CollectionService: ObservableObject {
             waveformData: track.waveformData,
             rating: track.rating,
             comment: track.comment,
-            generalTags: track.generalTags
+            generalTags: track.generalTags,
+            dateAdded: track.dateAdded
         )
         
         return resolvedTrack
@@ -1572,6 +1633,16 @@ class CollectionService: ObservableObject {
         }
         
         return searchResults.sorted()
+    }
+    
+    /// Get tracks sorted by date added (newest first)
+    func getTracksSortedByDateAdded() -> [Track] {
+        return tracks.sorted { $0.dateAdded > $1.dateAdded }
+    }
+    
+    /// Get tracks sorted by date added (oldest first)
+    func getTracksSortedByDateAddedOldestFirst() -> [Track] {
+        return tracks.sorted { $0.dateAdded < $1.dateAdded }
     }
     
     // MARK: - Track Updates
@@ -1677,7 +1748,8 @@ class CollectionService: ObservableObject {
                                 waveformData: waveformData,
                                 rating: self.tracks[index].rating,
                                 comment: self.tracks[index].comment,
-                                generalTags: self.tracks[index].generalTags
+                                generalTags: self.tracks[index].generalTags,
+                                dateAdded: self.tracks[index].dateAdded
                             )
                             
                             // Replace the entire array to force SwiftUI refresh
@@ -1764,7 +1836,8 @@ class CollectionService: ObservableObject {
                                 waveformData: self.tracks[index].waveformData,
                                 rating: newRating,
                                 comment: self.tracks[index].comment,
-                                generalTags: self.tracks[index].generalTags
+                                generalTags: self.tracks[index].generalTags,
+                                dateAdded: self.tracks[index].dateAdded
                             )
                             self.tracks = updatedTracks
                         }
@@ -2079,7 +2152,8 @@ class CollectionService: ObservableObject {
                             waveformData: self.tracks[index].waveformData,
                             rating: self.tracks[index].rating,
                             comment: self.tracks[index].comment,
-                            generalTags: newTags
+                            generalTags: newTags,
+                            dateAdded: self.tracks[index].dateAdded
                         )
                         self.tracks = updatedTracks
                         print("[CollectionService] track \(trackId) updated, new tags: \(updatedTracks[index].generalTags)")
@@ -2283,7 +2357,8 @@ class CollectionService: ObservableObject {
                     waveformData: nil,
                     rating: self.tracks[index].rating,
                     comment: self.tracks[index].comment,
-                    generalTags: []
+                    generalTags: [],
+                    dateAdded: self.tracks[index].dateAdded
                 )
                 self.tracks = updatedTracks
             }
@@ -2527,7 +2602,8 @@ class CollectionService: ObservableObject {
                                 waveformData: nil,
                                 rating: self.tracks[index].rating,
                                 comment: self.tracks[index].comment,
-                                generalTags: self.tracks[index].generalTags
+                                generalTags: self.tracks[index].generalTags,
+                                dateAdded: self.tracks[index].dateAdded
                             )
                             self.tracks = updatedTracks
                         }

@@ -68,6 +68,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
     let rating: Int // 0-5 stars
     let comment: String
     let generalTags: [String]
+    let dateAdded: Date // When the track was added to the collection
     
     // Additional metadata fields
     let albumArtist: String?
@@ -97,7 +98,8 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
         waveformData: [Double]? = nil,
         rating: Int = 0,
         comment: String = "",
-        generalTags: [String] = []
+        generalTags: [String] = [],
+        dateAdded: Date = Date()
     ) {
         self.id = id
         self.title = title
@@ -118,6 +120,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
         self.rating = rating
         self.comment = comment
         self.generalTags = generalTags
+        self.dateAdded = dateAdded
     }
     
     var sourceType: TrackSource {
@@ -160,6 +163,12 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
     var timeMarkersCount: Int { timeMarkers.count }
     var waveformPointCount: Int { waveformData?.count ?? 0 }
     var generalTagsText: String { generalTags.joined(separator: ", ") }
+    var formattedDateAdded: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: dateAdded)
+    }
     
     // MARK: - Comparable
     static func < (lhs: Track, rhs: Track) -> Bool {
