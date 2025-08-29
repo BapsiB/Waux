@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 struct PlaylistSidebar: View {
     @ObservedObject var playlistService: PlaylistService
     @Binding var selectedPlaylist: Playlist?
-    @State private var showingCreatePlaylistAlert = false
+    @State private var showingCreatePlaylistSheet = false
     @State private var newPlaylistName = ""
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
@@ -19,7 +19,7 @@ struct PlaylistSidebar: View {
                 
                 Button(action: {
                     newPlaylistName = ""
-                    showingCreatePlaylistAlert = true
+                    showingCreatePlaylistSheet = true
                 }) {
                     Image(systemName: "plus")
                         .font(.system(size: 14, weight: .medium))
@@ -80,14 +80,17 @@ struct PlaylistSidebar: View {
         }
         .frame(width: 200)
         .background(Color(.controlBackgroundColor))
-        .alert("Create New Playlist", isPresented: $showingCreatePlaylistAlert) {
-            TextField("Playlist name", text: $newPlaylistName)
-            Button("Cancel", role: .cancel) { }
-            Button("Create") {
-                createPlaylist()
-            }
-        } message: {
-            Text("Enter a name for your new playlist")
+        .sheet(isPresented: $showingCreatePlaylistSheet) {
+            CreatePlaylistSheet(
+                newPlaylistName: $newPlaylistName,
+                onCancel: {
+                    showingCreatePlaylistSheet = false
+                },
+                onCreate: {
+                    createPlaylist()
+                    showingCreatePlaylistSheet = false
+                }
+            )
         }
         .alert("Error", isPresented: $showingErrorAlert) {
             Button("OK") { }
@@ -146,5 +149,52 @@ struct PlaylistSidebar: View {
             }
         }
         return handled
+    }
+}
+
+struct CreatePlaylistSheet: View {
+    @Binding var newPlaylistName: String
+    @FocusState private var isTextFieldFocused: Bool
+    let onCancel: () -> Void
+    let onCreate: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Create New Playlist")
+                .font(.title2)
+                .fontWeight(.semibold)
+            
+            Text("Enter a name for your new playlist")
+                .font(.body)
+                .foregroundColor(.secondary)
+            
+            TextField("Playlist name", text: $newPlaylistName)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+                .focused($isTextFieldFocused)
+                .onSubmit {
+                    if !newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        onCreate()
+                    }
+                }
+            
+            HStack(spacing: 12) {
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .buttonStyle(.bordered)
+                
+                Button("Create") {
+                    onCreate()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 300)
+        .onAppear {
+            // Automatically focus the text field when the sheet appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isTextFieldFocused = true
+            }
+        }
     }
 }
