@@ -102,25 +102,20 @@ struct CompactAudioPlayerView: View {
                 
                 // 1/4: Volume control
                 HStack(spacing: 8) {
-                    Image(systemName: "speaker.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
                     
                     Slider(value: Binding(
                         get: { Double(audioService.volume) },
                         set: { audioService.setVolume(Float($0)) }
                     ), in: 0...1)
                     .frame(maxWidth: .infinity)
-                    .controlSize(.small)
-                    
-                    Image(systemName: "speaker.wave.3.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                    .accentColor(.gray)
+                
                 }
                 .frame(width: geometry.size.width * 0.25)
                 .frame(maxHeight: .infinity)
                 // .padding(.bottom, 34)
                 .clipped()
+                .scaleEffect(x: 0.5, y: 0.5)
                 
                 // Loading indicator (overlay)
                 if audioService.isLoading {
