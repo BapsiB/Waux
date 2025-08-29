@@ -1864,6 +1864,156 @@ class CollectionService: ObservableObject {
             }
         }
     }
+    
+    func updateTrackMetadata(trackId: Int, updates: [String: Any]) async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else {
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    
+                    if self.isReadOnlyMode {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot update metadata in read-only mode. Please ensure the database file is writable."))
+                        return
+                    }
+                    
+                    // First, ensure we're using DELETE journal mode to avoid permission issues
+                    let journalResult = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
+                    if journalResult != SQLITE_OK {
+                        print("Warning: Could not set journal mode to DELETE for update operation")
+                    }
+                    
+                    // Build dynamic UPDATE query based on provided updates
+                    var setClauses: [String] = []
+                    var parameters: [Any] = []
+                    
+                    for (key, value) in updates {
+                        switch key {
+                        case "title":
+                            setClauses.append("\(self.columnTitle) = ?")
+                            parameters.append(value as? String ?? "")
+                        case "artist":
+                            setClauses.append("\(self.columnArtist) = ?")
+                            parameters.append(value as? String ?? "")
+                        case "album":
+                            setClauses.append("\(self.columnAlbum) = ?")
+                            parameters.append(value as? String ?? "")
+                        case "albumArtist":
+                            setClauses.append("\(self.columnAlbumArtist) = ?")
+                            parameters.append(value as? String)
+                        case "composer":
+                            setClauses.append("\(self.columnComposer) = ?")
+                            parameters.append(value as? String)
+                        case "genre":
+                            setClauses.append("\(self.columnGenre) = ?")
+                            parameters.append(value as? String)
+                        case "year":
+                            setClauses.append("\(self.columnYear) = ?")
+                            parameters.append(value as? Int)
+                        case "trackNumber":
+                            setClauses.append("\(self.columnTrackNumber) = ?")
+                            parameters.append(value as? Int)
+                        case "discNumber":
+                            setClauses.append("\(self.columnDiscNumber) = ?")
+                            parameters.append(value as? Int)
+                        case "bpm":
+                            setClauses.append("\(self.columnBpm) = ?")
+                            parameters.append(value as? Int)
+                        case "comment":
+                            setClauses.append("\(self.columnComment) = ?")
+                            parameters.append(value as? String ?? "")
+                        case "generalTags":
+                            if let tags = value as? [String] {
+                                setClauses.append("\(self.columnGeneralTags) = ?")
+                                parameters.append(tags.joined(separator: ","))
+                            }
+                        default:
+                            print("Warning: Unknown metadata field '\(key)' ignored")
+                            continue
+                        }
+                    }
+                    
+                    guard !setClauses.isEmpty else {
+                        continuation.resume()
+                        return
+                    }
+                    
+                    let query = "UPDATE \(self.tableMusic) SET \(setClauses.joined(separator: ", ")) WHERE \(self.columnId) = ?"
+                    var statement: OpaquePointer?
+                    
+                    let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    // Bind parameters
+                    for (index, parameter) in parameters.enumerated() {
+                        let bindIndex = Int32(index + 1)
+                        if let stringValue = parameter as? String {
+                            sqlite3_bind_text(statement, bindIndex, (stringValue as NSString).utf8String, -1, nil)
+                        } else if let intValue = parameter as? Int {
+                            sqlite3_bind_int(statement, bindIndex, Int32(intValue))
+                        } else if parameter is NSNull {
+                            sqlite3_bind_null(statement, bindIndex)
+                        }
+                    }
+                    
+                    // Bind track ID
+                    sqlite3_bind_int(statement, Int32(parameters.count + 1), Int32(trackId))
+                    
+                    let stepResult = sqlite3_step(statement)
+                    if stepResult != SQLITE_DONE {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    // Update the track in the local array on the main thread
+                    Task { @MainActor in
+                        if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
+                            var updatedTracks = self.tracks
+                            let currentTrack = self.tracks[index]
+                            
+                            updatedTracks[index] = Track(
+                                id: currentTrack.id,
+                                title: updates["title"] as? String ?? currentTrack.title,
+                                artist: updates["artist"] as? String ?? currentTrack.artist,
+                                album: updates["album"] as? String ?? currentTrack.album,
+                                albumArtist: updates["albumArtist"] as? String ?? currentTrack.albumArtist,
+                                composer: updates["composer"] as? String ?? currentTrack.composer,
+                                genre: updates["genre"] as? String ?? currentTrack.genre,
+                                year: updates["year"] as? Int ?? currentTrack.year,
+                                trackNumber: updates["trackNumber"] as? Int ?? currentTrack.trackNumber,
+                                discNumber: updates["discNumber"] as? Int ?? currentTrack.discNumber,
+                                bpm: updates["bpm"] as? Int ?? currentTrack.bpm,
+                                path: currentTrack.path,
+                                isUrl: currentTrack.isUrl,
+                                duration: currentTrack.duration,
+                                timeMarkers: currentTrack.timeMarkers,
+                                waveformData: currentTrack.waveformData,
+                                rating: currentTrack.rating,
+                                comment: updates["comment"] as? String ?? currentTrack.comment,
+                                generalTags: updates["generalTags"] as? [String] ?? currentTrack.generalTags,
+                                dateAdded: currentTrack.dateAdded
+                            )
+                            self.tracks = updatedTracks
+                        }
+                    }
+                    
+                    print("Updated metadata for track \(trackId) with updates: \(updates)")
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
 
     // MARK: - Global Tags Persistence
     func loadGlobalTags() async throws {

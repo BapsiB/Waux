@@ -146,6 +146,24 @@ class TrackMetadataManager: ObservableObject {
         scheduleUpdate()
     }
     
+    func updateTrackMetadata(trackId: Int, updates: [String: Any]) async throws {
+        print("[TrackMetadataManager] Updating metadata for track \(trackId) with updates: \(updates)")
+        
+        // Apply optimistic changes immediately
+        var changes = optimisticChanges[trackId] ?? TrackChanges()
+        changes.metadataUpdates.merge(updates) { _, new in new }
+        optimisticChanges[trackId] = changes
+        
+        // Trigger UI update
+        objectWillChange.send()
+        
+        // Execute update immediately for metadata changes
+        try await collectionService.updateTrackMetadata(trackId: trackId, updates: updates)
+        
+        // Clear optimistic changes after successful update
+        optimisticChanges.removeValue(forKey: trackId)
+    }
+    
     // MARK: - Private Methods
     private func handleTracksUpdate(_ newTracks: [Track]) {
         print("[TrackMetadataManager] Received tracks update: \(newTracks.count) tracks")
@@ -235,26 +253,40 @@ class TrackMetadataManager: ObservableObject {
         let finalTags = Array(newTags).sorted { $0.lowercased() < $1.lowercased() }
         let finalRating = changes.newRating ?? track.rating
         
+        // Apply metadata updates
+        let updatedTitle = changes.metadataUpdates["title"] as? String ?? track.title
+        let updatedArtist = changes.metadataUpdates["artist"] as? String ?? track.artist
+        let updatedAlbum = changes.metadataUpdates["album"] as? String ?? track.album
+        let updatedAlbumArtist = changes.metadataUpdates["albumArtist"] as? String ?? track.albumArtist
+        let updatedComposer = changes.metadataUpdates["composer"] as? String ?? track.composer
+        let updatedGenre = changes.metadataUpdates["genre"] as? String ?? track.genre
+        let updatedYear = changes.metadataUpdates["year"] as? Int ?? track.year
+        let updatedTrackNumber = changes.metadataUpdates["trackNumber"] as? Int ?? track.trackNumber
+        let updatedDiscNumber = changes.metadataUpdates["discNumber"] as? Int ?? track.discNumber
+        let updatedBpm = changes.metadataUpdates["bpm"] as? Int ?? track.bpm
+        let updatedComment = changes.metadataUpdates["comment"] as? String ?? track.comment
+        let updatedGeneralTags = changes.metadataUpdates["generalTags"] as? [String] ?? finalTags
+        
         return Track(
             id: track.id,
-            title: track.title,
-            artist: track.artist,
-            album: track.album,
-            albumArtist: track.albumArtist,
-            composer: track.composer,
-            genre: track.genre,
-            year: track.year,
-            trackNumber: track.trackNumber,
-            discNumber: track.discNumber,
-            bpm: track.bpm,
+            title: updatedTitle,
+            artist: updatedArtist,
+            album: updatedAlbum,
+            albumArtist: updatedAlbumArtist,
+            composer: updatedComposer,
+            genre: updatedGenre,
+            year: updatedYear,
+            trackNumber: updatedTrackNumber,
+            discNumber: updatedDiscNumber,
+            bpm: updatedBpm,
             path: track.path,
             isUrl: track.isUrl,
             duration: track.duration,
             timeMarkers: track.timeMarkers,
             waveformData: track.waveformData,
             rating: finalRating,
-            comment: track.comment,
-            generalTags: finalTags
+            comment: updatedComment,
+            generalTags: updatedGeneralTags
         )
     }
 }
@@ -264,4 +296,5 @@ private struct TrackChanges {
     var addedTags: Set<String> = []
     var removedTags: Set<String> = []
     var newRating: Int?
+    var metadataUpdates: [String: Any] = [:]
 }

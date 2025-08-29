@@ -346,6 +346,7 @@ struct TrackListView: View {
     @State private var ratingErrorMessage = ""
     @State private var visibleColumns: Set<TrackColumn> = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
     @State private var showTagEditor = false
+    @State private var showMetadataEditor = false
     @State private var columnWidths: [TrackColumn: CGFloat] = [:]
     @State private var hasLoadedPreferences = false
     @State private var showDatabaseRepair = false
@@ -440,6 +441,17 @@ struct TrackListView: View {
                 trackIds: selectedTrackIds
             )
         }
+        .sheet(isPresented: $showMetadataEditor) {
+            let selectedTrackIds = filteredTracks
+                .filter { selectedTracks.contains($0.id) }
+                .compactMap { $0.id }
+            
+            MetadataEditorView(
+                metadataManager: metadataManager,
+                collectionService: collectionService,
+                trackIds: selectedTrackIds
+            )
+        }
         .sheet(isPresented: $showDatabaseRepair) {
             DatabaseRepairView(
                 collectionService: collectionService,
@@ -516,6 +528,9 @@ struct TrackListView: View {
             }
             Button("Edit Tags…") {
                 showTagEditor = true
+            }
+            Button("Edit Metadata…") {
+                showMetadataEditor = true
             }
             
             // Only show "Reveal in Finder" for local files
