@@ -55,7 +55,7 @@ class CollectionService: ObservableObject {
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     
     // MARK: - Thread Safety
-    private let databaseQueue = DispatchQueue(label: "com.waux.collection.database", qos: .userInitiated)
+    let databaseQueue = DispatchQueue(label: "com.waux.collection.database", qos: .userInitiated)
     
     // MARK: - Initialization
     init() {

@@ -12,7 +12,7 @@ struct PlaylistSidebar: View {
     var body: some View {
         VStack {
             HStack {
-                Text("Library")
+                Text("Playlists")
                     .font(.headline)
                 
                 Spacer()
