@@ -285,6 +285,17 @@ class CollectionService: ObservableObject {
                     // Don't throw error as this is not critical for basic functionality
                 } else {
                     print("✅ Successfully added dateAdded column")
+                    
+                    // Set a default date for existing tracks (use a date in the past to indicate they were added before this feature)
+                    let defaultDate = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-86400 * 30)) // 30 days ago
+                    let updateExistingSQL = "UPDATE \(tableMusic) SET \(columnDateAdded) = '\(defaultDate)' WHERE \(columnDateAdded) = '' OR \(columnDateAdded) IS NULL"
+                    
+                    if sqlite3_exec(db, updateExistingSQL, nil, nil, nil) != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        print("⚠️ Failed to set default dates for existing tracks: \(errorMessage)")
+                    } else {
+                        print("✅ Successfully set default dates for existing tracks")
+                    }
                 }
             }
         }
@@ -343,7 +354,7 @@ class CollectionService: ObservableObject {
             rating INTEGER DEFAULT 0,
             comment TEXT,
             generalTags TEXT,
-            dateAdded TEXT
+            dateAdded TEXT DEFAULT ''
         )
         """
 
@@ -1163,19 +1174,21 @@ class CollectionService: ObservableObject {
             generalTags = []
         }
         
-        // Parse dateAdded with fallback to current date for existing tracks
+        // Parse dateAdded with fallback to a reasonable default date for existing tracks
         let dateAdded: Date
         if sqlite3_column_type(statement, 19) != SQLITE_NULL {
             let dateString = String(cString: sqlite3_column_text(statement, 19))
             if let parsedDate = ISO8601DateFormatter().date(from: dateString) {
                 dateAdded = parsedDate
             } else {
-                print("[TrackParse] Track \(id) has invalid dateAdded format, using current date")
-                dateAdded = Date()
+                print("[TrackParse] Track \(id) has invalid dateAdded format, using fallback date")
+                // Use a fallback date instead of current date to avoid showing current time
+                dateAdded = Date().addingTimeInterval(-86400 * 30) // 30 days ago as fallback
             }
         } else {
-            print("[TrackParse] Track \(id) has NULL dateAdded, using current date")
-            dateAdded = Date()
+            print("[TrackParse] Track \(id) has NULL dateAdded, using fallback date")
+            // Use a fallback date instead of current date to avoid showing current time
+            dateAdded = Date().addingTimeInterval(-86400 * 30) // 30 days ago as fallback
         }
         
         return Track(
@@ -2607,6 +2620,65 @@ class CollectionService: ObservableObject {
                             )
                             self.tracks = updatedTracks
                         }
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /// Updates tracks that don't have a proper dateAdded value
+    func updateMissingDateAdded() async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    if self.isReadOnlyMode { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot update dates in read-only mode."))
+                        return
+                    }
+                    
+                    print("🔧 Updating tracks with missing dateAdded values...")
+                    
+                    // Find tracks with empty or NULL dateAdded
+                    let updateSQL = """
+                        UPDATE \(self.tableMusic) 
+                        SET \(self.columnDateAdded) = ? 
+                        WHERE \(self.columnDateAdded) = '' OR \(self.columnDateAdded) IS NULL
+                    """
+                    
+                    var statement: OpaquePointer?
+                    let result = sqlite3_prepare_v2(db, updateSQL, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    // Use a date 30 days ago as default for existing tracks
+                    let defaultDate = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-86400 * 30))
+                    sqlite3_bind_text(statement, 1, defaultDate, -1, self.SQLITE_TRANSIENT)
+                    
+                    if sqlite3_step(statement) != SQLITE_DONE {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    let updatedCount = sqlite3_changes(db)
+                    print("✅ Updated \(updatedCount) tracks with missing dateAdded values")
+                    
+                    // Reload tracks to reflect changes
+                    Task { @MainActor in
+                        try? await self.loadAllTracks()
                     }
                     
                     continuation.resume()

@@ -5,7 +5,8 @@ struct CompactAudioPlayerView: View {
     
     var body: some View {
         GeometryReader { geometry in
-            HStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 0) {
+                // Use alignment to center all elements vertically
                 // 1/4: Control buttons
                 HStack(spacing: 12) {
                     Button(action: {
@@ -39,9 +40,10 @@ struct CompactAudioPlayerView: View {
                     .buttonStyle(.plain)
                 }
                 .frame(width: geometry.size.width * 0.25)
+                .frame(maxHeight: .infinity)
                 
                 // 1/2: Title with playback slider under
-                VStack(alignment: .center, spacing: 4) {
+                VStack(alignment: .center, spacing: 0) {
                     if let track = audioService.currentTrack {
                         VStack(alignment: .center, spacing: 2) {
                             Text(track.title)
@@ -96,6 +98,7 @@ struct CompactAudioPlayerView: View {
                     }
                 }
                 .frame(width: geometry.size.width * 0.5)
+                .frame(maxHeight: .infinity)
                 
                 // 1/4: Volume control
                 HStack(spacing: 8) {
@@ -108,12 +111,16 @@ struct CompactAudioPlayerView: View {
                         set: { audioService.setVolume(Float($0)) }
                     ), in: 0...1)
                     .frame(maxWidth: .infinity)
+                    .controlSize(.small)
                     
                     Image(systemName: "speaker.wave.3.fill")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
                 .frame(width: geometry.size.width * 0.25)
+                .frame(maxHeight: .infinity)
+                // .padding(.bottom, 34)
+                .clipped()
                 
                 // Loading indicator (overlay)
                 if audioService.isLoading {
@@ -124,7 +131,8 @@ struct CompactAudioPlayerView: View {
                 }
             }
         }
-        .frame(height: 50)
+        .frame(maxHeight: .infinity)
+        .offset(y: -18)
     }
 }
 

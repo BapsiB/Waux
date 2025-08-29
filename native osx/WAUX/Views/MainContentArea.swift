@@ -153,7 +153,8 @@ struct MainContentArea: View {
             }
         }
         .padding(.horizontal)
-        .padding(.top)
+        .padding(.vertical, 12)
         .background(Color(.controlBackgroundColor))
+        .frame(height: 60)
     }
 }

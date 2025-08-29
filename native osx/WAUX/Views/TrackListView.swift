@@ -52,8 +52,6 @@ enum TrackColumn: String, CaseIterable, Hashable {
     }
 }
 
-// MARK: - Track Table Component
-
 struct TrackTable: View {
     let filteredTracks: [Track]
     @Binding var selectedTracks: Set<Track.ID>
@@ -96,25 +94,18 @@ struct TrackTable: View {
             .width(min: 150, ideal: columnWidths[.title] ?? 250)
             
             if visibleColumns.contains(.artist) {
-                TableColumn("Artist", value: \.artist) { track in
-                    Text(track.artist)
-                }
-                .width(min: 100, ideal: columnWidths[.artist] ?? 150)
+                TableColumn("Artist", value: \.artist)
+                    .width(min: 100, ideal: columnWidths[.artist] ?? 150)
             }
             
             if visibleColumns.contains(.album) {
-                TableColumn("Album", value: \.album) { track in
-                    Text(track.album)
-                }
-                .width(min: 100, ideal: columnWidths[.album] ?? 150)
+                TableColumn("Album", value: \.album)
+                    .width(min: 100, ideal: columnWidths[.album] ?? 150)
             }
             
             if visibleColumns.contains(.duration) {
-                TableColumn("Duration", value: \.duration) { track in
-                    Text(track.formattedDuration)
-                        .monospacedDigit()
-                }
-                .width(min: 50, ideal: columnWidths[.duration] ?? 70)
+                TableColumn("Duration", value: \.formattedDuration)
+                    .width(min: 50, ideal: columnWidths[.duration] ?? 70)
             }
             
             if visibleColumns.contains(.rating) {
@@ -124,28 +115,21 @@ struct TrackTable: View {
                 .width(min: 80, ideal: columnWidths[.rating] ?? 100)
             }
             
-            if visibleColumns.contains(.type) {
-                TableColumn("Type", value: \.sourceType.rawValue) { track in
-                    typeCell(for: track)
-                }
-                .width(min: 60, ideal: columnWidths[.type] ?? 80)
-            }
+//            if visibleColumns.contains(.type) {
+//                TableColumn("Type", value: \.sourceType.rawValue) { track in
+//                    typeCell(for: track)
+//                }
+//                .width(min: 60, ideal: columnWidths[.type] ?? 80)
+//            }
             
             if visibleColumns.contains(.dateAdded) {
-                TableColumn("Date Added", value: \.dateAdded) { track in
-                    Text(track.formattedDateAdded)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
+                TableColumn("Date Added", value: \.formattedDateAdded)
+                    .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
             }
             
             if visibleColumns.contains(.composer) {
-                TableColumn("Composer", value: \Track.composerText) { track in
-                    Text(track.composerText)
-                        .foregroundColor(track.composer?.isEmpty == false ? .primary : .secondary)
-                }
-                .width(min: 100, ideal: columnWidths[.composer] ?? 150)
+                TableColumn("Composer", value: \Track.composerText)
+                    .width(min: 100, ideal: columnWidths[.composer] ?? 150)
             }
             
             if visibleColumns.contains(.generalTags) {
