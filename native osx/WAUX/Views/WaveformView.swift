@@ -178,19 +178,16 @@ struct WaveformColumn: View {
                 }()
                 
                 HStack(spacing: 4) {
-                    // Play button
+                    // Play/Pause button
                     Button(action: {
-                        Task {
-                            await audioService.loadTrack(track)
-                            audioService.play()
-                        }
+                        handlePlayPauseButtonTap(track: track)
                     }) {
-                        Image(systemName: "play.circle.fill")
+                        Image(systemName: getPlayPauseIcon(for: track))
                             .font(.title2)
                             .foregroundColor(.blue)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Play track")
+                    .help(getPlayPauseHelpText(for: track))
                     
                     // Waveform view
                     WaveformView(
@@ -252,6 +249,39 @@ struct WaveformColumn: View {
                     }
                 }
             }
+        }
+    }
+    
+    private func handlePlayPauseButtonTap(track: Track) {
+        if audioService.currentTrack?.id == track.id {
+            // Current track is playing - toggle play/pause
+            if audioService.isPlaying {
+                audioService.pause()
+            } else {
+                audioService.play()
+            }
+        } else {
+            // Different track - load and play
+            Task {
+                await audioService.loadTrack(track)
+                audioService.play()
+            }
+        }
+    }
+    
+    private func getPlayPauseIcon(for track: Track) -> String {
+        if audioService.currentTrack?.id == track.id && audioService.isPlaying {
+            return "pause.circle.fill"
+        } else {
+            return "play.circle.fill"
+        }
+    }
+    
+    private func getPlayPauseHelpText(for track: Track) -> String {
+        if audioService.currentTrack?.id == track.id && audioService.isPlaying {
+            return "Pause track"
+        } else {
+            return "Play track"
         }
     }
     
