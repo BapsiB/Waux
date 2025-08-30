@@ -463,6 +463,104 @@ class PlaylistService: ObservableObject {
             return ()
         }
     }
+    
+    func duplicatePlaylist(playlistId: String, newName: String) async throws -> Playlist {
+        guard let db = database,
+              let activeCollection = activeCollectionDefinition else {
+            throw PlaylistError.noActiveCollection
+        }
+        
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty {
+            throw PlaylistError.invalidName
+        }
+        
+        return try await withDatabaseQueue {
+            // First, create the new playlist
+            let newPlaylistId = UUID().uuidString
+            let insertQuery = "INSERT INTO \(self.tablePlaylists) (\(self.columnPlaylistsId), \(self.columnPlaylistsName)) VALUES (?, ?)"
+            var insertStatement: OpaquePointer?
+            
+            let insertResult = sqlite3_prepare_v2(db, insertQuery, -1, &insertStatement, nil)
+            defer { sqlite3_finalize(insertStatement) }
+            
+            if insertResult != SQLITE_OK {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw PlaylistError.queryFailed(message: errorMessage)
+            }
+            
+            sqlite3_bind_text(insertStatement, 1, (newPlaylistId as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(insertStatement, 2, (trimmedName as NSString).utf8String, -1, nil)
+            
+            let stepResult = sqlite3_step(insertStatement)
+            if stepResult != SQLITE_DONE {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw PlaylistError.queryFailed(message: errorMessage)
+            }
+            
+            // Get all tracks from the original playlist
+            let tracksQuery = "SELECT \(self.columnPlaylistTracksTrackPath), \(self.columnPlaylistTracksSortOrder) FROM \(self.tablePlaylistTracks) WHERE \(self.columnPlaylistTracksPlaylistId) = ? ORDER BY \(self.columnPlaylistTracksSortOrder)"
+            var tracksStatement: OpaquePointer?
+            
+            let tracksResult = sqlite3_prepare_v2(db, tracksQuery, -1, &tracksStatement, nil)
+            defer { sqlite3_finalize(tracksStatement) }
+            
+            if tracksResult != SQLITE_OK {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw PlaylistError.queryFailed(message: errorMessage)
+            }
+            
+            sqlite3_bind_text(tracksStatement, 1, (playlistId as NSString).utf8String, -1, nil)
+            
+            var trackPaths: [String] = []
+            while sqlite3_step(tracksStatement) == SQLITE_ROW {
+                if let trackPathPtr = sqlite3_column_text(tracksStatement, 0) {
+                    let trackPath = String(cString: trackPathPtr)
+                    trackPaths.append(trackPath)
+                }
+            }
+            
+            // Copy all tracks to the new playlist
+            for (index, trackPath) in trackPaths.enumerated() {
+                let copyQuery = """
+                    INSERT INTO \(self.tablePlaylistTracks) 
+                    (\(self.columnPlaylistTracksPlaylistId), \(self.columnPlaylistTracksTrackPath), \(self.columnPlaylistTracksSortOrder)) 
+                    VALUES (?, ?, ?)
+                """
+                var copyStatement: OpaquePointer?
+                
+                let copyResult = sqlite3_prepare_v2(db, copyQuery, -1, &copyStatement, nil)
+                defer { sqlite3_finalize(copyStatement) }
+                
+                if copyResult != SQLITE_OK {
+                    let errorMessage = String(cString: sqlite3_errmsg(db))
+                    throw PlaylistError.queryFailed(message: errorMessage)
+                }
+                
+                sqlite3_bind_text(copyStatement, 1, (newPlaylistId as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(copyStatement, 2, (trackPath as NSString).utf8String, -1, nil)
+                sqlite3_bind_int(copyStatement, 3, Int32(index))
+                
+                let copyStepResult = sqlite3_step(copyStatement)
+                if copyStepResult != SQLITE_DONE {
+                    let errorMessage = String(cString: sqlite3_errmsg(db))
+                    throw PlaylistError.queryFailed(message: errorMessage)
+                }
+            }
+            
+            // Create the new playlist object
+            let newPlaylist = Playlist(id: newPlaylistId, name: trimmedName, trackPaths: trackPaths)
+            
+            // Update local playlists
+            await MainActor.run {
+                self.playlists.append(newPlaylist)
+                self.playlists.sort { $0.name < $1.name }
+            }
+            
+            print("Duplicated playlist '\(playlistId)' to '\(newPlaylistId)' with \(trackPaths.count) tracks")
+            return newPlaylist
+        }
+    }
 }
 
 // MARK: - Errors

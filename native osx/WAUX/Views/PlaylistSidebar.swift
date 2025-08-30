@@ -8,6 +8,12 @@ struct PlaylistSidebar: View {
     @State private var newPlaylistName = ""
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
+    @State private var showingRenameSheet = false
+    @State private var showingDuplicateSheet = false
+    @State private var playlistToRename: Playlist?
+    @State private var playlistToDuplicate: Playlist?
+    @State private var renamePlaylistName = ""
+    @State private var duplicatePlaylistName = ""
     
     var body: some View {
         VStack {
@@ -74,6 +80,25 @@ struct PlaylistSidebar: View {
                     .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
                         handleDrop(providers: providers, into: playlist)
                     }
+                    .contextMenu {
+                        Button("Rename") {
+                            playlistToRename = playlist
+                            renamePlaylistName = playlist.name
+                            showingRenameSheet = true
+                        }
+                        
+                        Button("Duplicate") {
+                            playlistToDuplicate = playlist
+                            duplicatePlaylistName = "\(playlist.name) Copy"
+                            showingDuplicateSheet = true
+                        }
+                        
+                        Divider()
+                        
+                        Button("Delete", role: .destructive) {
+                            deletePlaylist(playlist)
+                        }
+                    }
                 }
                 .listStyle(SidebarListStyle())
             }
@@ -89,6 +114,34 @@ struct PlaylistSidebar: View {
                 onCreate: {
                     createPlaylist()
                     showingCreatePlaylistSheet = false
+                }
+            )
+        }
+        .sheet(isPresented: $showingRenameSheet) {
+            RenamePlaylistSheet(
+                playlistName: $renamePlaylistName,
+                onCancel: {
+                    showingRenameSheet = false
+                    playlistToRename = nil
+                },
+                onRename: {
+                    renamePlaylist()
+                    showingRenameSheet = false
+                    playlistToRename = nil
+                }
+            )
+        }
+        .sheet(isPresented: $showingDuplicateSheet) {
+            DuplicatePlaylistSheet(
+                playlistName: $duplicatePlaylistName,
+                onCancel: {
+                    showingDuplicateSheet = false
+                    playlistToDuplicate = nil
+                },
+                onDuplicate: {
+                    duplicatePlaylist()
+                    showingDuplicateSheet = false
+                    playlistToDuplicate = nil
                 }
             )
         }
@@ -111,6 +164,73 @@ struct PlaylistSidebar: View {
             do {
                 _ = try await playlistService.createPlaylist(name: trimmedName)
                 // Playlist is created but not automatically selected
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    private func renamePlaylist() {
+        guard let playlist = playlistToRename else { return }
+        
+        let trimmedName = renamePlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty {
+            errorMessage = "Playlist name cannot be empty"
+            showingErrorAlert = true
+            return
+        }
+        
+        Task {
+            do {
+                try await playlistService.renamePlaylist(playlistId: playlist.id, newName: trimmedName)
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    private func duplicatePlaylist() {
+        guard let playlist = playlistToDuplicate else { return }
+        
+        let trimmedName = duplicatePlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty {
+            errorMessage = "Playlist name cannot be empty"
+            showingErrorAlert = true
+            return
+        }
+        
+        Task {
+            do {
+                let newPlaylist = try await playlistService.duplicatePlaylist(playlistId: playlist.id, newName: trimmedName)
+                // Optionally select the new playlist
+                await MainActor.run {
+                    selectedPlaylist = newPlaylist
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    private func deletePlaylist(_ playlist: Playlist) {
+        Task {
+            do {
+                try await playlistService.deletePlaylist(playlistId: playlist.id)
+                // If the deleted playlist was selected, clear the selection
+                await MainActor.run {
+                    if selectedPlaylist?.id == playlist.id {
+                        selectedPlaylist = nil
+                    }
+                }
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
@@ -186,6 +306,100 @@ struct CreatePlaylistSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 300)
+        .onAppear {
+            // Automatically focus the text field when the sheet appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isTextFieldFocused = true
+            }
+        }
+    }
+}
+
+struct RenamePlaylistSheet: View {
+    @Binding var playlistName: String
+    @FocusState private var isTextFieldFocused: Bool
+    let onCancel: () -> Void
+    let onRename: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Rename Playlist")
+                .font(.title2)
+                .fontWeight(.semibold)
+            
+            Text("Enter a new name for the playlist")
+                .font(.body)
+                .foregroundColor(.secondary)
+            
+            TextField("Playlist name", text: $playlistName)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+                .focused($isTextFieldFocused)
+                .onSubmit {
+                    if !playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        onRename()
+                    }
+                }
+            
+            HStack(spacing: 12) {
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .buttonStyle(.bordered)
+                
+                Button("Rename") {
+                    onRename()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 300)
+        .onAppear {
+            // Automatically focus the text field when the sheet appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isTextFieldFocused = true
+            }
+        }
+    }
+}
+
+struct DuplicatePlaylistSheet: View {
+    @Binding var playlistName: String
+    @FocusState private var isTextFieldFocused: Bool
+    let onCancel: () -> Void
+    let onDuplicate: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Duplicate Playlist")
+                .font(.title2)
+                .fontWeight(.semibold)
+            
+            Text("Enter a name for the duplicated playlist")
+                .font(.body)
+                .foregroundColor(.secondary)
+            
+            TextField("Playlist name", text: $playlistName)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+                .focused($isTextFieldFocused)
+                .onSubmit {
+                    if !playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        onDuplicate()
+                    }
+                }
+            
+            HStack(spacing: 12) {
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .buttonStyle(.bordered)
+                
+                Button("Duplicate") {
+                    onDuplicate()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(24)
