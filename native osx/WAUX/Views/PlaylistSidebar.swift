@@ -304,28 +304,70 @@ struct PlaylistSidebar: View {
     }
 
     private func handleDrop(providers: [NSItemProvider], into playlist: Playlist) -> Bool {
+        print("🔍 [PlaylistSidebar] handleDrop called:")
+        print("   - Playlist: \(playlist.name)")
+        print("   - Providers count: \(providers.count)")
+        
         var handled = false
-        for provider in providers {
+        for (index, provider) in providers.enumerated() {
+            print("   - Provider \(index):")
+            print("     - Has plainText: \(provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier))")
+            print("     - Registered types: \(provider.registeredTypeIdentifiers)")
+            
             if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-                _ = provider.loadObject(ofClass: NSString.self) { object, _ in
-                    guard let nsText = object as? NSString else { return }
+                print("   - Loading NSString object...")
+                _ = provider.loadObject(ofClass: NSString.self) { object, error in
+                    print("   - loadObject callback:")
+                    print("     - Object: \(String(describing: object))")
+                    print("     - Error: \(String(describing: error))")
+                    print("     - Object type: \(type(of: object))")
+                    
+                    if let error = error {
+                        print("   - ❌ Error loading object: \(error)")
+                        return
+                    }
+                    
+                    guard let nsText = object as? NSString else {
+                        print("   - ❌ Failed to cast object to NSString")
+                        print("     - Object: \(String(describing: object))")
+                        return
+                    }
+                    
+                    print("   - ✅ Successfully loaded NSString:")
+                    print("     - Length: \(nsText.length)")
+                    print("     - Content: '\(nsText)'")
+                    
                     let text = nsText as String
                     let paths = text
                         .split(separator: "\n")
                         .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
                         .filter { !$0.isEmpty }
-                    if paths.isEmpty { return }
+                    
+                    print("   - Parsed paths:")
+                    print("     - Count: \(paths.count)")
+                    print("     - Paths: \(paths)")
+                    
+                    if paths.isEmpty { 
+                        print("   - ⚠️ No valid paths found")
+                        return 
+                    }
+                    
                     Task {
-                        for path in paths {
+                        print("   - 🚀 Adding tracks to playlist...")
+                        for (pathIndex, path) in paths.enumerated() {
                             do {
+                                print("     - Adding path \(pathIndex + 1)/\(paths.count): \(path)")
                                 try await playlistService.addTrackToPlaylist(playlistId: playlist.id, absoluteTrackPath: path)
+                                print("     - ✅ Successfully added track")
                             } catch {
+                                print("     - ❌ Failed to add track: \(error)")
                                 await MainActor.run {
                                     errorMessage = error.localizedDescription
                                     showingErrorAlert = true
                                 }
                             }
                         }
+                        print("   - ✅ Finished adding all tracks")
                     }
                 }
                 handled = true

@@ -138,7 +138,8 @@ struct FolderNodeView: View {
                                 collectionService: collectionService,
                                 selectedTracks: $selectedTracks,
                                 isTextFieldFocused: $isTextFieldFocused,
-                                onDoubleClick: onDoubleClick
+                                onDoubleClick: onDoubleClick,
+                                allTracks: folder.tracks
                             )
                             .padding(.leading, 20)
                         }
@@ -218,6 +219,20 @@ struct FolderHeaderView: View {
         .onTapGesture {
             folderManager.toggleSelection(for: folder.path)
         }
+        .onDrag {
+            let paths = folder.allTracks.map { $0.path }
+            let payload = paths.joined(separator: "\n")
+            
+            print("🔍 [FolderHierarchyView] Creating folder drag item:")
+            print("   - Folder: \(folder.displayName)")
+            print("   - Tracks in folder: \(folder.allTracks.count)")
+            print("   - Paths: \(paths)")
+            print("   - Payload type: \(type(of: payload))")
+            print("   - Payload length: \(payload.count)")
+            print("   - Payload content: '\(payload)'")
+            
+            return NSItemProvider(object: payload as NSString)
+        }
     }
 }
 
@@ -230,6 +245,7 @@ struct FolderTrackRowView: View {
     @Binding var selectedTracks: Set<Track.ID>
     @Binding var isTextFieldFocused: Bool
     let onDoubleClick: (Track) -> Void
+    let allTracks: [Track]
     
     var body: some View {
         HStack(spacing: 8) {
@@ -302,8 +318,35 @@ struct FolderTrackRowView: View {
     // MARK: - Drag support
     
     private func dragItem(for track: Track) -> NSItemProvider {
-        let payload = track.path as NSString
-        return NSItemProvider(item: payload, typeIdentifier: UTType.plainText.identifier)
+        // Determine which tracks to include in the drag: selected ones if the dragged
+        // track is selected, otherwise just the single row's track.
+        let draggedIds = selectedTracks
+        let tracksToExport: [Track]
+        if let tid = track.id, draggedIds.contains(tid), !draggedIds.isEmpty {
+            let selectedIdSet = draggedIds
+            tracksToExport = allTracks.filter { idTrack in
+                if let sid = idTrack.id {
+                    return selectedIdSet.contains(sid)
+                }
+                return false
+            }
+        } else {
+            tracksToExport = [track]
+        }
+
+        let paths = tracksToExport.map { $0.path }
+        let payload = paths.joined(separator: "\n")
+        
+        print("🔍 [FolderHierarchyView] Creating drag item:")
+        print("   - Track: \(track.title)")
+        print("   - Selected tracks count: \(draggedIds.count)")
+        print("   - Tracks to export: \(tracksToExport.count)")
+        print("   - Paths: \(paths)")
+        print("   - Payload type: \(type(of: payload))")
+        print("   - Payload length: \(payload.count)")
+        print("   - Payload content: '\(payload)'")
+        
+        return NSItemProvider(object: payload as NSString)
     }
 }
 

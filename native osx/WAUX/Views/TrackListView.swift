@@ -328,8 +328,18 @@ struct TrackTable: View {
         }
 
         let paths = tracksToExport.map { $0.path }
-        let payload = paths.joined(separator: "\n") as NSString
-        return NSItemProvider(item: payload, typeIdentifier: UTType.plainText.identifier)
+        let payload = paths.joined(separator: "\n")
+        
+        print("🔍 [TrackListView] Creating drag item:")
+        print("   - Track: \(track.title)")
+        print("   - Selected tracks count: \(draggedIds.count)")
+        print("   - Tracks to export: \(tracksToExport.count)")
+        print("   - Paths: \(paths)")
+        print("   - Payload type: \(type(of: payload))")
+        print("   - Payload length: \(payload.count)")
+        print("   - Payload content: '\(payload)'")
+        
+        return NSItemProvider(object: payload as NSString)
     }
 }
 
