@@ -278,7 +278,7 @@ struct ContentView: View {
             print("[OpenFolder] Collection opened")
             
             // Set up playlist service with the same database, collection, and queue
-            playlistService.setDatabase(collectionService.getDatabase(), collectionDefinition: definition, databaseQueue: collectionService.databaseQueue)
+            playlistService.setDatabase(collectionService.getDatabase(), collectionDefinition: definition, databaseQueue: collectionService.databaseQueue, collectionService: collectionService)
             
             // If we just created a DB, import all audio files under the selected folder
             if dbAtRoot == nil {

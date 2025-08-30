@@ -10,8 +10,10 @@ struct PlaylistSidebar: View {
     @State private var errorMessage = ""
     @State private var showingRenameSheet = false
     @State private var showingDuplicateSheet = false
+    @State private var showingExportSheet = false
     @State private var playlistToRename: Playlist?
     @State private var playlistToDuplicate: Playlist?
+    @State private var playlistToExport: Playlist?
     @State private var renamePlaylistName = ""
     @State private var duplicatePlaylistName = ""
     
@@ -93,6 +95,11 @@ struct PlaylistSidebar: View {
                             showingDuplicateSheet = true
                         }
                         
+                        Button("Export") {
+                            playlistToExport = playlist
+                            showingExportSheet = true
+                        }
+                        
                         Divider()
                         
                         Button("Delete", role: .destructive) {
@@ -142,6 +149,26 @@ struct PlaylistSidebar: View {
                     duplicatePlaylist()
                     showingDuplicateSheet = false
                     playlistToDuplicate = nil
+                }
+            )
+        }
+        .sheet(isPresented: $showingExportSheet) {
+            ExportPlaylistSheet(
+                playlist: playlistToExport,
+                playlistService: playlistService,
+                onCancel: {
+                    showingExportSheet = false
+                    playlistToExport = nil
+                },
+                onExportFiles: { destinationURL in
+                    exportPlaylistFiles(to: destinationURL)
+                    showingExportSheet = false
+                    playlistToExport = nil
+                },
+                onExportCSV: { destinationURL in
+                    exportPlaylistCSV(to: destinationURL)
+                    showingExportSheet = false
+                    playlistToExport = nil
                 }
             )
         }
@@ -230,6 +257,42 @@ struct PlaylistSidebar: View {
                     if selectedPlaylist?.id == playlist.id {
                         selectedPlaylist = nil
                     }
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    private func exportPlaylistFiles(to destinationURL: URL) {
+        guard let playlist = playlistToExport else { return }
+        
+        Task {
+            do {
+                try await playlistService.exportPlaylistFiles(playlistId: playlist.id, destinationURL: destinationURL)
+                await MainActor.run {
+                    // Show success message or notification
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    private func exportPlaylistCSV(to destinationURL: URL) {
+        guard let playlist = playlistToExport else { return }
+        
+        Task {
+            do {
+                try await playlistService.exportPlaylistCSV(playlistId: playlist.id, destinationURL: destinationURL)
+                await MainActor.run {
+                    // Show success message or notification
                 }
             } catch {
                 await MainActor.run {
@@ -410,5 +473,167 @@ struct DuplicatePlaylistSheet: View {
                 isTextFieldFocused = true
             }
         }
+    }
+}
+
+struct ExportPlaylistSheet: View {
+    let playlist: Playlist?
+    let playlistService: PlaylistService
+    let onCancel: () -> Void
+    let onExportFiles: (URL) -> Void
+    let onExportCSV: (URL) -> Void
+    
+    @State private var selectedExportType: ExportType = .files
+    @State private var showingFilePicker = false
+    @State private var showingCSVPicker = false
+    
+    enum ExportType: String, CaseIterable {
+        case files = "files"
+        case csv = "csv"
+        
+        var displayName: String {
+            switch self {
+            case .files:
+                return "Export Files"
+            case .csv:
+                return "Export CSV"
+            }
+        }
+        
+        var description: String {
+            switch self {
+            case .files:
+                return "Copy all audio files to a selected folder"
+            case .csv:
+                return "Export track metadata to a CSV file"
+            }
+        }
+    }
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Export Playlist")
+                .font(.title2)
+                .fontWeight(.semibold)
+            
+            if let playlist = playlist {
+                Text("Exporting: \(playlist.name)")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                
+                Text("\(playlist.trackPaths.count) tracks")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(ExportType.allCases, id: \.self) { exportType in
+                    Button(action: {
+                        selectedExportType = exportType
+                        if exportType == .files {
+                            showingFilePicker = true
+                        } else {
+                            showingCSVPicker = true
+                        }
+                    }) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(exportType.displayName)
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                
+                                Text(exportType.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding()
+                        .background(Color(.controlBackgroundColor))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            
+            HStack(spacing: 12) {
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(24)
+        .frame(width: 400)
+        .fileImporter(
+            isPresented: $showingFilePicker,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    onExportFiles(url)
+                }
+            case .failure(let error):
+                print("File picker error: \(error)")
+            }
+        }
+        .fileExporter(
+            isPresented: $showingCSVPicker,
+            document: CSVExportDocument(playlist: playlist, playlistService: playlistService),
+            contentType: .commaSeparatedText,
+            defaultFilename: playlist?.name ?? "playlist"
+        ) { result in
+            switch result {
+            case .success(let url):
+                onExportCSV(url)
+            case .failure(let error):
+                print("CSV export error: \(error)")
+            }
+        }
+    }
+}
+
+struct CSVExportDocument: FileDocument {
+    let playlist: Playlist?
+    let playlistService: PlaylistService
+    
+    init(playlist: Playlist?, playlistService: PlaylistService) {
+        self.playlist = playlist
+        self.playlistService = playlistService
+    }
+    
+    static var readableContentTypes: [UTType] { [.commaSeparatedText] }
+    
+    init(configuration: ReadConfiguration) throws {
+        playlist = nil
+        playlistService = PlaylistService()
+    }
+    
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        guard let playlist = playlist else {
+            return FileWrapper(regularFileWithContents: Data())
+        }
+        
+        // Generate CSV content using the playlist service
+        let csvContent = generateCSVContent(for: playlist)
+        return FileWrapper(regularFileWithContents: csvContent.data(using: .utf8) ?? Data())
+    }
+    
+    private func generateCSVContent(for playlist: Playlist) -> String {
+        // For now, create a simple CSV with just the track paths
+        // The actual CSV generation with full metadata is handled in PlaylistService.exportPlaylistCSV
+        var csv = "Title,Artist,Album,Album Artist,Composer,Genre,Year,Track Number,Disc Number,BPM,Relative Path,Duration,Rating,Comment,Tags,Date Added\n"
+        
+        for trackPath in playlist.trackPaths {
+            let escapedPath = trackPath.replacingOccurrences(of: "\"", with: "\"\"")
+            csv += "\"\(escapedPath)\",,,,,,,,,,,,,,\n"
+        }
+        
+        return csv
     }
 }
