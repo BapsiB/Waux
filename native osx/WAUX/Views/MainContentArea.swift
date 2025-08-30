@@ -9,6 +9,8 @@ struct MainContentArea: View {
     @Binding var showingFolderPicker: Bool
     @Binding var selectedPlaylist: Playlist?
     @State private var searchText = ""
+    @State private var showFolderView = false
+    @StateObject private var folderManager = FolderHierarchyManager()
     
     private var activeCollection: CollectionDefinition? {
         collectionService.getActiveCollection()
@@ -62,14 +64,23 @@ struct MainContentArea: View {
             } else if activeCollection != nil {
                 // Show all tracks when no playlist is selected
                 VStack(spacing: 0) {
-                    // Header with title, audio player, and search
-                    headerView(title: "All Tracks", showCloseButton: false)
+                    // Header with title, audio player, search, and view toggle
+                    headerView(title: "All Tracks", showCloseButton: false, showViewToggle: true)
                     
-                    TrackListView(
-                        collectionService: collectionService, 
-                        audioService: audioService,
-                        searchText: $searchText
-                    )
+                    if showFolderView {
+                        FolderHierarchyView(
+                            collectionService: collectionService,
+                            audioService: audioService,
+                            folderManager: folderManager,
+                            searchText: $searchText
+                        )
+                    } else {
+                        TrackListView(
+                            collectionService: collectionService, 
+                            audioService: audioService,
+                            searchText: $searchText
+                        )
+                    }
                 }
             } else {
                 // Welcome screen
@@ -113,7 +124,7 @@ struct MainContentArea: View {
     }
     
     @ViewBuilder
-    private func headerView(title: String, showCloseButton: Bool = false, onClose: (() -> Void)? = nil) -> some View {
+    private func headerView(title: String, showCloseButton: Bool = false, showViewToggle: Bool = false, onClose: (() -> Void)? = nil) -> some View {
         HStack(spacing: 16) {
             // Title
             Text(title)
@@ -140,6 +151,28 @@ struct MainContentArea: View {
             }
             
             Spacer()
+            
+            // View toggle button (only show for "All Tracks")
+            if showViewToggle {
+                HStack(spacing: 8) {
+                    Button(action: {
+                        showFolderView.toggle()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: showFolderView ? "list.bullet" : "folder")
+                                .font(.system(size: 12))
+                            Text(showFolderView ? "Table" : "Folders")
+                                .font(.caption)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(showFolderView ? "Switch to table view" : "Switch to folder view")
+                }
+            }
             
             // Search bar (smaller)
             HStack {
