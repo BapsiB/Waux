@@ -2,6 +2,12 @@ import SwiftUI
 
 struct CompactAudioPlayerView: View {
     @ObservedObject var audioService: AudioService
+    let collectionService: CollectionService?
+    
+    init(audioService: AudioService, collectionService: CollectionService? = nil) {
+        self.audioService = audioService
+        self.collectionService = collectionService
+    }
     
     var body: some View {
         GeometryReader { geometry in
@@ -42,32 +48,47 @@ struct CompactAudioPlayerView: View {
                 .frame(width: geometry.size.width * 0.25)
                 .frame(maxHeight: .infinity)
                 
-                // 1/2: Title with playback slider under
-                VStack(alignment: .center, spacing: 0) {
-                    if let track = audioService.currentTrack {
+                // 1/2: Album artwork, title, and playback slider
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        // Album artwork
+                        if let track = audioService.currentTrack {
+                            AlbumArtworkView(track: track, size: CGSize(width: 40, height: 40), collectionService: collectionService)
+                        } else {
+                            // Placeholder for no track
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.gray.opacity(0.3))
+                                .frame(width: 40, height: 40)
+                        }
+                        
+                        // Title and artist
                         VStack(alignment: .center, spacing: 2) {
-                            Text(track.title)
-                                .font(.system(size: 12, weight: .medium))
-                                .lineLimit(1)
-                                .multilineTextAlignment(.center)
-                            
-                            if !track.artist.isEmpty && track.artist != "Unknown" {
-                                Text(track.artist)
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.secondary)
+                            if let track = audioService.currentTrack {
+                                Text(track.title)
+                                    .font(.system(size: 12, weight: .medium))
                                     .lineLimit(1)
+                                    .multilineTextAlignment(.center)
+                                
+                                if !track.artist.isEmpty && track.artist != "Unknown" {
+                                    Text(track.artist)
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                        .multilineTextAlignment(.center)
+                                }
+                            } else {
+                                Text("No track")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
                                     .multilineTextAlignment(.center)
                             }
                         }
-                    } else {
-                        Text("No track")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
+                        
+                        Spacer()
+                    }.offset(x: 64)
                     
                     // Timeline with subtle slider
-                    VStack(spacing: 4) {
+                    VStack(spacing: 0) {
                         SubtleSlider(
                             value: Binding(
                                 get: { audioService.duration > 0 ? audioService.currentTime / audioService.duration : 0 },
@@ -81,23 +102,9 @@ struct CompactAudioPlayerView: View {
                         )
                         .disabled(audioService.currentTrack == nil || audioService.isLoading)
                         .frame(maxWidth: .infinity)
-                        
-                        HStack {
-                            Text(audioService.formatTime(audioService.currentTime))
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                            
-                            Spacer()
-                            
-                            Text(audioService.formatTime(audioService.duration))
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
                     }
                 }
-                .frame(width: geometry.size.width * 0.5)
+                .frame(width: geometry.size.width * 0.6)
                 .frame(maxHeight: .infinity)
                 
                 // 1/4: Volume control
@@ -111,7 +118,7 @@ struct CompactAudioPlayerView: View {
                     .accentColor(.gray)
                 
                 }
-                .frame(width: geometry.size.width * 0.25)
+                .frame(width: geometry.size.width * 0.15)
                 .frame(maxHeight: .infinity)
                 // .padding(.bottom, 34)
                 .clipped()

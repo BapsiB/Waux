@@ -136,7 +136,7 @@ struct MainContentArea: View {
             
             // Audio player controls (only show when track is loaded)
             if audioService.currentTrack != nil {
-                CompactAudioPlayerView(audioService: audioService)
+                CompactAudioPlayerView(audioService: audioService, collectionService: collectionService)
             }
             
             Spacer()
