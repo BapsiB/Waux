@@ -9,6 +9,7 @@ struct FolderHierarchyView: View {
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @StateObject private var metadataManager: TrackMetadataManager
     @State private var selectedTracks = Set<Track.ID>()
+    @State private var lastSelectedTrackId: Track.ID? = nil
     @State private var showTagEditor = false
     @State private var showMetadataEditor = false
     @FocusState private var isTextFieldFocused: Bool
@@ -33,6 +34,7 @@ struct FolderHierarchyView: View {
                             waveformServiceHolder: waveformServiceHolder,
                             collectionService: collectionService,
                             selectedTracks: $selectedTracks,
+                            lastSelectedTrackId: $lastSelectedTrackId,
                             searchText: $searchText,
                             isTextFieldFocused: Binding(
                                 get: { isTextFieldFocused },
@@ -111,6 +113,7 @@ struct FolderNodeView: View {
     @ObservedObject var waveformServiceHolder: WaveformServiceHolder
     @ObservedObject var collectionService: CollectionService
     @Binding var selectedTracks: Set<Track.ID>
+    @Binding var lastSelectedTrackId: Track.ID?
     @Binding var searchText: String
     @Binding var isTextFieldFocused: Bool
     let onDoubleClick: (Track) -> Void
@@ -137,6 +140,7 @@ struct FolderNodeView: View {
                                 waveformServiceHolder: waveformServiceHolder,
                                 collectionService: collectionService,
                                 selectedTracks: $selectedTracks,
+                                lastSelectedTrackId: $lastSelectedTrackId,
                                 isTextFieldFocused: $isTextFieldFocused,
                                 onDoubleClick: onDoubleClick,
                                 allTracks: folder.tracks
@@ -243,6 +247,7 @@ struct FolderTrackRowView: View {
     @ObservedObject var waveformServiceHolder: WaveformServiceHolder
     @ObservedObject var collectionService: CollectionService
     @Binding var selectedTracks: Set<Track.ID>
+    @Binding var lastSelectedTrackId: Track.ID?
     @Binding var isTextFieldFocused: Bool
     let onDoubleClick: (Track) -> Void
     let allTracks: [Track]
@@ -283,11 +288,7 @@ struct FolderTrackRowView: View {
             // Selection checkbox
             if let trackId = track.id {
                 Button(action: {
-                    if selectedTracks.contains(trackId) {
-                        selectedTracks.remove(trackId)
-                    } else {
-                        selectedTracks.insert(trackId)
-                    }
+                    handleSelection(trackId: trackId, modifierFlags: [])
                 }) {
                     Image(systemName: selectedTracks.contains(trackId) ? "checkmark.square.fill" : "square")
                         .foregroundColor(selectedTracks.contains(trackId) ? .blue : .secondary)
@@ -302,17 +303,103 @@ struct FolderTrackRowView: View {
         .cornerRadius(4)
         .contentShape(Rectangle())
         .onTapGesture {
+            print("🔍 [FolderHierarchyView] ANY tap gesture detected for track: \(track.title)")
             if let trackId = track.id {
-                if selectedTracks.contains(trackId) {
-                    selectedTracks.remove(trackId)
-                } else {
-                    selectedTracks.insert(trackId)
+                // Check for modifier keys using NSEvent
+                var modifierFlags: EventModifiers = []
+                
+                if NSEvent.modifierFlags.contains(.command) {
+                    print("🔍 [FolderHierarchyView] Command key detected")
+                    modifierFlags.insert(.command)
                 }
+                if NSEvent.modifierFlags.contains(.shift) {
+                    print("🔍 [FolderHierarchyView] Shift key detected")
+                    modifierFlags.insert(.shift)
+                }
+                
+                print("🔍 [FolderHierarchyView] Detected modifier flags: \(modifierFlags)")
+                handleSelection(trackId: trackId, modifierFlags: modifierFlags)
             }
         }
         .onTapGesture(count: 2) {
             onDoubleClick(track)
         }
+    }
+    
+    // MARK: - Selection Logic
+    
+    private func handleSelection(trackId: Track.ID, modifierFlags: EventModifiers) {
+        print("🔍 [FolderHierarchyView] handleSelection called:")
+        print("   - Track ID: \(trackId)")
+        print("   - Modifier flags: \(modifierFlags)")
+        print("   - Contains command: \(modifierFlags.contains(.command))")
+        print("   - Contains shift: \(modifierFlags.contains(.shift))")
+        print("   - Current selection count: \(selectedTracks.count)")
+        print("   - Last selected track: \(lastSelectedTrackId != nil ? String(describing: lastSelectedTrackId!) : "none")")
+        
+        if modifierFlags.contains(.command) {
+            print("🔍 [FolderHierarchyView] Processing command+click selection")
+            // Command+click: Add/remove from selection
+            if selectedTracks.contains(trackId) {
+                selectedTracks.remove(trackId)
+                print("🔍 [FolderHierarchyView] Removed track from selection")
+            } else {
+                selectedTracks.insert(trackId)
+                print("🔍 [FolderHierarchyView] Added track to selection")
+            }
+            lastSelectedTrackId = trackId
+        } else if modifierFlags.contains(.shift) {
+            print("🔍 [FolderHierarchyView] Processing shift+click selection")
+            // Shift+click: Select range
+            if let lastSelected = lastSelectedTrackId {
+                print("🔍 [FolderHierarchyView] Selecting range from \(lastSelected) to \(trackId)")
+                selectRange(from: lastSelected, to: trackId)
+            } else {
+                print("🔍 [FolderHierarchyView] No previous selection, just selecting this track")
+                // If no previous selection, just select this track
+                selectedTracks.insert(trackId)
+                lastSelectedTrackId = trackId
+            }
+        } else {
+            print("🔍 [FolderHierarchyView] Processing simple click selection")
+            // Simple click: Select only this track
+            selectedTracks.removeAll()
+            selectedTracks.insert(trackId)
+            lastSelectedTrackId = trackId
+            print("🔍 [FolderHierarchyView] Cleared selection and selected only this track")
+        }
+        
+        print("🔍 [FolderHierarchyView] Final selection count: \(selectedTracks.count)")
+    }
+    
+    private func selectRange(from startId: Track.ID, to endId: Track.ID) {
+        print("🔍 [FolderHierarchyView] selectRange called:")
+        print("   - Start ID: \(startId)")
+        print("   - End ID: \(endId)")
+        
+        guard let startIndex = allTracks.firstIndex(where: { $0.id == startId }),
+              let endIndex = allTracks.firstIndex(where: { $0.id == endId }) else {
+            print("🔍 [FolderHierarchyView] ERROR: Could not find track indices")
+            return
+        }
+        
+        let rangeStart = min(startIndex, endIndex)
+        let rangeEnd = max(startIndex, endIndex)
+        
+        print("🔍 [FolderHierarchyView] Range indices: \(rangeStart) to \(rangeEnd)")
+        print("🔍 [FolderHierarchyView] Total tracks in folder: \(allTracks.count)")
+        
+        // Add all tracks in the range to selection
+        var addedCount = 0
+        for index in rangeStart...rangeEnd {
+            if let trackId = allTracks[index].id {
+                selectedTracks.insert(trackId)
+                addedCount += 1
+            }
+        }
+        
+        print("🔍 [FolderHierarchyView] Added \(addedCount) tracks to selection")
+        lastSelectedTrackId = endId
     }
     
     // MARK: - Drag support
@@ -349,6 +436,8 @@ struct FolderTrackRowView: View {
         return NSItemProvider(object: payload as NSString)
     }
 }
+
+
 
 #Preview {
     let collectionService = CollectionService()
