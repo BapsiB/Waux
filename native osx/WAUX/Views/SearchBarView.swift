@@ -7,21 +7,43 @@ struct SearchBarView: View {
     
     var body: some View {
         HStack(spacing: 8) {
-            // Search icon
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
-                .font(.system(size: 12))
-            
-            // Search text field
-            TextField("Search tracks...", text: $searchService.searchText)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .frame(width: 200)
-                .onTapGesture {
-                    isSearchFocused = true
+            // Search text field with magnifier/clear button inside
+            HStack(spacing: 4) {
+                TextField("Search tracks...", text: $searchService.searchText)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .onTapGesture {
+                        isSearchFocused = true
+                    }
+                    .onSubmit {
+                        isSearchFocused = false
+                    }
+                
+                // Show magnifier when no text, clear button when there's text
+                if searchService.searchText.isEmpty {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 12))
+                } else {
+                    Button(action: {
+                        searchService.clearSearch()
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Clear search")
                 }
-                .onSubmit {
-                    isSearchFocused = false
-                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(.controlBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(.separatorColor), lineWidth: 0.5)
+            )
+            .frame(width: 200)
             
             // Search options button
             Button(action: {
@@ -33,19 +55,6 @@ struct SearchBarView: View {
             }
             .buttonStyle(PlainButtonStyle())
             .help("Search options")
-            
-            // Clear search button (only show when there's text)
-            if !searchService.searchText.isEmpty {
-                Button(action: {
-                    searchService.clearSearch()
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                        .font(.system(size: 12))
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help("Clear search")
-            }
         }
         .popover(isPresented: $showSearchOptions) {
             SearchOptionsView(searchService: searchService)
