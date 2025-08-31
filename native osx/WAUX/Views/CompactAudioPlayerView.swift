@@ -82,10 +82,10 @@ struct CompactAudioPlayerView: View {
                                     .foregroundColor(.secondary)
                                     .multilineTextAlignment(.center)
                             }
-                        }.offset(x: 70)
+                        }
                         
                         Spacer()
-                    }
+                    }.offset(x: 64)
                     
                     // Timeline with subtle slider
                     VStack(spacing: 4) {
