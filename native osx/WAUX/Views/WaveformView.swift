@@ -14,6 +14,7 @@ struct WaveformView: View {
     let progress: Double // 0.0 - 1.0
     let markers: [TimeMarker]
     let durationMs: Int
+    var isPlaying: Bool = false // Whether the sound is currently playing
     var activeColor: Color = AppStyle.mainColor
     var inactiveColor: Color = .gray.opacity(0.5)
     var progressLineColor: Color = AppStyle.mainColor
@@ -104,12 +105,7 @@ struct WaveformView: View {
                     }
                 }
 
-                // Progress line (on top)
-                let progressX = CGFloat(clampedProgress) * size.width
-                var progressPath = Path()
-                progressPath.move(to: CGPoint(x: progressX, y: 0))
-                progressPath.addLine(to: CGPoint(x: progressX, y: size.height))
-                context.stroke(progressPath, with: .color(progressLineColor), lineWidth: 2)
+
             }
             .contentShape(Rectangle()) // Make the entire area tappable
             .onTapGesture { location in
@@ -190,6 +186,15 @@ struct WaveformColumn: View {
                     return 0.0
                 }()
                 
+                let isPlaying: Bool = {
+                    if let current = audioService.currentTrack?.id,
+                       let id = track.id,
+                       current == id {
+                        return audioService.isPlaying
+                    }
+                    return false
+                }()
+                
                 HStack(spacing: 4) {
                     // Play/Pause button
                     Button(action: {
@@ -208,6 +213,7 @@ struct WaveformColumn: View {
                         progress: progress,
                         markers: track.timeMarkers,
                         durationMs: track.duration,
+                        isPlaying: isPlaying,
                         onTap: { ratio in
                             handleWaveformTap(track: track, ratio: ratio)
                         }
