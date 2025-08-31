@@ -57,6 +57,18 @@ class WaveformProcessingService: ObservableObject {
         print("[Waveform] Shutting down service")
         isShuttingDown = true
     }
+    
+    func clearAllWaveformData() {
+        print("[Waveform] Clearing all waveform data to regenerate with time-based mapping")
+        Task {
+            do {
+                try await collectionService.clearAllWaveformData()
+                print("[Waveform] ✅ All waveform data cleared")
+            } catch {
+                print("[Waveform] ❌ Failed to clear waveform data: \(error)")
+            }
+        }
+    }
 
     private func process(track: Track) {
         let trackId = track.id ?? -1
@@ -217,18 +229,16 @@ class WaveformProcessingService: ObservableObject {
         print("[Waveform] ▶️ Starting reader...")
         reader.startReading()
 
-        // Estimate total samples using duration and sample rate
-        let sampleRate = sampleRateFor(track: track) ?? 44100.0
+        // Get accurate duration and sample rate for time-based mapping
         let durationSeconds = CMTimeGetSeconds(asset.duration)
-        let estimatedTotalSamples = max(1, Int(durationSeconds * sampleRate))
+        let sampleRate = sampleRateFor(track: track) ?? 44100.0
         let binsCount = max(1, targetBins)
 
-        print("[Waveform] 📊 Sample rate: \(sampleRate), Duration: \(durationSeconds)s, Estimated samples: \(estimatedTotalSamples), Bins: \(binsCount)")
+        print("[Waveform] 📊 Duration: \(durationSeconds)s, Sample rate: \(sampleRate), Bins: \(binsCount)")
 
         var bins = Array(repeating: 0.0, count: binsCount)
         var counts = Array(repeating: 0, count: binsCount)
 
-        var globalSampleIndex = 0
         var bufferCount = 0
 
         print("[Waveform] 🔄 Starting to read sample buffers...")
@@ -240,7 +250,7 @@ class WaveformProcessingService: ObservableObject {
             
             bufferCount += 1
             if bufferCount % 100 == 0 {
-                print("[Waveform] 📦 Processed \(bufferCount) buffers, \(globalSampleIndex) samples")
+                print("[Waveform] 📦 Processed \(bufferCount) buffers")
             }
             
             if let blockBuffer = CMSampleBufferGetDataBuffer(buffer) {
@@ -251,6 +261,11 @@ class WaveformProcessingService: ObservableObject {
                         CMBlockBufferCopyDataBytes(blockBuffer, atOffset: 0, dataLength: length, destination: baseAddress)
                     }
                 }
+                
+                // Get the presentation timestamp for this buffer
+                let presentationTime = CMSampleBufferGetPresentationTimeStamp(buffer)
+                let bufferTimeSeconds = CMTimeGetSeconds(presentationTime)
+                
                 // Int16 interleaved stereo (or mono)
                 let sampleCount = length / MemoryLayout<Int16>.size
                 data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
@@ -266,19 +281,25 @@ class WaveformProcessingService: ObservableObject {
                             absValue = Int32(abs(sample))
                         }
                         let value = Double(absValue) / Double(Int16.max)
-                        // Map to bin index
-                        let bin = min(binsCount - 1, Int(Double(globalSampleIndex) * Double(binsCount) / Double(estimatedTotalSamples)))
+                        
+                        // Calculate the time position for this sample within the buffer
+                        let sampleTimeOffset = Double(i) / sampleRate
+                        let sampleTimeSeconds = bufferTimeSeconds + sampleTimeOffset
+                        
+                        // Map to bin based on TIME position, not sample index
+                        let timeRatio = max(0.0, min(1.0, sampleTimeSeconds / durationSeconds))
+                        let bin = min(binsCount - 1, Int(timeRatio * Double(binsCount)))
+                        
                         if value > bins[bin] { bins[bin] = value }
                         counts[bin] += 1
                         i += 1
-                        globalSampleIndex += 1
                     }
                 }
             }
             CMSampleBufferInvalidate(buffer)
         }
 
-        print("[Waveform] 📊 Final stats: \(bufferCount) buffers, \(globalSampleIndex) samples processed")
+        print("[Waveform] 📊 Final stats: \(bufferCount) buffers processed")
         print("[Waveform] 📈 Reader status: \(reader.status.rawValue)")
 
         if reader.status == .completed || reader.status == .reading {
@@ -329,25 +350,33 @@ class WaveformProcessingService: ObservableObject {
             var bins = Array(repeating: 0.0, count: binsCount)
             var counts = Array(repeating: 0, count: binsCount)
             
-            // Process samples
-            let samplesPerBin = Int(frameCount) / binsCount
+            // Calculate time-based bin mapping
+            let durationSeconds = Double(frameCount) / format.sampleRate
+            let timePerBin = durationSeconds / Double(binsCount)
+            
+            print("[Waveform] 📊 Duration: \(durationSeconds)s, Time per bin: \(timePerBin)s")
+            
+            // Process samples with time-based mapping
             for binIndex in 0..<binsCount {
-                let startSample = binIndex * samplesPerBin
-                let endSample = min(startSample + samplesPerBin, Int(frameCount))
+                let binStartTime = Double(binIndex) * timePerBin
+                let binEndTime = Double(binIndex + 1) * timePerBin
+                
+                let startFrame = Int(binStartTime * format.sampleRate)
+                let endFrame = min(Int(binEndTime * format.sampleRate), Int(frameCount))
                 
                 var maxAmplitude: Float = 0.0
-                for sampleIndex in startSample..<endSample {
+                for frameIndex in startFrame..<endFrame {
                     // Average across all channels
                     var sampleValue: Float = 0.0
                     for channel in 0..<Int(format.channelCount) {
-                        sampleValue += abs(channelData[channel][sampleIndex])
+                        sampleValue += abs(channelData[channel][frameIndex])
                     }
                     sampleValue /= Float(format.channelCount)
                     maxAmplitude = max(maxAmplitude, sampleValue)
                 }
                 
                 bins[binIndex] = Double(maxAmplitude)
-                counts[binIndex] = endSample - startSample
+                counts[binIndex] = endFrame - startFrame
             }
             
             // Normalize bins to 0..1

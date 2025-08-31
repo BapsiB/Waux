@@ -2754,6 +2754,81 @@ class CollectionService: ObservableObject {
         }
     }
     
+    /// Clears all waveform data from the database to force regeneration with time-based mapping
+    func clearAllWaveformData() async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    if self.isReadOnlyMode { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot clear waveform data in read-only mode."))
+                        return
+                    }
+                    
+                    print("🧹 Clearing all waveform data to regenerate with time-based mapping...")
+                    
+                    let sql = "UPDATE \(self.tableMusic) SET \(self.columnWaveformData) = NULL"
+                    var statement: OpaquePointer?
+                    
+                    let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    if sqlite3_step(statement) != SQLITE_DONE {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    let updatedCount = sqlite3_changes(db)
+                    print("✅ Cleared waveform data for \(updatedCount) tracks")
+                    
+                    // Update all tracks in memory to clear waveform data
+                    Task { @MainActor in
+                        var updatedTracks = self.tracks
+                        for i in 0..<updatedTracks.count {
+                            updatedTracks[i] = Track(
+                                id: self.tracks[i].id,
+                                title: self.tracks[i].title,
+                                artist: self.tracks[i].artist,
+                                album: self.tracks[i].album,
+                                albumArtist: self.tracks[i].albumArtist,
+                                composer: self.tracks[i].composer,
+                                genre: self.tracks[i].genre,
+                                year: self.tracks[i].year,
+                                trackNumber: self.tracks[i].trackNumber,
+                                discNumber: self.tracks[i].discNumber,
+                                bpm: self.tracks[i].bpm,
+                                path: self.tracks[i].path,
+                                isUrl: self.tracks[i].isUrl,
+                                duration: self.tracks[i].duration,
+                                timeMarkers: self.tracks[i].timeMarkers,
+                                waveformData: nil,
+                                rating: self.tracks[i].rating,
+                                comment: self.tracks[i].comment,
+                                generalTags: self.tracks[i].generalTags,
+                                dateAdded: self.tracks[i].dateAdded
+                            )
+                        }
+                        self.tracks = updatedTracks
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
     /// Updates tracks that don't have a proper dateAdded value
     func updateMissingDateAdded() async throws {
         return try await withCheckedThrowingContinuation { continuation in

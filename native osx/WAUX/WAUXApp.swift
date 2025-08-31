@@ -12,6 +12,7 @@ class MenuActionState: ObservableObject {
     @Published var shouldOpenFolder = false
     @Published var shouldImportAudio = false
     @Published var shouldClearSavedFolder = false
+    @Published var shouldRegenerateWaveforms = false
 }
 
 @main
@@ -43,6 +44,13 @@ struct WAUXApp: App {
                     menuActionState.shouldClearSavedFolder = true
                 }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
+                
+                Divider()
+                
+                Button("Regenerate Waveforms (Time-based)") {
+                    menuActionState.shouldRegenerateWaveforms = true
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
             }
         }
     }

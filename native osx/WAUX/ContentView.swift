@@ -103,6 +103,14 @@ struct ContentView: View {
                 menuActionState.shouldClearSavedFolder = false
             }
         }
+        .onChange(of: menuActionState.shouldRegenerateWaveforms) { _, shouldRegenerate in
+            if shouldRegenerate {
+                Task {
+                    await regenerateAllWaveforms()
+                }
+                menuActionState.shouldRegenerateWaveforms = false
+            }
+        }
         .onChange(of: collectionService.tracks) { _, newTracks in
             print("[ContentView] tracks changed, count=\(newTracks.count)")
             // Keep playlistTracks in sync when tags/ratings change in the library
@@ -335,6 +343,39 @@ struct ContentView: View {
                 showingError = true
             }
             print("Error opening folder: \(error)")
+        }
+    }
+    
+    private func regenerateAllWaveforms() async {
+        print("[ContentView] Starting waveform regeneration for all tracks")
+        
+        do {
+            // Clear all existing waveform data
+            try await collectionService.clearAllWaveformData()
+            print("[ContentView] ✅ Cleared all waveform data")
+            
+            // Create waveform service and regenerate for all tracks
+            let waveformService = WaveformProcessingService(collectionService: collectionService)
+            
+            // Process all tracks that have valid files
+            let tracksToProcess = collectionService.tracks.filter { track in
+                !track.isUrl && track.waveformData == nil
+            }
+            
+            print("[ContentView] 📊 Regenerating waveforms for \(tracksToProcess.count) tracks")
+            
+            for track in tracksToProcess {
+                waveformService.analyzeIfMissing(track)
+            }
+            
+            print("[ContentView] ✅ Waveform regeneration queued for all tracks")
+            
+        } catch {
+            print("[ContentView] ❌ Failed to regenerate waveforms: \(error)")
+            await MainActor.run {
+                errorMessage = "Failed to regenerate waveforms: \(error.localizedDescription)"
+                showingError = true
+            }
         }
     }
 }

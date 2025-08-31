@@ -306,7 +306,7 @@
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
             uuid = "C59BB775-61B0-4222-BB4D-8EC6D026C3C2"
-            shouldBeEnabled = "No"
+            shouldBeEnabled = "Yes"
             ignoreCount = "0"
             continueAfterRunningActions = "No"
             filePath = "WAUX/Views/WaveformView.swift"
@@ -330,7 +330,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "259"
             endingLineNumber = "259"
-            landmarkName = "handleWaveformTap(track:ratio:)"
+            landmarkName = "handlePlayPauseButtonTap(track:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
