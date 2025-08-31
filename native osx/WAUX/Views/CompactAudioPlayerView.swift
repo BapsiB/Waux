@@ -82,13 +82,13 @@ struct CompactAudioPlayerView: View {
                                     .foregroundColor(.secondary)
                                     .multilineTextAlignment(.center)
                             }
-                        }
+                        }.offset(x: 70)
                         
                         Spacer()
-                    }.offset(x: 64)
+                    }
                     
                     // Timeline with subtle slider
-                    VStack(spacing: 0) {
+                    VStack(spacing: 4) {
                         SubtleSlider(
                             value: Binding(
                                 get: { audioService.duration > 0 ? audioService.currentTime / audioService.duration : 0 },
@@ -102,6 +102,20 @@ struct CompactAudioPlayerView: View {
                         )
                         .disabled(audioService.currentTrack == nil || audioService.isLoading)
                         .frame(maxWidth: .infinity)
+                        
+                        HStack {
+                            Text(audioService.formatTime(audioService.currentTime))
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                            
+                            Spacer()
+                            
+                            Text(audioService.formatTime(audioService.duration))
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
                     }
                 }
                 .frame(width: geometry.size.width * 0.6)
@@ -110,12 +124,13 @@ struct CompactAudioPlayerView: View {
                 // 1/4: Volume control
                 HStack(spacing: 8) {
                     
-                    Slider(value: Binding(
-                        get: { Double(audioService.volume) },
-                        set: { audioService.setVolume(Float($0)) }
-                    ), in: 0...1)
+                    CustomVolumeSlider(
+                        value: Binding(
+                            get: { Double(audioService.volume) },
+                            set: { audioService.setVolume(Float($0)) }
+                        )
+                    )
                     .frame(maxWidth: .infinity)
-                    .accentColor(.gray)
                 
                 }
                 .frame(width: geometry.size.width * 0.15)
@@ -142,4 +157,61 @@ struct CompactAudioPlayerView: View {
 
 #Preview {
     CompactAudioPlayerView(audioService: AudioService())
+}
+
+struct CustomVolumeSlider: View {
+    @Binding var value: Double
+    @State private var isDragging = false
+    
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                // Track
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(height: 4)
+                
+                // Filled track
+                Rectangle()
+                    .fill(AppStyle.mainColor)
+                    .frame(width: geometry.size.width * CGFloat(value), height: 2)
+                
+                // Custom thumb
+                Circle()
+                    .fill(AppStyle.mainColor)
+                    .frame(width: 12, height: 12)
+                    .position(
+                        x: 6 + (geometry.size.width - 12) * CGFloat(value),
+                        y: geometry.size.height / 2
+                    )
+                    .gesture(
+                        DragGesture()
+                            .onChanged { gesture in
+                                isDragging = true
+                                let newValue = max(0, min(1, gesture.location.x / geometry.size.width))
+                                value = Double(newValue)
+                            }
+                            .onEnded { _ in
+                                isDragging = false
+                            }
+                    )
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture()
+                    .onChanged { gesture in
+                        isDragging = true
+                        let newValue = max(0, min(1, gesture.location.x / geometry.size.width))
+                        value = Double(newValue)
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                    }
+            )
+            .onTapGesture { location in
+                let newValue = max(0, min(1, location.x / geometry.size.width))
+                value = Double(newValue)
+            }
+        }
+    }
 }

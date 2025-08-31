@@ -14,10 +14,10 @@ struct WaveformView: View {
     let progress: Double // 0.0 - 1.0
     let markers: [TimeMarker]
     let durationMs: Int
-    var activeColor: Color = .blue
+    var activeColor: Color = AppStyle.mainColor
     var inactiveColor: Color = .gray.opacity(0.5)
-    var progressLineColor: Color = .red
-    var markerColor: Color = .blue
+    var progressLineColor: Color = AppStyle.mainColor
+    var markerColor: Color = AppStyle.mainColor
     var lineWidth: CGFloat = 2.0
     var onTap: ((Double) -> Void)? = nil // Callback for tap events with position ratio
 
@@ -184,7 +184,7 @@ struct WaveformColumn: View {
                     }) {
                         Image(systemName: getPlayPauseIcon(for: track))
                             .font(.title2)
-                            .foregroundColor(.blue)
+                            .foregroundColor(AppStyle.mainColor)
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help(getPlayPauseHelpText(for: track))

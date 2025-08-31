@@ -29,10 +29,12 @@ struct PlaylistSidebar: View {
                     newPlaylistName = ""
                     showingCreatePlaylistSheet = true
                 }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .medium))
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(AppStyle.mainColor)
                 }
                 .buttonStyle(PlainButtonStyle())
+                .focusable(false)
                 .help("Create new playlist")
             }
             .padding()
