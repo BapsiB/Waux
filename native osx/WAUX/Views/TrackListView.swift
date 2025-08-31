@@ -476,7 +476,9 @@ struct TrackListView: View {
                 newFiles: data.newFiles,
                 deletedTracks: data.deletedTracks,
                 movedUpdates: data.movedUpdates,
-                onCancel: { fileChangesData = nil },
+                onDismiss: {
+                    fileChangesData = nil
+                },
                 onApply: { adds, deletes, moves in
                     Task {
                         do {
@@ -487,9 +489,6 @@ struct TrackListView: View {
                                 movedUpdates: moves
                             )
                             print("🔍 [TrackListView] Successfully applied filesystem changes")
-                            await MainActor.run {
-                                fileChangesData = nil
-                            }
                         } catch {
                             print("❌ [TrackListView] Failed to apply filesystem changes: \(error)")
                             await MainActor.run {
@@ -501,7 +500,6 @@ struct TrackListView: View {
                     }
                 }
             )
-            .frame(minWidth: 640, minHeight: 420)
         }
         .onAppear(perform: loadPreferences)
         .task {
@@ -829,140 +827,170 @@ private struct FileChangesSheet: View {
     let newFiles: [String]
     let deletedTracks: [Track]
     let movedUpdates: [CollectionService.MovedFileUpdate]
-    var onCancel: () -> Void
+    var onDismiss: () -> Void
     var onApply: (_ adds: [String], _ deletes: [Int], _ moves: [CollectionService.MovedFileUpdate]) -> Void
 
-    @State private var newFilesSelection: Set<String> = []
-    @State private var deletedSelection: Set<Int> = []
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Filesystem Changes Detected")
-                .font(.title2)
-                .bold()
-            Text("Select which changes to apply to the library.")
+        VStack(alignment: .leading, spacing: 16) {
+            // Header
+            HStack {
+                Image(systemName: "info.circle.fill")
+                    .foregroundColor(.blue)
+                    .font(.title2)
+                Text("Library Changes Detected")
+                    .font(.title2)
+                    .bold()
+            }
+            
+            Text("The following changes have been detected in your music library:")
                 .foregroundColor(.secondary)
             
-            // Debug info
-            Text("DEBUG: newFiles.count = \(newFiles.count), deletedTracks.count = \(deletedTracks.count)")
-                .font(.caption)
-                .foregroundColor(.red)
-            Text("DEBUG: newFilesSelection.count = \(newFilesSelection.count), deletedSelection.count = \(deletedSelection.count)")
-                .font(.caption)
-                .foregroundColor(.blue)
-            Text("DEBUG: Button disabled = \(newFilesSelection.isEmpty && deletedSelection.isEmpty && movedUpdates.isEmpty)")
-                .font(.caption)
-                .foregroundColor(.green)
-
-            HStack(spacing: 16) {
-                // New files
-                VStack(alignment: .leading) {
+            // Summary
+            VStack(alignment: .leading, spacing: 8) {
+                if !newFiles.isEmpty {
                     HStack {
-                        Text("New Files (") + Text("\(newFiles.count)").bold() + Text(")")
-                        Spacer()
-                        Button(newFilesSelection.count == newFiles.count ? "Deselect All" : "Select All") {
-                            if newFilesSelection.count == newFiles.count { newFilesSelection.removeAll() }
-                            else { newFilesSelection = Set(newFiles) }
-                        }
-                        .buttonStyle(.borderless)
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundColor(.green)
+                        Text("\(newFiles.count) new file\(newFiles.count == 1 ? "" : "s") added to library")
+                            .fontWeight(.medium)
                     }
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(newFiles, id: \.self) { path in
-                                Toggle(isOn: Binding(
-                                    get: { newFilesSelection.contains(path) },
-                                    set: { checked in
-                                        if checked { newFilesSelection.insert(path) } else { newFilesSelection.remove(path) }
-                                    }
-                                )) {
-                                    Text(URL(fileURLWithPath: path).lastPathComponent)
-                                        .help(path)
-                                }
-                                .toggleStyle(.checkbox)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .frame(minHeight: 140)
                 }
-
-                // Deleted files
-                VStack(alignment: .leading) {
+                
+                if !deletedTracks.isEmpty {
                     HStack {
-                        Text("Missing Files (") + Text("\(deletedTracks.count)").bold() + Text(")")
-                        Spacer()
-                        Button(deletedSelection.count == deletedTracks.count ? "Deselect All" : "Select All") {
-                            let allIds = deletedTracks.compactMap { $0.id }
-                            if deletedSelection.count == allIds.count { deletedSelection.removeAll() }
-                            else { deletedSelection = Set(allIds) }
-                        }
-                        .buttonStyle(.borderless)
+                        Image(systemName: "minus.circle.fill")
+                            .foregroundColor(.red)
+                        Text("\(deletedTracks.count) file\(deletedTracks.count == 1 ? "" : "s") removed from library")
+                            .fontWeight(.medium)
                     }
+                }
+                
+                if !movedUpdates.isEmpty {
+                    HStack {
+                        Image(systemName: "arrow.right.arrow.left.circle.fill")
+                            .foregroundColor(.blue)
+                        Text("\(movedUpdates.count) file\(movedUpdates.count == 1 ? "" : "s") moved/renamed")
+                            .fontWeight(.medium)
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+            
+            // Details section
+            if !newFiles.isEmpty || !deletedTracks.isEmpty || !movedUpdates.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Details:")
+                        .font(.headline)
+                    
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(deletedTracks, id: \.id) { track in
-                                if let id = track.id {
-                                    Toggle(isOn: Binding(
-                                        get: { deletedSelection.contains(id) },
-                                        set: { checked in
-                                            if checked { deletedSelection.insert(id) } else { deletedSelection.remove(id) }
-                                        }
-                                    )) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            // New files
+                            if !newFiles.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("New Files:")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.green)
+                                    
+                                    ForEach(newFiles.prefix(10), id: \.self) { path in
                                         HStack {
-                                            Image(systemName: "exclamationmark.triangle").foregroundColor(.orange)
-                                            Text(track.displayTitle)
-                                            Spacer()
-                                            Text(URL(fileURLWithPath: track.path).lastPathComponent)
+                                            Image(systemName: "plus.circle")
+                                                .foregroundColor(.green)
+                                                .font(.caption)
+                                            Text(URL(fileURLWithPath: path).lastPathComponent)
+                                                .font(.caption)
                                                 .foregroundColor(.secondary)
                                         }
-                                        .help(track.path)
                                     }
-                                    .toggleStyle(.checkbox)
+                                    
+                                    if newFiles.count > 10 {
+                                        Text("... and \(newFiles.count - 10) more")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .italic()
+                                    }
+                                }
+                            }
+                            
+                            // Deleted files
+                            if !deletedTracks.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Removed Files:")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.red)
+                                    
+                                    ForEach(deletedTracks.prefix(10), id: \.id) { track in
+                                        HStack {
+                                            Image(systemName: "minus.circle")
+                                                .foregroundColor(.red)
+                                                .font(.caption)
+                                            Text(track.displayTitle)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    
+                                    if deletedTracks.count > 10 {
+                                        Text("... and \(deletedTracks.count - 10) more")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .italic()
+                                    }
+                                }
+                            }
+                            
+                            // Moved files
+                            if !movedUpdates.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Moved Files:")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.blue)
+                                    
+                                    ForEach(movedUpdates.prefix(10), id: \.id) { upd in
+                                        HStack {
+                                            Image(systemName: "arrow.right.arrow.left")
+                                                .foregroundColor(.blue)
+                                                .font(.caption)
+                                            Text(upd.trackTitle)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    
+                                    if movedUpdates.count > 10 {
+                                        Text("... and \(movedUpdates.count - 10) more")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .italic()
+                                    }
                                 }
                             }
                         }
                         .padding(.vertical, 4)
                     }
-                    .frame(minHeight: 140)
+                    .frame(maxHeight: 200)
                 }
             }
-
-            if !movedUpdates.isEmpty {
-                VStack(alignment: .leading) {
-                    Text("Moved Files (") + Text("\(movedUpdates.count)").bold() + Text(") - will update paths")
-                    List(movedUpdates) { upd in
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.right.arrow.left").foregroundColor(.blue)
-                            Text(upd.trackTitle)
-                            Spacer()
-                            Text(URL(fileURLWithPath: upd.oldPath).lastPathComponent)
-                            Image(systemName: "arrow.right")
-                            Text(URL(fileURLWithPath: upd.newPath).lastPathComponent)
-                        }
-                        .help("\(upd.oldPath) -> \(upd.newPath)")
-                    }
-                    .frame(minHeight: 100)
-                }
-            }
-
+            
+            Spacer()
+            
+            // Action button
             HStack {
                 Spacer()
-                Button("Cancel", action: onCancel)
-                Button("Apply Changes") {
-                    print("🔍 [FileChangesSheet] Apply button clicked - newFilesSelection: \(newFilesSelection.count), deletedSelection: \(deletedSelection.count), movedUpdates: \(movedUpdates.count)")
-                    onApply(Array(newFilesSelection), Array(deletedSelection), movedUpdates)
+                Button("OK") {
+                    // Apply all changes when OK is clicked
+                    let deletedIds = deletedTracks.compactMap { $0.id }
+                    onApply(newFiles, deletedIds, movedUpdates)
+                    onDismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(newFilesSelection.isEmpty && deletedSelection.isEmpty && movedUpdates.isEmpty)
+                .buttonStyle(.borderedProminent)
             }
         }
         .padding()
-        .onAppear {
-            print("🔍 [FileChangesSheet] onAppear - newFiles.count = \(newFiles.count), deletedTracks.count = \(deletedTracks.count)")
-            newFilesSelection = Set(newFiles)
-            deletedSelection = Set(deletedTracks.compactMap { $0.id })
-            print("🔍 [FileChangesSheet] Set newFilesSelection.count = \(newFilesSelection.count), deletedSelection.count = \(deletedSelection.count)")
-        }
+        .frame(minWidth: 500, minHeight: 300)
     }
 }
 

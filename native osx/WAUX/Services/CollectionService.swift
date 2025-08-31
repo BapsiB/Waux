@@ -164,18 +164,12 @@ class CollectionService: ObservableObject {
         
         // Start accessing the security-scoped resource
         let success = url.startAccessingSecurityScopedResource()
-        if success {
-            print("[Security] Successfully started accessing security-scoped resource")
-        } else {
-            print("[Security] Failed to start accessing security-scoped resource")
-        }
         return success
     }
     
     private func stopSecurityAccess() {
         guard let url = securityScopedURL else { return }
         url.stopAccessingSecurityScopedResource()
-        print("[Security] Stopped accessing security-scoped resource")
     }
     
     // MARK: - Database Operations
@@ -522,7 +516,6 @@ class CollectionService: ObservableObject {
                         rowCount += 1
                         do {
                             let track = try self.parseTrackFromRow(statement)
-                            print("📝 Parsed track: \(track.title) (id: \(track.id ?? -1))")
                             let resolvedTrack = self.resolveTrackPath(track)
                             loadedTracks.append(resolvedTrack)
                         } catch {
@@ -1124,7 +1117,6 @@ class CollectionService: ObservableObject {
         let waveformData: [Double]?
         if sqlite3_column_type(statement, 15) != SQLITE_NULL {
             let waveformJson = String(cString: sqlite3_column_text(statement, 15))
-            print("[TrackParse] Track \(id) waveform JSON present, length=\(waveformJson.count), prefix='\(waveformJson.prefix(80))'")
             do {
                 waveformData = try parseWaveformData(from: waveformJson)
             } catch {
@@ -1143,10 +1135,8 @@ class CollectionService: ObservableObject {
         let generalTags: [String]
         if sqlite3_column_type(statement, 18) != SQLITE_NULL {
             let tagsJson = String(cString: sqlite3_column_text(statement, 18))
-            print("[TrackParse] Track \(id) raw tags data: '\(tagsJson)'")
             do {
                 generalTags = try parseGeneralTags(from: tagsJson)
-                print("[TrackParse] Track \(id) parsed tags: \(generalTags)")
             } catch {
                 print("🚨 Failed to parse general tags for track \(id): \(error)")
                 print("🚨 Raw tags data: '\(tagsJson)'")
@@ -1170,7 +1160,6 @@ class CollectionService: ObservableObject {
                 throw CollectionError.invalidData
             }
         } else {
-            print("[TrackParse] Track \(id) has NULL tags")
             generalTags = []
         }
         
@@ -1181,12 +1170,10 @@ class CollectionService: ObservableObject {
             if let parsedDate = ISO8601DateFormatter().date(from: dateString) {
                 dateAdded = parsedDate
             } else {
-                print("[TrackParse] Track \(id) has invalid dateAdded format, using fallback date")
                 // Use a fallback date instead of current date to avoid showing current time
                 dateAdded = Date().addingTimeInterval(-86400 * 30) // 30 days ago as fallback
             }
         } else {
-            print("[TrackParse] Track \(id) has NULL dateAdded, using fallback date")
             // Use a fallback date instead of current date to avoid showing current time
             dateAdded = Date().addingTimeInterval(-86400 * 30) // 30 days ago as fallback
         }
@@ -1419,11 +1406,6 @@ class CollectionService: ObservableObject {
     
     // MARK: - Path Resolution
     func resolveTrackPathForWaveform(_ track: Track) -> String {
-        print("🔍 resolveTrackPathForWaveform called for track: \(track.title)")
-        print("   Original path: \(track.path)")
-        print("   Is URL: \(track.isUrl)")
-        print("   Collection type: \(activeCollectionDefinition?.type.rawValue ?? "unknown")")
-        print("   Root folders: \(localCollectionRootFolders)")
         
         // Ensure security access for file operations
         let securityAccess = ensureSecurityAccess()
@@ -1437,9 +1419,7 @@ class CollectionService: ObservableObject {
         
         // Check if the path is already absolute (starts with /)
         if track.path.hasPrefix("/") {
-            print("   📁 Path is already absolute, checking if file exists")
             if FileManager.default.fileExists(atPath: track.path) {
-                print("   ✅ File exists at absolute path: \(track.path)")
                 return track.path
             } else {
                 print("   ❌ File does not exist at absolute path: \(track.path)")
@@ -1450,9 +1430,7 @@ class CollectionService: ObservableObject {
                 
                 for (index, rootFolder) in localCollectionRootFolders.enumerated() {
                     let candidatePath = (rootFolder as NSString).appendingPathComponent(filename)
-                    print("   📂 Checking folder \(index + 1) for filename: \(candidatePath)")
                     if FileManager.default.fileExists(atPath: candidatePath) {
-                        print("   ✅ Found file by filename at: \(candidatePath)")
                         return candidatePath
                     }
                 }
@@ -1482,18 +1460,15 @@ class CollectionService: ObservableObject {
             print("   📁 Shared collection resolved path: \(absolutePath)")
             
         case .local:
-            print("   🔍 Local collection - checking \(localCollectionRootFolders.count) root folders")
             // For local collections, try to find the file in any of the root folders
             var foundPath = false
             absolutePath = "" // Initialize with empty string
             
             for (index, rootFolder) in localCollectionRootFolders.enumerated() {
                 let candidatePath = (rootFolder as NSString).appendingPathComponent(track.path)
-                print("   📂 Checking folder \(index + 1): \(candidatePath)")
                 if FileManager.default.fileExists(atPath: candidatePath) {
                     absolutePath = candidatePath
                     foundPath = true
-                    print("   ✅ Found file at: \(absolutePath)")
                     break
                 }
             }
@@ -1508,7 +1483,6 @@ class CollectionService: ObservableObject {
             }
         }
         
-        print("   ✅ Resolved track path: \(track.path) -> \(absolutePath)")
         return absolutePath
     }
     
