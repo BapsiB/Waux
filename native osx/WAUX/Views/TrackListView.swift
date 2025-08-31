@@ -529,6 +529,51 @@ struct TrackListView: View {
         NSWorkspace.shared.selectFile(fileURL.path, inFileViewerRootedAtPath: fileURL.deletingLastPathComponent().path)
     }
     
+    private func refreshTrackData(track: Track) {
+        guard let trackId = track.id else { return }
+        
+        Task {
+            do {
+                // Refresh the track data in the database (this will also update the track in memory)
+                try await collectionService.refreshTrackData(trackId: trackId)
+                print("✅ Successfully refreshed track data for: \(track.title)")
+                
+                // Trigger waveform analysis for the refreshed track
+                await MainActor.run {
+                    waveformServiceHolder.ensure(collectionService: collectionService)
+                    // Create a track object with cleared waveform data to trigger analysis
+                    let refreshedTrack = Track(
+                        id: track.id,
+                        title: track.title,
+                        artist: track.artist,
+                        album: track.album,
+                        albumArtist: track.albumArtist,
+                        composer: track.composer,
+                        genre: track.genre,
+                        year: track.year,
+                        trackNumber: track.trackNumber,
+                        discNumber: track.discNumber,
+                        bpm: track.bpm,
+                        path: track.path,
+                        isUrl: track.isUrl,
+                        duration: track.duration,
+                        timeMarkers: track.timeMarkers,
+                        waveformData: nil, // Clear waveform data to trigger analysis
+                        rating: track.rating,
+                        comment: track.comment,
+                        generalTags: track.generalTags,
+                        dateAdded: track.dateAdded
+                    )
+                    waveformServiceHolder.service?.analyzeIfMissing(refreshedTrack)
+                    print("🔄 Triggered waveform analysis for refreshed track: \(track.title)")
+                }
+                
+            } catch {
+                print("❌ Failed to refresh track data for \(track.title): \(error)")
+            }
+        }
+    }
+    
     // MARK: - Context Menu
     
     @ViewBuilder
@@ -553,6 +598,15 @@ struct TrackListView: View {
             }
             Button("Edit Metadata…") {
                 showMetadataEditor = true
+            }
+            
+            // Only show "Refresh Data" for local files
+            if let selectedTrack = selectedTracks.first,
+               let track = filteredTracks.first(where: { $0.id == selectedTrack }),
+               !track.isUrl {
+                Button("Refresh Data…") {
+                    refreshTrackData(track: track)
+                }
             }
             
             // Only show "Reveal in Finder" for local files

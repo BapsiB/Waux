@@ -2977,6 +2977,186 @@ class CollectionService: ObservableObject {
             }
         }
     }
+    
+    // MARK: - Track Data Refresh
+    
+    func refreshTrackData(trackId: Int) async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else {
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    
+                    // Get the track to refresh
+                    let trackQuery = "SELECT * FROM \(self.tableMusic) WHERE \(self.columnId) = ?"
+                    var statement: OpaquePointer?
+                    
+                    guard sqlite3_prepare_v2(db, trackQuery, -1, &statement, nil) == SQLITE_OK else {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    defer { sqlite3_finalize(statement) }
+                    
+                    sqlite3_bind_int(statement, 1, Int32(trackId))
+                    
+                    guard sqlite3_step(statement) == SQLITE_ROW else {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Track not found with ID: \(trackId)"))
+                        return
+                    }
+                    
+                    // Extract track data
+                    let path = String(cString: sqlite3_column_text(statement, 11)) // columnPath
+                    let isUrl = sqlite3_column_int(statement, 12) != 0 // columnIsUrl
+                    
+                    // Only refresh local files
+                    guard !isUrl else {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot refresh URL tracks"))
+                        return
+                    }
+                    
+                    // Create a temporary Track object for path resolution
+                    let tempTrack = Track(
+                        id: trackId,
+                        title: String(cString: sqlite3_column_text(statement, 1)), // columnTitle
+                        artist: String(cString: sqlite3_column_text(statement, 2)), // columnArtist
+                        album: String(cString: sqlite3_column_text(statement, 3)), // columnAlbum
+                        albumArtist: sqlite3_column_type(statement, 4) != SQLITE_NULL ? String(cString: sqlite3_column_text(statement, 4)) : nil, // columnAlbumArtist
+                        composer: sqlite3_column_type(statement, 5) != SQLITE_NULL ? String(cString: sqlite3_column_text(statement, 5)) : nil, // columnComposer
+                        genre: sqlite3_column_type(statement, 6) != SQLITE_NULL ? String(cString: sqlite3_column_text(statement, 6)) : nil, // columnGenre
+                        year: sqlite3_column_type(statement, 7) != SQLITE_NULL ? Int(sqlite3_column_int(statement, 7)) : nil, // columnYear
+                        trackNumber: sqlite3_column_type(statement, 8) != SQLITE_NULL ? Int(sqlite3_column_int(statement, 8)) : nil, // columnTrackNumber
+                        discNumber: sqlite3_column_type(statement, 9) != SQLITE_NULL ? Int(sqlite3_column_int(statement, 9)) : nil, // columnDiscNumber
+                        bpm: sqlite3_column_type(statement, 10) != SQLITE_NULL ? Int(sqlite3_column_int(statement, 10)) : nil, // columnBpm
+                        path: path,
+                        isUrl: isUrl,
+                        duration: Int(sqlite3_column_int(statement, 13)), // columnDuration
+                        timeMarkers: [], // We'll keep existing markers
+                        waveformData: nil, // Will be cleared
+                        rating: Int(sqlite3_column_int(statement, 16)), // columnRating
+                        comment: sqlite3_column_type(statement, 17) != SQLITE_NULL ? String(cString: sqlite3_column_text(statement, 17)) : "", // columnComment
+                        generalTags: [], // We'll keep existing tags
+                        dateAdded: Date() // We'll use current date for refreshed tracks
+                    )
+                    
+                    // Resolve the absolute path
+                    let absolutePath = self.resolveTrackPathForWaveform(tempTrack)
+                    let fm = FileManager.default
+                    guard fm.fileExists(atPath: absolutePath) else {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "File not found at path: \(absolutePath)"))
+                        return
+                    }
+                    
+                    // Compute new duration and extract metadata via AVFoundation
+                    let url = URL(fileURLWithPath: absolutePath)
+                    let asset = AVURLAsset(url: url)
+                    let durationSeconds = CMTimeGetSeconds(asset.duration)
+                    let durationMs = durationSeconds.isFinite && durationSeconds > 0 ? Int(durationSeconds * 1000) : 0
+                    let meta = self.extractAudioMetadata(from: asset)
+                    
+                    // Update the track with new duration and metadata
+                    let updateSQL = """
+                        UPDATE \(self.tableMusic) SET
+                            \(self.columnTitle) = ?,
+                            \(self.columnArtist) = ?,
+                            \(self.columnAlbum) = ?,
+                            \(self.columnAlbumArtist) = ?,
+                            \(self.columnComposer) = ?,
+                            \(self.columnGenre) = ?,
+                            \(self.columnYear) = ?,
+                            \(self.columnTrackNumber) = ?,
+                            \(self.columnDiscNumber) = ?,
+                            \(self.columnBpm) = ?,
+                            \(self.columnDuration) = ?,
+                            \(self.columnWaveformData) = NULL
+                        WHERE \(self.columnId) = ?
+                    """
+                    
+                    var updateStatement: OpaquePointer?
+                    guard sqlite3_prepare_v2(db, updateSQL, -1, &updateStatement, nil) == SQLITE_OK else {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    defer { sqlite3_finalize(updateStatement) }
+                    
+                    // Bind parameters
+                    let filenameTitle = URL(fileURLWithPath: absolutePath).deletingPathExtension().lastPathComponent
+                    let title = meta.title ?? filenameTitle
+                    
+                    // 1 title
+                    title.withCString { sqlite3_bind_text(updateStatement, 1, $0, -1, self.SQLITE_TRANSIENT) }
+                    // 2 artist
+                    if let v = meta.artist { v.withCString { sqlite3_bind_text(updateStatement, 2, $0, -1, self.SQLITE_TRANSIENT) } } else { "Unknown".withCString { sqlite3_bind_text(updateStatement, 2, $0, -1, self.SQLITE_TRANSIENT) } }
+                    // 3 album
+                    if let v = meta.album { v.withCString { sqlite3_bind_text(updateStatement, 3, $0, -1, self.SQLITE_TRANSIENT) } } else { "Unknown".withCString { sqlite3_bind_text(updateStatement, 3, $0, -1, self.SQLITE_TRANSIENT) } }
+                    // 4 albumArtist
+                    if let v = meta.albumArtist { v.withCString { sqlite3_bind_text(updateStatement, 4, $0, -1, self.SQLITE_TRANSIENT) } } else { sqlite3_bind_null(updateStatement, 4) }
+                    // 5 composer
+                    if let v = meta.composer { v.withCString { sqlite3_bind_text(updateStatement, 5, $0, -1, self.SQLITE_TRANSIENT) } } else { sqlite3_bind_null(updateStatement, 5) }
+                    // 6 genre
+                    if let v = meta.genre { v.withCString { sqlite3_bind_text(updateStatement, 6, $0, -1, self.SQLITE_TRANSIENT) } } else { sqlite3_bind_null(updateStatement, 6) }
+                    // 7 year
+                    if let v = meta.year { sqlite3_bind_int(updateStatement, 7, Int32(v)) } else { sqlite3_bind_null(updateStatement, 7) }
+                    // 8 trackNumber
+                    if let v = meta.trackNumber { sqlite3_bind_int(updateStatement, 8, Int32(v)) } else { sqlite3_bind_null(updateStatement, 8) }
+                    // 9 discNumber
+                    if let v = meta.discNumber { sqlite3_bind_int(updateStatement, 9, Int32(v)) } else { sqlite3_bind_null(updateStatement, 9) }
+                    // 10 bpm
+                    if let v = meta.bpm { sqlite3_bind_int(updateStatement, 10, Int32(v)) } else { sqlite3_bind_null(updateStatement, 10) }
+                    // 11 duration
+                    sqlite3_bind_int(updateStatement, 11, Int32(durationMs))
+                    // 12 trackId
+                    sqlite3_bind_int(updateStatement, 12, Int32(trackId))
+                    
+                    guard sqlite3_step(updateStatement) == SQLITE_DONE else {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    print("✅ [CollectionService] Refreshed track data for ID \(trackId): duration=\(durationMs)ms")
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+        
+        // Update the track in memory on the main thread after database operations complete
+        await MainActor.run {
+            if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
+                // Create updated track with cleared waveform data
+                let updatedTrack = Track(
+                    id: self.tracks[index].id,
+                    title: self.tracks[index].title, // Keep existing title for now, will be updated when tracks reload
+                    artist: self.tracks[index].artist,
+                    album: self.tracks[index].album,
+                    albumArtist: self.tracks[index].albumArtist,
+                    composer: self.tracks[index].composer,
+                    genre: self.tracks[index].genre,
+                    year: self.tracks[index].year,
+                    trackNumber: self.tracks[index].trackNumber,
+                    discNumber: self.tracks[index].discNumber,
+                    bpm: self.tracks[index].bpm,
+                    path: self.tracks[index].path,
+                    isUrl: self.tracks[index].isUrl,
+                    duration: self.tracks[index].duration, // Will be updated when tracks reload
+                    timeMarkers: self.tracks[index].timeMarkers,
+                    waveformData: nil, // Clear waveform data to show "Analyzing..."
+                    rating: self.tracks[index].rating,
+                    comment: self.tracks[index].comment,
+                    generalTags: self.tracks[index].generalTags,
+                    dateAdded: self.tracks[index].dateAdded
+                )
+                self.tracks[index] = updatedTrack
+                print("🔄 [CollectionService] Updated track in memory for ID \(trackId) with cleared waveform data")
+            }
+        }
+    }
 }
 
 // MARK: - Errors

@@ -6,6 +6,9 @@ class WaveformProcessingService: ObservableObject {
     private let processingQueue = DispatchQueue(label: "waveform.processing.queue")
     private var queuedTrackIds = Set<Int>()
     private var isShuttingDown = false
+    
+    // Published property to track which tracks are currently being analyzed
+    @Published var analyzingTrackIds = Set<Int>()
 
     init(collectionService: CollectionService) {
         self.collectionService = collectionService
@@ -37,6 +40,12 @@ class WaveformProcessingService: ObservableObject {
         print("[Waveform] Starting analysis for track \(id): \(track.title)")
         print("[Waveform] Track path: \(track.path)")
         print("[Waveform] Track duration: \(track.duration) ms")
+
+        // Add track to analyzing set on main thread
+        DispatchQueue.main.async {
+            self.analyzingTrackIds.insert(id)
+            print("[Waveform] Added track \(id) to analyzing set")
+        }
 
         processingQueue.async { [weak self] in
             guard let self = self else { 
@@ -77,6 +86,12 @@ class WaveformProcessingService: ObservableObject {
         defer { 
             queuedTrackIds.remove(trackId)
             print("[Waveform] Removed track \(trackId) from queue. Remaining: \(queuedTrackIds.count)")
+            
+            // Remove track from analyzing set on main thread
+            DispatchQueue.main.async {
+                self.analyzingTrackIds.remove(trackId)
+                print("[Waveform] Removed track \(trackId) from analyzing set")
+            }
         }
         
         // Try to resolve the path using CollectionService's path resolution
