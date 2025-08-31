@@ -98,7 +98,9 @@ struct CompactAudioPlayerView: View {
                             ),
                             onChanged: { ratio in
                                 audioService.seekToRatio(ratio)
-                            }
+                            },
+                            currentTime: audioService.currentTime,
+                            totalDuration: audioService.duration
                         )
                         .disabled(audioService.currentTrack == nil || audioService.isLoading)
                         .frame(maxWidth: .infinity)
