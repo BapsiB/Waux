@@ -7,18 +7,20 @@ class AudioService: NSObject, ObservableObject {
     @Published var isPlaying: Bool = false
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
-    @Published var volume: Float = 1.0
+    @Published var volume: Float = 0.8
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     
     private var audioPlayer: AVAudioPlayer?
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
+    private let preferenceService = PreferenceService.shared
     
     override init() {
         super.init()
         setupAudioSession()
         setupTimer()
+        loadVolumeFromPreferences()
     }
     
     deinit {
@@ -49,6 +51,10 @@ class AudioService: NSObject, ObservableObject {
         guard let player = audioPlayer else { return }
         currentTime = player.currentTime
         duration = player.duration
+    }
+    
+    private func loadVolumeFromPreferences() {
+        volume = preferenceService.volume
     }
     
     func loadTrack(_ track: Track) async {
@@ -160,6 +166,7 @@ class AudioService: NSObject, ObservableObject {
     func setVolume(_ newVolume: Float) {
         volume = max(0, min(1, newVolume))
         audioPlayer?.volume = volume
+        preferenceService.volume = volume
     }
     
     func togglePlayPause() {

@@ -13,6 +13,8 @@ struct MainContentArea: View {
     @State private var searchText = ""
     @State private var showFolderView = false
     @StateObject private var folderManager = FolderHierarchyManager()
+    @State private var hasAutoLoadedFirstTrack = false
+    @State private var currentCollectionId: String? = nil
     
     private var activeCollection: CollectionDefinition? {
         collectionService.getActiveCollection()
@@ -126,6 +128,31 @@ struct MainContentArea: View {
         }
         .onChange(of: tracksCount) { _, _ in
             print("[UI] Tracks count changed - isLoading: \(collectionService.isLoading), activeCollection: \(activeCollection != nil), tracksCount: \(tracksCount)")
+        }
+        .onChange(of: collectionService.tracks) { _, newTracks in
+            // Auto-load first track when collection is loaded and no track is currently playing
+            if !collectionService.isLoading && 
+               !newTracks.isEmpty && 
+               audioService.currentTrack == nil && 
+               !hasAutoLoadedFirstTrack {
+                
+                print("[UI] Auto-loading first track from collection")
+                hasAutoLoadedFirstTrack = true
+                
+                let firstTrack = newTracks.first!
+                Task {
+                    await audioService.loadTrack(firstTrack)
+                    print("[UI] First track loaded: \(firstTrack.title)")
+                }
+            }
+        }
+        .onChange(of: activeCollection?.id) { _, newCollectionId in
+            // Reset auto-load flag when collection changes
+            if newCollectionId != currentCollectionId {
+                currentCollectionId = newCollectionId
+                hasAutoLoadedFirstTrack = false
+                print("[UI] Collection changed, reset auto-load flag")
+            }
         }
     }
     

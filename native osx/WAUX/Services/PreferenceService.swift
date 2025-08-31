@@ -8,6 +8,7 @@ class PreferenceService: ObservableObject {
     // MARK: - Keys
     private let lastFolderPathKey = "lastFolderPath"
     private let lastFolderBookmarkKey = "lastFolderBookmark"
+    private let volumeKey = "audioVolume"
     
     // MARK: - Published Properties
     @Published var lastFolderPath: String? {
@@ -27,6 +28,12 @@ class PreferenceService: ObservableObject {
             } else {
                 userDefaults.removeObject(forKey: lastFolderBookmarkKey)
             }
+        }
+    }
+    
+    @Published var volume: Float = 0.8 {
+        didSet {
+            userDefaults.set(volume, forKey: volumeKey)
         }
     }
     
@@ -94,5 +101,11 @@ class PreferenceService: ObservableObject {
     private func loadPreferences() {
         lastFolderPath = userDefaults.string(forKey: lastFolderPathKey)
         lastFolderBookmark = userDefaults.data(forKey: lastFolderBookmarkKey)
+        volume = userDefaults.float(forKey: volumeKey)
+        
+        // Ensure volume is within valid range
+        if volume < 0 || volume > 1 {
+            volume = 0.8
+        }
     }
 }

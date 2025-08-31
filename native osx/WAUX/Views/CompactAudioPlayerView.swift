@@ -103,19 +103,6 @@ struct CompactAudioPlayerView: View {
                         .disabled(audioService.currentTrack == nil || audioService.isLoading)
                         .frame(maxWidth: .infinity)
                         
-                        HStack {
-                            Text(audioService.formatTime(audioService.currentTime))
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                            
-                            Spacer()
-                            
-                            Text(audioService.formatTime(audioService.duration))
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
                     }
                 }
                 .frame(width: geometry.size.width * 0.6)
