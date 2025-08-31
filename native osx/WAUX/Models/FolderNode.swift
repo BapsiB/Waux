@@ -65,26 +65,112 @@ class FolderHierarchyBuilder {
             folderMap[folderPath]?.append(track)
         }
         
-        // Create a simple flat structure for now
-        var rootFolders: [FolderNode] = []
+        // Build nested folder structure
+        let allFolderPaths = Set(folderMap.keys)
+        var folderNodes: [String: FolderNode] = [:]
         
-        for (folderPath, tracksInFolder) in folderMap {
+        // Create all folder nodes first
+        for folderPath in allFolderPaths {
             let pathComponents = folderPath.components(separatedBy: "/").filter { !$0.isEmpty }
             let folderName = pathComponents.last ?? "Unknown"
+            
+            // Calculate level relative to root path
+            let level: Int
+            if let rootPath = rootPath {
+                let rootComponents = rootPath.components(separatedBy: "/").filter { !$0.isEmpty }
+                let relativeLevel = pathComponents.count - rootComponents.count
+                level = max(0, relativeLevel - 1) // Ensure level is never negative
+            } else {
+                // If no root path specified, find the common root among all paths
+                let allPathComponents = allFolderPaths.map { $0.components(separatedBy: "/").filter { !$0.isEmpty } }
+                if let commonPrefix = findCommonPrefix(allPathComponents) {
+                    let relativeLevel = pathComponents.count - commonPrefix.count
+                    level = max(0, relativeLevel - 1)
+                } else {
+                    level = pathComponents.count - 1 // Fallback to original behavior
+                }
+            }
             
             let folderNode = FolderNode(
                 name: folderName,
                 path: folderPath,
                 isExpanded: false,
                 children: [],
-                tracks: tracksInFolder,
-                level: 0
+                tracks: folderMap[folderPath] ?? [],
+                level: level
             )
             
-            rootFolders.append(folderNode)
+            folderNodes[folderPath] = folderNode
+        }
+        
+        // Build parent-child relationships
+        var rootFolders: [FolderNode] = []
+        var childrenMap: [String: [FolderNode]] = [:]
+        
+        for folderPath in allFolderPaths {
+            let pathURL = URL(fileURLWithPath: folderPath)
+            let parentPath = pathURL.deletingLastPathComponent().path
+            
+            // If parent exists in our folder map, this is a child folder
+            if allFolderPaths.contains(parentPath) && parentPath != folderPath {
+                if childrenMap[parentPath] == nil {
+                    childrenMap[parentPath] = []
+                }
+                if let childNode = folderNodes[folderPath] {
+                    childrenMap[parentPath]?.append(childNode)
+                }
+            } else {
+                // This is a root folder
+                if let rootNode = folderNodes[folderPath] {
+                    rootFolders.append(rootNode)
+                }
+            }
+        }
+        
+        // Update folder nodes with their children
+        for (parentPath, children) in childrenMap {
+            if let parentNode = folderNodes[parentPath] {
+                let updatedNode = FolderNode(
+                    name: parentNode.name,
+                    path: parentNode.path,
+                    isExpanded: parentNode.isExpanded,
+                    children: children,
+                    tracks: parentNode.tracks,
+                    level: parentNode.level
+                )
+                folderNodes[parentPath] = updatedNode
+                
+                // Update in root folders if it's a root
+                if let rootIndex = rootFolders.firstIndex(where: { $0.path == parentPath }) {
+                    rootFolders[rootIndex] = updatedNode
+                }
+            }
         }
         
         return sortFolderHierarchy(rootFolders)
+    }
+    
+    // Helper function to find the common prefix among path components
+    private static func findCommonPrefix(_ pathComponents: [[String]]) -> [String]? {
+        guard !pathComponents.isEmpty else { return nil }
+        
+        let firstPath = pathComponents[0]
+        var commonPrefix: [String] = []
+        
+        for (index, component) in firstPath.enumerated() {
+            // Check if all paths have the same component at this index
+            let allMatch = pathComponents.allSatisfy { path in
+                index < path.count && path[index] == component
+            }
+            
+            if allMatch {
+                commonPrefix.append(component)
+            } else {
+                break
+            }
+        }
+        
+        return commonPrefix.isEmpty ? nil : commonPrefix
     }
     
 
@@ -125,8 +211,8 @@ class FolderHierarchyManager: ObservableObject {
     @Published var expandedFolders: Set<String> = []
     @Published var selectedFolders: Set<String> = []
     
-    func buildHierarchy(from tracks: [Track]) {
-        rootFolders = FolderHierarchyBuilder.buildHierarchy(from: tracks)
+    func buildHierarchy(from tracks: [Track], rootPath: String? = nil) {
+        rootFolders = FolderHierarchyBuilder.buildHierarchy(from: tracks, rootPath: rootPath)
     }
     
     func toggleExpansion(for folderPath: String) {

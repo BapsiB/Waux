@@ -53,11 +53,13 @@ struct FolderHierarchyView: View {
         }
         .onAppear {
             // Build hierarchy when view appears
-            folderManager.buildHierarchy(from: collectionService.tracks)
+            let rootPath = collectionService.getRootFolders().first
+            folderManager.buildHierarchy(from: collectionService.tracks, rootPath: rootPath)
         }
         .onChange(of: collectionService.tracks) { _, _ in
             // Rebuild hierarchy when tracks change
-            folderManager.buildHierarchy(from: collectionService.tracks)
+            let rootPath = collectionService.getRootFolders().first
+            folderManager.buildHierarchy(from: collectionService.tracks, rootPath: rootPath)
         }
         .sheet(isPresented: $showTagEditor) {
             let selectedTrackIds = selectedTracks.compactMap { $0 }
@@ -128,9 +130,27 @@ struct FolderNodeView: View {
                 isSelected: folderManager.isSelected(folder.path)
             )
             
-            // Tracks in this folder
+            // Child folders and tracks when expanded
             if folderManager.isExpanded(folder.path) {
                 VStack(alignment: .leading, spacing: 0) {
+                    // Render child folders first
+                    ForEach(folder.children) { childFolder in
+                        FolderNodeView(
+                            folder: childFolder,
+                            folderManager: folderManager,
+                            audioService: audioService,
+                            metadataManager: metadataManager,
+                            waveformServiceHolder: waveformServiceHolder,
+                            collectionService: collectionService,
+                            selectedTracks: $selectedTracks,
+                            lastSelectedTrackId: $lastSelectedTrackId,
+                            searchText: $searchText,
+                            isTextFieldFocused: $isTextFieldFocused,
+                            onDoubleClick: onDoubleClick
+                        )
+                    }
+                    
+                    // Then render tracks in this folder
                     ForEach(folder.tracks) { track in
                         if searchText.isEmpty || trackMatchesSearch(track) {
                             FolderTrackRowView(
@@ -145,7 +165,7 @@ struct FolderNodeView: View {
                                 onDoubleClick: onDoubleClick,
                                 allTracks: folder.tracks
                             )
-                            .padding(.leading, 20)
+                            .padding(.leading, CGFloat((folder.level + 1) * 20)) // Indent tracks one level deeper than their parent folder
                         }
                     }
                 }
@@ -222,6 +242,7 @@ struct FolderHeaderView: View {
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
+        .padding(.leading, CGFloat(folder.level * 20)) // Add visual indentation based on folder depth
         .background(isSelected ? Color.blue.opacity(0.2) : Color.clear)
         .cornerRadius(4)
         .contentShape(Rectangle())
