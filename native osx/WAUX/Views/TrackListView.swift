@@ -347,7 +347,7 @@ struct TrackListView: View {
     @ObservedObject var collectionService: CollectionService
     @ObservedObject var audioService: AudioService
     let tracksFilter: [Track]? // If provided, only show these tracks; otherwise show all tracks
-    @Binding var searchText: String
+    @ObservedObject var searchService: SearchService
     @Binding var isImportingNewFolder: Bool
     let initialLoadComplete: Bool
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
@@ -371,11 +371,11 @@ struct TrackListView: View {
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
     
-    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil, searchText: Binding<String>, isImportingNewFolder: Binding<Bool> = .constant(false), initialLoadComplete: Bool = false) {
+    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil, searchService: SearchService, isImportingNewFolder: Binding<Bool> = .constant(false), initialLoadComplete: Bool = false) {
         self.collectionService = collectionService
         self.audioService = audioService
         self.tracksFilter = tracksFilter
-        self._searchText = searchText
+        self.searchService = searchService
         self._isImportingNewFolder = isImportingNewFolder
         self.initialLoadComplete = initialLoadComplete
         self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
@@ -385,16 +385,8 @@ struct TrackListView: View {
     
     var filteredTracks: [Track] {
         let baseTracks = tracksFilter ?? collectionService.tracks
-        
-        if searchText.isEmpty {
-            return baseTracks.sorted(using: sortOrder)
-        } else {
-            return baseTracks.filter { track in
-                track.title.localizedCaseInsensitiveContains(searchText) ||
-                track.artist.localizedCaseInsensitiveContains(searchText) ||
-                track.album.localizedCaseInsensitiveContains(searchText)
-            }.sorted(using: sortOrder)
-        }
+        let filteredTracks = searchService.filterTracks(baseTracks)
+        return filteredTracks.sorted(using: sortOrder)
     }
     
     var body: some View {
@@ -1067,7 +1059,7 @@ private struct FileChangesSheet: View {
     TrackListView(
         collectionService: collectionService,
         audioService: AudioService(),
-        searchText: .constant("")
+        searchService: SearchService()
     )
 }
 

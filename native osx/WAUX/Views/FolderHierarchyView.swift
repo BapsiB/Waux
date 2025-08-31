@@ -5,7 +5,7 @@ struct FolderHierarchyView: View {
     @ObservedObject var collectionService: CollectionService
     @ObservedObject var audioService: AudioService
     @ObservedObject var folderManager: FolderHierarchyManager
-    @Binding var searchText: String
+    @ObservedObject var searchService: SearchService
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @StateObject private var metadataManager: TrackMetadataManager
     @State private var selectedTracks = Set<Track.ID>()
@@ -14,11 +14,11 @@ struct FolderHierarchyView: View {
     @State private var showMetadataEditor = false
     @FocusState private var isTextFieldFocused: Bool
     
-    init(collectionService: CollectionService, audioService: AudioService, folderManager: FolderHierarchyManager, searchText: Binding<String>) {
+    init(collectionService: CollectionService, audioService: AudioService, folderManager: FolderHierarchyManager, searchService: SearchService) {
         self.collectionService = collectionService
         self.audioService = audioService
         self.folderManager = folderManager
-        self._searchText = searchText
+        self.searchService = searchService
         self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
     }
     
@@ -35,7 +35,7 @@ struct FolderHierarchyView: View {
                             collectionService: collectionService,
                             selectedTracks: $selectedTracks,
                             lastSelectedTrackId: $lastSelectedTrackId,
-                            searchText: $searchText,
+                            searchService: searchService,
                             isTextFieldFocused: Binding(
                                 get: { isTextFieldFocused },
                                 set: { isTextFieldFocused = $0 }
@@ -116,7 +116,7 @@ struct FolderNodeView: View {
     @ObservedObject var collectionService: CollectionService
     @Binding var selectedTracks: Set<Track.ID>
     @Binding var lastSelectedTrackId: Track.ID?
-    @Binding var searchText: String
+    @ObservedObject var searchService: SearchService
     @Binding var isTextFieldFocused: Bool
     let onDoubleClick: (Track) -> Void
     
@@ -144,7 +144,7 @@ struct FolderNodeView: View {
                             collectionService: collectionService,
                             selectedTracks: $selectedTracks,
                             lastSelectedTrackId: $lastSelectedTrackId,
-                            searchText: $searchText,
+                            searchService: searchService,
                             isTextFieldFocused: $isTextFieldFocused,
                             onDoubleClick: onDoubleClick
                         )
@@ -152,7 +152,7 @@ struct FolderNodeView: View {
                     
                     // Then render tracks in this folder
                     ForEach(folder.tracks) { track in
-                        if searchText.isEmpty || trackMatchesSearch(track) {
+                        if searchService.searchText.isEmpty || trackMatchesSearch(track) {
                             FolderTrackRowView(
                                 track: track,
                                 audioService: audioService,
@@ -174,9 +174,7 @@ struct FolderNodeView: View {
     }
     
     private func trackMatchesSearch(_ track: Track) -> Bool {
-        return track.title.localizedCaseInsensitiveContains(searchText) ||
-               track.artist.localizedCaseInsensitiveContains(searchText) ||
-               track.album.localizedCaseInsensitiveContains(searchText)
+        return searchService.trackMatchesSearch(track)
     }
 }
 
@@ -473,6 +471,6 @@ struct FolderTrackRowView: View {
         collectionService: collectionService,
         audioService: AudioService(),
         folderManager: folderManager,
-        searchText: .constant("")
+        searchService: SearchService()
     )
 }

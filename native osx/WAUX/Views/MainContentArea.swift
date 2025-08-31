@@ -10,7 +10,7 @@ struct MainContentArea: View {
     @Binding var selectedPlaylist: Playlist?
     @Binding var isImportingNewFolder: Bool
     let initialLoadComplete: Bool
-    @State private var searchText = ""
+    @StateObject private var searchService = SearchService()
     @State private var showFolderView = false
     @StateObject private var folderManager = FolderHierarchyManager()
     @State private var hasAutoLoadedFirstTrack = false
@@ -45,7 +45,7 @@ struct MainContentArea: View {
                             collectionService: collectionService, 
                             audioService: audioService, 
                             tracksFilter: playlistTracks,
-                            searchText: $searchText,
+                            searchService: searchService,
                             isImportingNewFolder: $isImportingNewFolder,
                             initialLoadComplete: initialLoadComplete
                         )
@@ -78,13 +78,13 @@ struct MainContentArea: View {
                             collectionService: collectionService,
                             audioService: audioService,
                             folderManager: folderManager,
-                            searchText: $searchText
+                            searchService: searchService
                         )
                     } else {
                         TrackListView(
                             collectionService: collectionService, 
                             audioService: audioService,
-                            searchText: $searchText,
+                            searchService: searchService,
                             isImportingNewFolder: $isImportingNewFolder,
                             initialLoadComplete: initialLoadComplete
                         )
@@ -207,16 +207,8 @@ struct MainContentArea: View {
                 }
             }
             
-            // Search bar (smaller)
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                    .font(.system(size: 12))
-                
-                TextField("Search tracks...", text: $searchText)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .frame(width: 150)
-            }
+            // Search bar
+            SearchBarView(searchService: searchService)
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
