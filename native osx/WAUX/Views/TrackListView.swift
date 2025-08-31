@@ -424,9 +424,16 @@ struct TrackListView: View {
                 onKeyPressSpace: {
                     if let selectedTrack = selectedTracks.first,
                        let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
-                        Task {
-                            await audioService.loadTrack(track)
-                            audioService.play()
+                        // Check if this track is already loaded and playing
+                        if audioService.currentTrack?.id == track.id {
+                            // Same track - toggle play/pause
+                            audioService.togglePlayPause()
+                        } else {
+                            // Different track - load and play
+                            Task {
+                                await audioService.loadTrack(track)
+                                audioService.play()
+                            }
                         }
                     }
                 }
