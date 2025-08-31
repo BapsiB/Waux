@@ -349,6 +349,7 @@ struct TrackListView: View {
     let tracksFilter: [Track]? // If provided, only show these tracks; otherwise show all tracks
     @Binding var searchText: String
     @Binding var isImportingNewFolder: Bool
+    let initialLoadComplete: Bool
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @StateObject private var metadataManager: TrackMetadataManager
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
@@ -365,16 +366,18 @@ struct TrackListView: View {
     @State private var isScanningDatabase = false
     @State private var showFileChangesSheet = false
     @State private var fileChangesData: FileChangesData? = nil
+    @State private var hasRunInitialScan = false
     @FocusState private var isTextFieldFocused: Bool
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
     
-    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil, searchText: Binding<String>, isImportingNewFolder: Binding<Bool> = .constant(false)) {
+    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil, searchText: Binding<String>, isImportingNewFolder: Binding<Bool> = .constant(false), initialLoadComplete: Bool = false) {
         self.collectionService = collectionService
         self.audioService = audioService
         self.tracksFilter = tracksFilter
         self._searchText = searchText
         self._isImportingNewFolder = isImportingNewFolder
+        self.initialLoadComplete = initialLoadComplete
         self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
     }
     
@@ -503,10 +506,19 @@ struct TrackListView: View {
         }
         .onAppear(perform: loadPreferences)
         .task {
-            await scanForFileChanges()
+            // Only scan for file changes after the initial load is complete and we haven't run it yet
+            if initialLoadComplete && !hasRunInitialScan {
+                hasRunInitialScan = true
+                await scanForFileChanges()
+            }
         }
         .onChange(of: visibleColumns) { _, _ in
             saveVisibleColumns()
+        }
+        .onChange(of: initialLoadComplete) { _, isComplete in
+            if isComplete {
+                hasRunInitialScan = false
+            }
         }
     }
     
@@ -691,6 +703,8 @@ struct TrackListView: View {
             print("🔍 [TrackListView] Skipping scan - currently importing new folder")
             return
         }
+        
+
         
         do {
             print("🔍 [TrackListView] Starting scan...")

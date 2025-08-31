@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var isLoadingPlaylistTracks = false
     @State private var hasAttemptedAutoLoad = false
     @State private var isImportingNewFolder = false
+    @State private var initialLoadComplete = false
     @EnvironmentObject private var menuActionState: MenuActionState
     
     var body: some View {
@@ -35,16 +36,17 @@ struct ContentView: View {
                     )
                     
                     // Main area
-                                MainContentArea(
-                collectionService: collectionService,
-                playlistService: playlistService,
-                audioService: audioService,
-                playlistTracks: playlistTracks,
-                isLoadingPlaylistTracks: isLoadingPlaylistTracks,
-                showingFolderPicker: $showingFolderPicker,
-                selectedPlaylist: $selectedPlaylist,
-                isImportingNewFolder: $isImportingNewFolder
-            )
+                    MainContentArea(
+                        collectionService: collectionService,
+                        playlistService: playlistService,
+                        audioService: audioService,
+                        playlistTracks: playlistTracks,
+                        isLoadingPlaylistTracks: isLoadingPlaylistTracks,
+                        showingFolderPicker: $showingFolderPicker,
+                        selectedPlaylist: $selectedPlaylist,
+                        isImportingNewFolder: $isImportingNewFolder,
+                        initialLoadComplete: initialLoadComplete
+                    )
                 }
             }
         }
@@ -221,6 +223,11 @@ struct ContentView: View {
     }
     
     private func openFolder(url: URL) async {
+        // Reset initial load complete flag for new folder
+        await MainActor.run {
+            initialLoadComplete = false
+        }
+        
         do {
             print("Selected folder URL: \(url)")
             print("Folder path: \(url.path)")
@@ -301,6 +308,11 @@ struct ContentView: View {
             print("[OpenFolder] Tracks loaded: \(collectionService.tracks.count)")
             try await playlistService.loadPlaylists()
             print("[OpenFolder] Playlists loaded: \(playlistService.playlists.count)")
+            
+            // Mark initial load as complete
+            await MainActor.run {
+                initialLoadComplete = true
+            }
             
             // Trigger waveform processing for newly added tracks (if any)
             if !collectionService.pendingWaveformTrackIds.isEmpty {
