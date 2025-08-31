@@ -122,7 +122,20 @@ struct WaveformView: View {
         guard onTap != nil else { return }
         
         // Calculate the ratio based on x position
-        let ratio = max(0.0, min(1.0, location.x / size.width))
+        // The waveform bars are distributed across the full width with spacing
+        // The last bar is at (data.count - 1) * spacing, which might not reach the very right edge
+        // So we should normalize the tap position relative to the actual waveform bounds
+        guard !waveformData.isEmpty else { return }
+        
+        let targetPoints = max(1, Int(size.width / 2.0))
+        let data = downsample(waveformData, to: targetPoints)
+        if data.isEmpty { return }
+        
+        let spacing = size.width / CGFloat(max(1, data.count - 1))
+        let actualWaveformWidth = CGFloat(data.count - 1) * spacing
+        
+        // Calculate ratio based on the actual waveform width, not the full view width
+        let ratio = max(0.0, min(1.0, location.x / actualWaveformWidth))
         onTap?(ratio)
     }
 

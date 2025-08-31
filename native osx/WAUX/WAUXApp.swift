@@ -45,12 +45,7 @@ struct WAUXApp: App {
                 }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 
-                Divider()
-                
-                Button("Regenerate Waveforms (Time-based)") {
-                    menuActionState.shouldRegenerateWaveforms = true
-                }
-                .keyboardShortcut("w", modifiers: [.command, .shift])
+
             }
         }
     }
