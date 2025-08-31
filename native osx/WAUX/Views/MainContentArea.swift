@@ -8,6 +8,7 @@ struct MainContentArea: View {
     let isLoadingPlaylistTracks: Bool
     @Binding var showingFolderPicker: Bool
     @Binding var selectedPlaylist: Playlist?
+    @Binding var isImportingNewFolder: Bool
     @State private var searchText = ""
     @State private var showFolderView = false
     @StateObject private var folderManager = FolderHierarchyManager()
@@ -41,7 +42,8 @@ struct MainContentArea: View {
                             collectionService: collectionService, 
                             audioService: audioService, 
                             tracksFilter: playlistTracks,
-                            searchText: $searchText
+                            searchText: $searchText,
+                            isImportingNewFolder: $isImportingNewFolder
                         )
                     } else {
                         // Empty playlist content
@@ -78,7 +80,8 @@ struct MainContentArea: View {
                         TrackListView(
                             collectionService: collectionService, 
                             audioService: audioService,
-                            searchText: $searchText
+                            searchText: $searchText,
+                            isImportingNewFolder: $isImportingNewFolder
                         )
                     }
                 }

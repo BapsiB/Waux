@@ -348,6 +348,7 @@ struct TrackListView: View {
     @ObservedObject var audioService: AudioService
     let tracksFilter: [Track]? // If provided, only show these tracks; otherwise show all tracks
     @Binding var searchText: String
+    @Binding var isImportingNewFolder: Bool
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @StateObject private var metadataManager: TrackMetadataManager
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
@@ -368,11 +369,12 @@ struct TrackListView: View {
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
     
-    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil, searchText: Binding<String>) {
+    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil, searchText: Binding<String>, isImportingNewFolder: Binding<Bool> = .constant(false)) {
         self.collectionService = collectionService
         self.audioService = audioService
         self.tracksFilter = tracksFilter
         self._searchText = searchText
+        self._isImportingNewFolder = isImportingNewFolder
         self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
     }
     
@@ -686,6 +688,12 @@ struct TrackListView: View {
     }
 
     private func scanForFileChanges() async {
+        // Skip scan if we're currently importing a new folder
+        if isImportingNewFolder {
+            print("🔍 [TrackListView] Skipping scan - currently importing new folder")
+            return
+        }
+        
         do {
             print("🔍 [TrackListView] Starting scan...")
             let changes = try await collectionService.scanFilesystemChanges()
@@ -709,7 +717,6 @@ struct TrackListView: View {
             print("🔍 [TrackListView] Scan failed: \(error)")
         }
     }
-    
 
 }
 

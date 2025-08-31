@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var playlistTracks: [Track] = []
     @State private var isLoadingPlaylistTracks = false
     @State private var hasAttemptedAutoLoad = false
+    @State private var isImportingNewFolder = false
     @EnvironmentObject private var menuActionState: MenuActionState
     
     var body: some View {
@@ -34,15 +35,16 @@ struct ContentView: View {
                     )
                     
                     // Main area
-                    MainContentArea(
-                        collectionService: collectionService,
-                        playlistService: playlistService,
-                        audioService: audioService,
-                        playlistTracks: playlistTracks,
-                        isLoadingPlaylistTracks: isLoadingPlaylistTracks,
-                        showingFolderPicker: $showingFolderPicker,
-                        selectedPlaylist: $selectedPlaylist
-                    )
+                                MainContentArea(
+                collectionService: collectionService,
+                playlistService: playlistService,
+                audioService: audioService,
+                playlistTracks: playlistTracks,
+                isLoadingPlaylistTracks: isLoadingPlaylistTracks,
+                showingFolderPicker: $showingFolderPicker,
+                selectedPlaylist: $selectedPlaylist,
+                isImportingNewFolder: $isImportingNewFolder
+            )
                 }
             }
         }
@@ -283,7 +285,13 @@ struct ContentView: View {
             // If we just created a DB, import all audio files under the selected folder
             if dbAtRoot == nil {
                 print("[OpenFolder] Importing audio files under root: \(url.path)")
+                await MainActor.run {
+                    isImportingNewFolder = true
+                }
                 try await collectionService.importAllAudioFilesUnderRoot(rootFolderPath: url.path)
+                await MainActor.run {
+                    isImportingNewFolder = false
+                }
                 print("[OpenFolder] Import completed")
             }
 
