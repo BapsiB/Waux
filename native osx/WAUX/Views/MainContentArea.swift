@@ -164,6 +164,39 @@ struct MainContentArea: View {
                 .font(.title2)
                 .fontWeight(.bold)
             
+            // View toggle button (only show for "All Tracks")
+            if showViewToggle {
+                Menu {
+                    Button(action: {
+                        showFolderView = false
+                    }) {
+                        HStack {
+                            Image(systemName: "list.bullet")
+                            Text("List")
+                        }
+                    }
+                    
+                    Button(action: {
+                        showFolderView = true
+                    }) {
+                        HStack {
+                            Image(systemName: "folder")
+                            Text("Folders")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: showFolderView ? "folder" : "list.bullet")
+                            .font(.system(size: 16))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(showFolderView ? "Switch to list view" : "Switch to folder view")
+            }
+            
             if showCloseButton {
                 Button(action: {
                     onClose?()
@@ -184,28 +217,6 @@ struct MainContentArea: View {
             }
             
             Spacer()
-            
-            // View toggle button (only show for "All Tracks")
-            if showViewToggle {
-                HStack(spacing: 8) {
-                    Button(action: {
-                        showFolderView.toggle()
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: showFolderView ? "list.bullet" : "folder")
-                                .font(.system(size: 12))
-                            Text(showFolderView ? "Table" : "Folders")
-                                .font(.caption)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(6)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(showFolderView ? "Switch to table view" : "Switch to folder view")
-                }
-            }
             
             // Search bar
             SearchBarView(searchService: searchService)
