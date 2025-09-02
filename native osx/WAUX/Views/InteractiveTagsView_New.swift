@@ -128,6 +128,16 @@ struct InteractiveTagsView_New: View {
         guard !name.isEmpty else { return }
         
         if !tags.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            // Add to global tags if it doesn't exist
+            if !globalTags.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+                do {
+                    try metadataManager.collectionServiceAccess.addGlobalTag(name)
+                } catch {
+                    print("[InteractiveTagsView_New] Error adding global tag: \(error)")
+                }
+            }
+            
+            // Add tag to the track
             metadataManager.addTag(to: [trackId], tag: name)
         }
         input = ""
