@@ -503,6 +503,15 @@ struct TrackListView: View {
                 }
             )
         }
+        .onAppear {
+            // Set up auto-play callback for AudioService
+            audioService.setNextTrackCallback { [self] in
+                self.getNextTrackForAutoPlay()
+            }
+            audioService.setPreviousTrackCallback { [self] in
+                self.getPreviousTrackForAutoPlay()
+            }
+        }
         .onAppear(perform: loadPreferences)
         .task {
             // Only scan for file changes after the initial load is complete and we haven't run it yet
@@ -519,6 +528,46 @@ struct TrackListView: View {
                 hasRunInitialScan = false
             }
         }
+    }
+    
+    // MARK: - Auto-play functionality
+    
+    /// Gets the next track for auto-play based on the current playing track
+    private func getNextTrackForAutoPlay() -> Track? {
+        guard let currentTrack = audioService.currentTrack,
+              let currentIndex = filteredTracks.firstIndex(where: { $0.id == currentTrack.id }) else {
+            return nil
+        }
+        
+        let nextIndex = currentIndex + 1
+        guard nextIndex < filteredTracks.count else {
+            // Reached end of list, could loop back to beginning if desired
+            // For now, return nil to stop playback
+            return nil
+        }
+        
+        let nextTrack = filteredTracks[nextIndex]
+        print("🔍 [TrackListView] Auto-play: Current track '\(currentTrack.title)' at index \(currentIndex), next track '\(nextTrack.title)' at index \(nextIndex)")
+        return nextTrack
+    }
+    
+    /// Gets the previous track for auto-play based on the current playing track
+    private func getPreviousTrackForAutoPlay() -> Track? {
+        guard let currentTrack = audioService.currentTrack,
+              let currentIndex = filteredTracks.firstIndex(where: { $0.id == currentTrack.id }) else {
+            return nil
+        }
+        
+        let previousIndex = currentIndex - 1
+        guard previousIndex >= 0 else {
+            // Reached beginning of list, could loop back to end if desired
+            // For now, return nil to stop playback
+            return nil
+        }
+        
+        let previousTrack = filteredTracks[previousIndex]
+        print("🔍 [TrackListView] Auto-play: Current track '\(currentTrack.title)' at index \(currentIndex), previous track '\(previousTrack.title)' at index \(previousIndex)")
+        return previousTrack
     }
     
     // MARK: - Helper Functions

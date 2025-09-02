@@ -16,6 +16,10 @@ class AudioService: NSObject, ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let preferenceService = PreferenceService.shared
     
+    // Callbacks to get the next/previous track for auto-play and manual navigation
+    var getNextTrack: (() -> Track?)?
+    var getPreviousTrack: (() -> Track?)?
+    
     override init() {
         super.init()
         setupAudioSession()
@@ -182,6 +186,56 @@ class AudioService: NSObject, ObservableObject {
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)
     }
+    
+    // MARK: - Auto-play functionality
+    
+    /// Sets the callback function to get the next track for auto-play
+    func setNextTrackCallback(_ callback: @escaping () -> Track?) {
+        getNextTrack = callback
+    }
+    
+    /// Sets the callback function to get the previous track
+    func setPreviousTrackCallback(_ callback: @escaping () -> Track?) {
+        getPreviousTrack = callback
+    }
+    
+    /// Automatically plays the next track if available
+    private func playNextTrack() {
+        guard let nextTrack = getNextTrack?() else {
+            print("No next track available for auto-play")
+            return
+        }
+        
+        print("Auto-playing next track: \(nextTrack.title)")
+        Task {
+            await loadTrack(nextTrack)
+            play()
+        }
+    }
+    
+    /// Plays the next track manually (for next button)
+    func playNextTrack() async {
+        guard let nextTrack = getNextTrack?() else {
+            print("No next track available")
+            return
+        }
+        
+        print("Manually playing next track: \(nextTrack.title)")
+        await loadTrack(nextTrack)
+        play()
+    }
+    
+    /// Plays the previous track manually (for previous button)
+    func playPreviousTrack() async {
+        guard let previousTrack = getPreviousTrack?() else {
+            print("No previous track available")
+            return
+        }
+        
+        print("Manually playing previous track: \(previousTrack.title)")
+        await loadTrack(previousTrack)
+        play()
+    }
 }
 
 enum AudioServiceError: Error, LocalizedError {
@@ -207,6 +261,11 @@ extension AudioService: AVAudioPlayerDelegate {
             self.isPlaying = false
             self.currentTime = 0
             print("audioPlayerDidFinishPlaying")
+            
+            // Auto-play next track if available
+            if flag {
+                self.playNextTrack()
+            }
         }
     }
     

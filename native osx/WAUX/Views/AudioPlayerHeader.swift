@@ -11,7 +11,9 @@ struct AudioPlayerHeader: View {
             if audioService.currentTrack != nil {
                 HStack(spacing: 12) {
                     Button(action: {
-                        // TODO: Implement previous track
+                        Task {
+                            await audioService.playPreviousTrack()
+                        }
                     }) {
                         Image(systemName: "backward.fill")
                             .font(.system(size: 14))
@@ -31,7 +33,9 @@ struct AudioPlayerHeader: View {
                     .buttonStyle(.plain)
                     
                     Button(action: {
-                        // TODO: Implement next track
+                        Task {
+                            await audioService.playNextTrack()
+                        }
                     }) {
                         Image(systemName: "forward.fill")
                             .font(.system(size: 14))
