@@ -13,6 +13,11 @@ class TrackMetadataManager: ObservableObject {
     private let collectionService: CollectionService
     private var cancellables = Set<AnyCancellable>()
     
+    // Public accessor for collection service
+    var collectionServiceAccess: CollectionService {
+        return collectionService
+    }
+    
     // Optimistic UI state for immediate feedback
     private var optimisticChanges: [Int: TrackChanges] = [:]
     
