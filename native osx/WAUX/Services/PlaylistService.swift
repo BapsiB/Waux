@@ -56,12 +56,16 @@ class PlaylistService: ObservableObject {
         self.activeCollectionDefinition = collectionDefinition
         self.databaseQueue = databaseQueue
         self.collectionService = collectionService
-        print("PlaylistService database set")
+        print("PlaylistService database set with queue: \(databaseQueue)")
         
-        // Run database migration for folder support
+        // Run database migration for folder support - ensure it's properly queued
         Task {
             do {
+                // Wait a bit to ensure the database queue is fully established
+                try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                print("🔧 Starting database migration for folder support...")
                 try await migrateDatabaseForFolders()
+                print("✅ Database migration completed successfully")
             } catch {
                 print("⚠️ Failed to migrate database for folder support: \(error)")
                 await MainActor.run {
@@ -86,11 +90,14 @@ class PlaylistService: ObservableObject {
     
     // MARK: - Database Migration
     func migrateDatabaseForFolders() async throws {
-        guard let db = database else {
+        guard let _ = database else {
             throw PlaylistError.noActiveCollection
         }
         
         return try await withDatabaseQueue {
+            guard let db = self.database else {
+                throw PlaylistError.noActiveCollection
+            }
             // Create playlist_folders table if it doesn't exist
             let createFoldersTableSQL = """
             CREATE TABLE IF NOT EXISTS \(self.tablePlaylistFolders) (
@@ -178,10 +185,17 @@ class PlaylistService: ObservableObject {
         }
     }
     
+    // Helper method to get database connection safely within queue context
+    private func getDatabaseConnection() throws -> OpaquePointer {
+        guard let db = database else {
+            throw PlaylistError.noActiveCollection
+        }
+        return db
+    }
+    
     // MARK: - Playlist Operations
     func loadPlaylists() async throws {
-        guard let db = database,
-              let _ = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
@@ -191,6 +205,9 @@ class PlaylistService: ObservableObject {
         }
         
         return try await withDatabaseQueue {
+            guard let db = self.database else {
+                throw PlaylistError.noActiveCollection
+            }
             let query = """
                 SELECT \(self.columnPlaylistsId), \(self.columnPlaylistsName), \(self.columnPlaylistsFolderId) 
                 FROM \(self.tablePlaylists)
@@ -287,17 +304,15 @@ class PlaylistService: ObservableObject {
     }
     
     private func loadPlaylistTracks(playlistId: String) async throws -> [String] {
-        guard let db = database else { return [] }
-        
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             let trackPaths = try self.loadPlaylistTracksSync(playlistId: playlistId, db: db)
             return trackPaths
         }
     }
     
     func createPlaylist(name: String, folderId: String? = nil) async throws -> Playlist {
-        guard let db = database,
-              let _ = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
@@ -317,6 +332,7 @@ class PlaylistService: ObservableObject {
         let newPlaylist = Playlist(name: trimmedName, folderId: folderId)
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             let query = "INSERT INTO \(self.tablePlaylists) (\(self.columnPlaylistsId), \(self.columnPlaylistsName), \(self.columnPlaylistsFolderId)) VALUES (?, ?, ?)"
             var statement: OpaquePointer?
             
@@ -354,12 +370,12 @@ class PlaylistService: ObservableObject {
     }
     
     func deletePlaylist(playlistId: String) async throws {
-        guard let db = database,
-              let _ = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             let query = "DELETE FROM \(self.tablePlaylists) WHERE \(self.columnPlaylistsId) = ?"
             var statement: OpaquePointer?
             
@@ -389,12 +405,12 @@ class PlaylistService: ObservableObject {
     }
     
     func addTrackToPlaylist(playlistId: String, absoluteTrackPath: String) async throws {
-        guard let db = database,
-              let activeCollection = activeCollectionDefinition else {
+        guard let activeCollection = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             var pathToAdd = absoluteTrackPath
             
             // Convert to relative path if it's a shared collection and the path is within its root
@@ -490,12 +506,12 @@ class PlaylistService: ObservableObject {
     }
     
     func removeTrackFromPlaylist(playlistId: String, absoluteTrackPath: String) async throws {
-        guard let db = database,
-              let activeCollection = activeCollectionDefinition else {
+        guard let activeCollection = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             var pathToRemove = absoluteTrackPath
             
             // Convert to relative path if it's a shared collection
@@ -549,8 +565,7 @@ class PlaylistService: ObservableObject {
     }
     
     func renamePlaylist(playlistId: String, newName: String) async throws {
-        guard let db = database,
-              let activeCollection = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
@@ -560,6 +575,7 @@ class PlaylistService: ObservableObject {
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             let query = "UPDATE \(self.tablePlaylists) SET \(self.columnPlaylistsName) = ? WHERE \(self.columnPlaylistsId) = ?"
             var statement: OpaquePointer?
             
@@ -594,8 +610,7 @@ class PlaylistService: ObservableObject {
     }
     
     func duplicatePlaylist(playlistId: String, newName: String) async throws -> Playlist {
-        guard let db = database,
-              let activeCollection = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
@@ -605,6 +620,7 @@ class PlaylistService: ObservableObject {
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             // First, get the original playlist's folder ID
             let originalPlaylist = self.playlists.first { $0.id == playlistId }
             let originalFolderId = originalPlaylist?.folderId
@@ -702,12 +718,13 @@ class PlaylistService: ObservableObject {
     }
     
     func exportPlaylistFiles(playlistId: String, destinationURL: URL) async throws {
-        guard let db = database,
-              let activeCollection = activeCollectionDefinition else {
+        guard let activeCollection = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
+            
             // Get all tracks from the playlist
             let tracksQuery = "SELECT \(self.columnPlaylistTracksTrackPath) FROM \(self.tablePlaylistTracks) WHERE \(self.columnPlaylistTracksPlaylistId) = ? ORDER BY \(self.columnPlaylistTracksSortOrder)"
             var tracksStatement: OpaquePointer?
@@ -761,13 +778,14 @@ class PlaylistService: ObservableObject {
     }
     
     func exportPlaylistCSV(playlistId: String, destinationURL: URL) async throws {
-        guard let db = database,
-              let activeCollection = activeCollectionDefinition,
+        guard let activeCollection = activeCollectionDefinition,
               let collectionService = collectionService else {
             throw PlaylistError.noActiveCollection
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
+            
             // Get all tracks from the playlist
             let tracksQuery = "SELECT \(self.columnPlaylistTracksTrackPath), \(self.columnPlaylistTracksSortOrder) FROM \(self.tablePlaylistTracks) WHERE \(self.columnPlaylistTracksPlaylistId) = ? ORDER BY \(self.columnPlaylistTracksSortOrder)"
             var tracksStatement: OpaquePointer?
@@ -891,8 +909,7 @@ class PlaylistService: ObservableObject {
     
     // MARK: - Folder Management
     func loadFolders() async throws {
-        guard let db = database,
-              let _ = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
@@ -902,6 +919,8 @@ class PlaylistService: ObservableObject {
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
+            
             let query = """
                 SELECT \(self.columnPlaylistFoldersId), \(self.columnPlaylistFoldersName), 
                        \(self.columnPlaylistFoldersParentId), \(self.columnPlaylistFoldersDateCreated), 
@@ -968,8 +987,7 @@ class PlaylistService: ObservableObject {
     }
     
     func createFolder(name: String, parentFolderId: String? = nil) async throws -> PlaylistFolder {
-        guard let db = database,
-              let _ = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
@@ -995,6 +1013,8 @@ class PlaylistService: ObservableObject {
         let newFolder = PlaylistFolder(name: trimmedName, parentFolderId: parentFolderId)
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
+            
             let formatter = ISO8601DateFormatter()
             let dateCreatedString = formatter.string(from: newFolder.dateCreated)
             let dateModifiedString = formatter.string(from: newFolder.dateModified)
@@ -1046,12 +1066,12 @@ class PlaylistService: ObservableObject {
     }
     
     func deleteFolder(folderId: String) async throws {
-        guard let db = database,
-              let _ = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             // First, move all child playlists to the parent folder (or root if no parent)
             let folder = self.folders.first { $0.id == folderId }
             let parentFolderId = folder?.parentFolderId
@@ -1153,8 +1173,7 @@ class PlaylistService: ObservableObject {
     }
     
     func renameFolder(folderId: String, newName: String) async throws {
-        guard let db = database,
-              let _ = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
@@ -1170,6 +1189,8 @@ class PlaylistService: ObservableObject {
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
+            
             let query = """
                 UPDATE \(self.tablePlaylistFolders) 
                 SET \(self.columnPlaylistFoldersName) = ?, \(self.columnPlaylistFoldersDateModified) = ? 
@@ -1210,8 +1231,7 @@ class PlaylistService: ObservableObject {
     }
     
     func movePlaylistToFolder(playlistId: String, folderId: String?) async throws {
-        guard let db = database,
-              let _ = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
@@ -1231,6 +1251,8 @@ class PlaylistService: ObservableObject {
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
+            
             let query = "UPDATE \(self.tablePlaylists) SET \(self.columnPlaylistsFolderId) = ? WHERE \(self.columnPlaylistsId) = ?"
             var statement: OpaquePointer?
             
@@ -1267,8 +1289,7 @@ class PlaylistService: ObservableObject {
     }
     
     func moveFolderToFolder(folderId: String, parentFolderId: String?) async throws {
-        guard let db = database,
-              let _ = activeCollectionDefinition else {
+        guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
         
@@ -1298,6 +1319,8 @@ class PlaylistService: ObservableObject {
         }
         
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
+            
             let query = """
                 UPDATE \(self.tablePlaylistFolders) 
                 SET \(self.columnPlaylistFoldersParentId) = ?, \(self.columnPlaylistFoldersDateModified) = ? 
@@ -1344,11 +1367,8 @@ class PlaylistService: ObservableObject {
     
     // MARK: - Helper Methods for Folder Management
     private func folderExists(folderId: String) async throws -> Bool {
-        guard let db = database else {
-            throw PlaylistError.noActiveCollection
-        }
-        
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             let query = "SELECT COUNT(*) FROM \(self.tablePlaylistFolders) WHERE \(self.columnPlaylistFoldersId) = ?"
             var statement: OpaquePointer?
             
@@ -1372,11 +1392,8 @@ class PlaylistService: ObservableObject {
     }
     
     private func calculateFolderDepth(folderId: String) async throws -> Int {
-        guard let db = database else {
-            throw PlaylistError.noActiveCollection
-        }
-        
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             var currentId: String? = folderId
             var depth = 0
             
@@ -1411,11 +1428,8 @@ class PlaylistService: ObservableObject {
     }
     
     private func isDescendantFolder(childId: String, ancestorId: String) async throws -> Bool {
-        guard let db = database else {
-            throw PlaylistError.noActiveCollection
-        }
-        
         return try await withDatabaseQueue {
+            let db = try self.getDatabaseConnection()
             var currentId: String? = childId
             var visited: Set<String> = []
             
@@ -1461,20 +1475,14 @@ class PlaylistService: ObservableObject {
     }
     
     private func calculateNewFolderDepth(folderId: String, newParentId: String?) async throws -> Int {
-        guard let db = database else {
-            throw PlaylistError.noActiveCollection
+        // If moving to root level, depth is 0
+        guard let parentId = newParentId else {
+            return 0
         }
         
-        return try await withDatabaseQueue {
-            // If moving to root level, depth is 0
-            guard let parentId = newParentId else {
-                return 0
-            }
-            
-            // Calculate depth of the new parent and add 1
-            let parentDepth = try await self.calculateFolderDepth(folderId: parentId)
-            return parentDepth + 1
-        }
+        // Calculate depth of the new parent and add 1
+        let parentDepth = try await self.calculateFolderDepth(folderId: parentId)
+        return parentDepth + 1
     }
 }
 
