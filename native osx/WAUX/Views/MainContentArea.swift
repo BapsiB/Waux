@@ -188,10 +188,15 @@ struct MainContentArea: View {
                     HStack(spacing: 2) {
                         Image(systemName: showFolderView ? "folder" : "list.bullet")
                             .font(.system(size: 16))
+                            .frame(minWidth: 30)
+                            .contentShape(Rectangle())
                         Image(systemName: "chevron.down")
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
+                            .frame(minHeight: 30)
+                            .contentShape(Rectangle())
                     }
+                    .offset(x: -5)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(showFolderView ? "Switch to list view" : "Switch to folder view")

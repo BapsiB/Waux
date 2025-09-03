@@ -20,7 +20,7 @@ struct AudioPlayerHeader: View {
                             .foregroundColor(.primary)
                     }
                     .disabled(audioService.currentTrack == nil || audioService.isLoading)
-                    .buttonStyle(.plain)
+//                    .buttonStyle(.plain)
                     
                     Button(action: {
                         audioService.togglePlayPause()
@@ -30,7 +30,7 @@ struct AudioPlayerHeader: View {
                             .foregroundColor(.primary)
                     }
                     .disabled(audioService.currentTrack == nil || audioService.isLoading)
-                    .buttonStyle(.plain)
+//                    .buttonStyle(.plain)
                     
                     Button(action: {
                         Task {
@@ -42,7 +42,7 @@ struct AudioPlayerHeader: View {
                             .foregroundColor(.primary)
                     }
                     .disabled(audioService.currentTrack == nil || audioService.isLoading)
-                    .buttonStyle(.plain)
+//                    .buttonStyle(.plain)
                 }
                 
                 // Track info

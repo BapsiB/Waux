@@ -23,9 +23,12 @@ struct CompactAudioPlayerView: View {
                         Image(systemName: "backward.fill")
                             .font(.system(size: 14))
                             .foregroundColor(.primary)
+                            .frame(minWidth: 30)
+                            .contentShape(Rectangle())
                     }
                     .disabled(audioService.currentTrack == nil || audioService.isLoading)
                     .buttonStyle(.plain)
+
                     
                     Button(action: {
                         audioService.togglePlayPause()
@@ -33,9 +36,12 @@ struct CompactAudioPlayerView: View {
                         Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 16))
                             .foregroundColor(.primary)
+                            .frame(minWidth: 30)
+                            .contentShape(Rectangle())
                     }
                     .disabled(audioService.currentTrack == nil || audioService.isLoading)
                     .buttonStyle(.plain)
+
                     
                     Button(action: {
                         Task {
@@ -45,9 +51,12 @@ struct CompactAudioPlayerView: View {
                         Image(systemName: "forward.fill")
                             .font(.system(size: 14))
                             .foregroundColor(.primary)
+                            .frame(minWidth: 30)
+                            .contentShape(Rectangle())
                     }
                     .disabled(audioService.currentTrack == nil || audioService.isLoading)
                     .buttonStyle(.plain)
+
                 }
                 .frame(width: geometry.size.width * 0.25)
                 .frame(maxHeight: .infinity)
