@@ -310,10 +310,12 @@ struct ContentView: View {
                 print("[OpenFolder] Import completed")
             }
 
-            // Load tracks then playlists sequentially to avoid concurrent access to the same SQLite connection
+            // Load tracks, folders, then playlists sequentially to avoid concurrent access to the same SQLite connection
             print("[OpenFolder] Loading tracks...")
             try await collectionService.loadAllTracks()
             print("[OpenFolder] Tracks loaded: \(collectionService.tracks.count)")
+            try await playlistService.loadFolders()
+            print("[OpenFolder] Folders loaded: \(playlistService.folders.count)")
             try await playlistService.loadPlaylists()
             print("[OpenFolder] Playlists loaded: \(playlistService.playlists.count)")
             

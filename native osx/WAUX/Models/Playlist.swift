@@ -6,13 +6,15 @@ struct Playlist: Identifiable, Codable, Hashable {
     var trackPaths: [String]
     let dateCreated: Date
     var dateModified: Date
+    var folderId: String? // nil for root level playlists
     
-    init(id: String = UUID().uuidString, name: String, trackPaths: [String] = []) {
+    init(id: String = UUID().uuidString, name: String, trackPaths: [String] = [], folderId: String? = nil) {
         self.id = id
         self.name = name
         self.trackPaths = trackPaths
         self.dateCreated = Date()
         self.dateModified = Date()
+        self.folderId = folderId
     }
     
     // Computed property to get duration (would need to be calculated from actual tracks)

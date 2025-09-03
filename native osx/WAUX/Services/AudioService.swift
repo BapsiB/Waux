@@ -155,7 +155,6 @@ class AudioService: NSObject, ObservableObject {
     }
     
     func seek(to timeS: TimeInterval) {
-        print("seek(to: \(time))")
         guard let player = audioPlayer else { return }
         player.currentTime = timeS
         currentTime = timeS

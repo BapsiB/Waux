@@ -5,17 +5,63 @@ struct PlaylistSidebar: View {
     @ObservedObject var playlistService: PlaylistService
     @Binding var selectedPlaylist: Playlist?
     @State private var showingCreatePlaylistSheet = false
-    @State private var newPlaylistName = ""
-    @State private var showingErrorAlert = false
-    @State private var errorMessage = ""
+    @State private var showingCreateFolderSheet = false
     @State private var showingRenameSheet = false
+    @State private var showingRenameFolderSheet = false
     @State private var showingDuplicateSheet = false
     @State private var showingExportSheet = false
+    @State private var newPlaylistName = ""
+    @State private var newFolderName = ""
+    @State private var showingErrorAlert = false
+    @State private var errorMessage = ""
     @State private var playlistToRename: Playlist?
+    @State private var folderToRename: PlaylistFolder?
     @State private var playlistToDuplicate: Playlist?
     @State private var playlistToExport: Playlist?
     @State private var renamePlaylistName = ""
+    @State private var renameFolderName = ""
     @State private var duplicatePlaylistName = ""
+    @State private var parentFolderForNewFolder: PlaylistFolder?
+    @State private var parentFolderForNewPlaylist: PlaylistFolder?
+    
+    // Computed property to generate hierarchical items
+    private var hierarchicalItems: [HierarchicalItem] {
+        var items: [HierarchicalItem] = []
+        
+        // Add root-level folders first
+        let rootFolders = playlistService.folders.filter { $0.parentFolderId == nil }
+        for folder in rootFolders.sorted(by: { $0.name < $1.name }) {
+            items.append(HierarchicalItem(type: .folder(folder), depth: 0))
+            addChildItems(for: folder, to: &items, depth: 1)
+        }
+        
+        // Add root-level playlists
+        let rootPlaylists = playlistService.playlists.filter { $0.folderId == nil }
+        for playlist in rootPlaylists.sorted(by: { $0.name < $1.name }) {
+            items.append(HierarchicalItem(type: .playlist(playlist), depth: 0))
+        }
+        
+        return items
+    }
+    
+    private func addChildItems(for folder: PlaylistFolder, to items: inout [HierarchicalItem], depth: Int) {
+        let isExpanded = playlistService.folderExpandedStates[folder.id] ?? folder.isExpanded
+        
+        if isExpanded {
+            // Add child folders
+            let childFolders = playlistService.folders.filter { $0.parentFolderId == folder.id }
+            for childFolder in childFolders.sorted(by: { $0.name < $1.name }) {
+                items.append(HierarchicalItem(type: .folder(childFolder), depth: depth))
+                addChildItems(for: childFolder, to: &items, depth: depth + 1)
+            }
+            
+            // Add playlists in this folder
+            let folderPlaylists = playlistService.playlists.filter { $0.folderId == folder.id }
+            for playlist in folderPlaylists.sorted(by: { $0.name < $1.name }) {
+                items.append(HierarchicalItem(type: .playlist(playlist), depth: depth))
+            }
+        }
+    }
     
     var body: some View {
         VStack {
@@ -25,17 +71,25 @@ struct PlaylistSidebar: View {
                 
                 Spacer()
                 
-                Button(action: {
-                    newPlaylistName = ""
-                    showingCreatePlaylistSheet = true
-                }) {
+                Menu {
+                    Button("Create Playlist") {
+                        newPlaylistName = ""
+                        showingCreatePlaylistSheet = true
+                    }
+                    
+                    Button("Create Folder") {
+                        newFolderName = ""
+                        parentFolderForNewFolder = nil
+                        showingCreateFolderSheet = true
+                    }
+                } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(AppStyle.mainColor)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .focusable(false)
-                .help("Create new playlist")
+                .help("Create new playlist or folder")
             }
             .padding()
             
@@ -54,62 +108,57 @@ struct PlaylistSidebar: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(playlistService.playlists, id: \.id) { playlist in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(playlist.name)
-                            .font(.headline)
-                            .lineLimit(1)
-                        
-                        HStack {
-                            Text("\(playlist.trackPaths.count) tracks")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            if playlist.duration > 0 {
-                                Text("•")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                
-                                Text(playlist.formattedDuration)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                List {
+                    ForEach(hierarchicalItems, id: \.id) { item in
+                        HierarchicalItemView(
+                            item: item,
+                            selectedPlaylist: $selectedPlaylist,
+                            playlistService: playlistService,
+                            onPlaylistRename: { playlist in
+                                playlistToRename = playlist
+                                renamePlaylistName = playlist.name
+                                showingRenameSheet = true
+                            },
+                            onPlaylistDuplicate: { playlist in
+                                playlistToDuplicate = playlist
+                                duplicatePlaylistName = "\(playlist.name) Copy"
+                                showingDuplicateSheet = true
+                            },
+                            onPlaylistExport: { playlist in
+                                playlistToExport = playlist
+                                showingExportSheet = true
+                            },
+                            onPlaylistDelete: { playlist in
+                                deletePlaylist(playlist)
+                            },
+                            onFolderRename: { folder in
+                                folderToRename = folder
+                                renameFolderName = folder.name
+                                showingRenameFolderSheet = true
+                            },
+                            onFolderDelete: { folder in
+                                deleteFolder(folder)
+                            },
+                            onCreateSubfolder: { parentFolder in
+                                newFolderName = ""
+                                parentFolderForNewFolder = parentFolder
+                                showingCreateFolderSheet = true
+                            },
+                            onCreatePlaylistInFolder: { parentFolder in
+                                newPlaylistName = ""
+                                parentFolderForNewPlaylist = parentFolder
+                                showingCreatePlaylistSheet = true
+                            },
+                            onDrop: { providers, playlist in
+                                handleDrop(providers: providers, into: playlist)
                             }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                    .background(selectedPlaylist?.id == playlist.id ? Color.blue.opacity(0.2) : Color.clear)
-                    .onTapGesture {
-                        selectedPlaylist = playlist
-                    }
-                    .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
-                        handleDrop(providers: providers, into: playlist)
-                    }
-                    .contextMenu {
-                        Button("Rename") {
-                            playlistToRename = playlist
-                            renamePlaylistName = playlist.name
-                            showingRenameSheet = true
-                        }
-                        
-                        Button("Duplicate") {
-                            playlistToDuplicate = playlist
-                            duplicatePlaylistName = "\(playlist.name) Copy"
-                            showingDuplicateSheet = true
-                        }
-                        
-                        Button("Export") {
-                            playlistToExport = playlist
-                            showingExportSheet = true
-                        }
-                        
-                        Divider()
-                        
-                        Button("Delete", role: .destructive) {
-                            deletePlaylist(playlist)
-                        }
+                        )
                     }
                 }
                 .listStyle(SidebarListStyle())
+                .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
+                    handleRootLevelDrop(providers: providers)
+                }
             }
         }
         .frame(width: 200)
@@ -117,12 +166,29 @@ struct PlaylistSidebar: View {
         .sheet(isPresented: $showingCreatePlaylistSheet) {
             CreatePlaylistSheet(
                 newPlaylistName: $newPlaylistName,
+                parentFolder: parentFolderForNewPlaylist,
                 onCancel: {
                     showingCreatePlaylistSheet = false
+                    parentFolderForNewPlaylist = nil
                 },
                 onCreate: {
                     createPlaylist()
                     showingCreatePlaylistSheet = false
+                }
+            )
+        }
+        .sheet(isPresented: $showingCreateFolderSheet) {
+            CreateFolderSheet(
+                newFolderName: $newFolderName,
+                parentFolder: parentFolderForNewFolder,
+                onCancel: {
+                    showingCreateFolderSheet = false
+                    parentFolderForNewFolder = nil
+                },
+                onCreate: {
+                    createFolder()
+                    showingCreateFolderSheet = false
+                    parentFolderForNewFolder = nil
                 }
             )
         }
@@ -137,6 +203,20 @@ struct PlaylistSidebar: View {
                     renamePlaylist()
                     showingRenameSheet = false
                     playlistToRename = nil
+                }
+            )
+        }
+        .sheet(isPresented: $showingRenameFolderSheet) {
+            RenameFolderSheet(
+                folderName: $renameFolderName,
+                onCancel: {
+                    showingRenameFolderSheet = false
+                    folderToRename = nil
+                },
+                onRename: {
+                    renameFolder()
+                    showingRenameFolderSheet = false
+                    folderToRename = nil
                 }
             )
         }
@@ -179,6 +259,18 @@ struct PlaylistSidebar: View {
         } message: {
             Text(errorMessage)
         }
+        .onAppear {
+            Task {
+                do {
+                    try await playlistService.loadFolders()
+                } catch {
+                    await MainActor.run {
+                        errorMessage = error.localizedDescription
+                        showingErrorAlert = true
+                    }
+                }
+            }
+        }
     }
     
     private func createPlaylist() {
@@ -191,8 +283,32 @@ struct PlaylistSidebar: View {
         
         Task {
             do {
-                _ = try await playlistService.createPlaylist(name: trimmedName)
+                _ = try await playlistService.createPlaylist(name: trimmedName, folderId: parentFolderForNewPlaylist?.id)
                 // Playlist is created but not automatically selected
+                // Clear the parent folder reference
+                await MainActor.run {
+                    parentFolderForNewPlaylist = nil
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    private func createFolder() {
+        let trimmedName = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty {
+            errorMessage = "Folder name cannot be empty"
+            showingErrorAlert = true
+            return
+        }
+        
+        Task {
+            do {
+                _ = try await playlistService.createFolder(name: trimmedName, parentFolderId: parentFolderForNewFolder?.id)
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
@@ -215,6 +331,28 @@ struct PlaylistSidebar: View {
         Task {
             do {
                 try await playlistService.renamePlaylist(playlistId: playlist.id, newName: trimmedName)
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    private func renameFolder() {
+        guard let folder = folderToRename else { return }
+        
+        let trimmedName = renameFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty {
+            errorMessage = "Folder name cannot be empty"
+            showingErrorAlert = true
+            return
+        }
+        
+        Task {
+            do {
+                try await playlistService.renameFolder(folderId: folder.id, newName: trimmedName)
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
@@ -260,6 +398,19 @@ struct PlaylistSidebar: View {
                         selectedPlaylist = nil
                     }
                 }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    private func deleteFolder(_ folder: PlaylistFolder) {
+        Task {
+            do {
+                try await playlistService.deleteFolder(folderId: folder.id)
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
@@ -377,10 +528,48 @@ struct PlaylistSidebar: View {
         }
         return handled
     }
+    
+    private func handleRootLevelDrop(providers: [NSItemProvider]) -> Bool {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                _ = provider.loadObject(ofClass: NSString.self) { object, error in
+                    guard let dragData = object as? String else { return }
+                    
+                    Task { @MainActor in
+                        do {
+                            if dragData.hasPrefix("playlist:") {
+                                let playlistId = String(dragData.dropFirst("playlist:".count))
+                                // Validate that playlist exists and is not already at root level
+                                if let playlist = playlistService.playlists.first(where: { $0.id == playlistId }),
+                                   playlist.folderId != nil {
+                                    try await playlistService.movePlaylistToFolder(playlistId: playlistId, folderId: nil)
+                                }
+                            } else if dragData.hasPrefix("folder:") {
+                                let folderId = String(dragData.dropFirst("folder:".count))
+                                // Validate that folder exists and is not already at root level
+                                if let folder = playlistService.folders.first(where: { $0.id == folderId }),
+                                   folder.parentFolderId != nil {
+                                    try await playlistService.moveFolderToFolder(folderId: folderId, parentFolderId: nil)
+                                }
+                            }
+                        } catch {
+                            errorMessage = error.localizedDescription
+                            showingErrorAlert = true
+                        }
+                    }
+                }
+                return true
+            }
+        }
+        return false
+    }
+    
+
 }
 
 struct CreatePlaylistSheet: View {
     @Binding var newPlaylistName: String
+    let parentFolder: PlaylistFolder?
     @FocusState private var isTextFieldFocused: Bool
     let onCancel: () -> Void
     let onCreate: () -> Void
@@ -391,9 +580,15 @@ struct CreatePlaylistSheet: View {
                 .font(.title2)
                 .fontWeight(.semibold)
             
-            Text("Enter a name for your new playlist")
-                .font(.body)
-                .foregroundColor(.secondary)
+            if let folder = parentFolder {
+                Text("Creating playlist in folder: \(folder.name)")
+                    .font(.body)
+                    .foregroundColor(.blue)
+            } else {
+                Text("Enter a name for your new playlist")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+            }
             
             TextField("Playlist name", text: $newPlaylistName)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -637,6 +832,367 @@ struct ExportPlaylistSheet: View {
                 onExportCSV(url)
             case .failure(let error):
                 print("CSV export error: \(error)")
+            }
+        }
+    }
+}
+
+// MARK: - Hierarchical Display Support
+
+struct HierarchicalItem: Identifiable {
+    enum ItemType {
+        case folder(PlaylistFolder)
+        case playlist(Playlist)
+    }
+    
+    let type: ItemType
+    let depth: Int
+    
+    var id: String {
+        switch type {
+        case .folder(let folder):
+            return "folder_\(folder.id)"
+        case .playlist(let playlist):
+            return "playlist_\(playlist.id)"
+        }
+    }
+}
+
+struct HierarchicalItemView: View {
+    let item: HierarchicalItem
+    @Binding var selectedPlaylist: Playlist?
+    @ObservedObject var playlistService: PlaylistService
+    let onPlaylistRename: (Playlist) -> Void
+    let onPlaylistDuplicate: (Playlist) -> Void
+    let onPlaylistExport: (Playlist) -> Void
+    let onPlaylistDelete: (Playlist) -> Void
+    let onFolderRename: (PlaylistFolder) -> Void
+    let onFolderDelete: (PlaylistFolder) -> Void
+    let onCreateSubfolder: (PlaylistFolder) -> Void
+    let onCreatePlaylistInFolder: (PlaylistFolder) -> Void
+    let onDrop: ([NSItemProvider], Playlist) -> Bool
+    
+    @State private var draggedOver = false
+    
+    private var indentationWidth: CGFloat {
+        CGFloat(item.depth * 16)
+    }
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            // Indentation spacer
+            if item.depth > 0 {
+                Spacer()
+                    .frame(width: indentationWidth)
+            }
+            
+            switch item.type {
+            case .folder(let folder):
+                FolderItemView(
+                    folder: folder,
+                    playlistService: playlistService,
+                    onRename: { onFolderRename(folder) },
+                    onDelete: { onFolderDelete(folder) },
+                    onCreateSubfolder: { onCreateSubfolder(folder) },
+                    onCreatePlaylist: { onCreatePlaylistInFolder(folder) },
+                    draggedOver: draggedOver
+                )
+                .draggable("folder:\(folder.id)")
+                .onDrop(of: [UTType.plainText], isTargeted: $draggedOver) { providers in
+                    handleFolderDrop(providers: providers, targetFolder: folder)
+                }
+                
+            case .playlist(let playlist):
+                PlaylistItemView(
+                    playlist: playlist,
+                    isSelected: selectedPlaylist?.id == playlist.id,
+                    onSelect: { selectedPlaylist = playlist },
+                    onRename: { onPlaylistRename(playlist) },
+                    onDuplicate: { onPlaylistDuplicate(playlist) },
+                    onExport: { onPlaylistExport(playlist) },
+                    onDelete: { onPlaylistDelete(playlist) },
+                    onDrop: { providers in onDrop(providers, playlist) },
+                    draggedOver: draggedOver
+                )
+                .draggable("playlist:\(playlist.id)")
+                .onDrop(of: [UTType.plainText], isTargeted: $draggedOver) { providers in
+                    handlePlaylistDrop(providers: providers, targetPlaylist: playlist)
+                }
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+    
+    private func handleFolderDrop(providers: [NSItemProvider], targetFolder: PlaylistFolder) -> Bool {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                _ = provider.loadObject(ofClass: NSString.self) { object, error in
+                    guard let dragData = object as? String else { return }
+                    
+                    Task { @MainActor in
+                        do {
+                            if dragData.hasPrefix("playlist:") {
+                                let playlistId = String(dragData.dropFirst("playlist:".count))
+                                // Validate that playlist exists and is not already in this folder
+                                if let playlist = playlistService.playlists.first(where: { $0.id == playlistId }),
+                                   playlist.folderId != targetFolder.id {
+                                    try await playlistService.movePlaylistToFolder(playlistId: playlistId, folderId: targetFolder.id)
+                                }
+                            } else if dragData.hasPrefix("folder:") {
+                                let folderId = String(dragData.dropFirst("folder:".count))
+                                // Validate that folder exists - circular reference checking is handled by PlaylistService
+                                if let folder = playlistService.folders.first(where: { $0.id == folderId }),
+                                   folderId != targetFolder.id,
+                                   folder.parentFolderId != targetFolder.id {
+                                    try await playlistService.moveFolderToFolder(folderId: folderId, parentFolderId: targetFolder.id)
+                                }
+                            }
+                        } catch {
+                            print("Error handling folder drop: \(error)")
+                            // Error handling should be done at the parent level
+                        }
+                    }
+                }
+                return true
+            }
+        }
+        return false
+    }
+    
+    private func handlePlaylistDrop(providers: [NSItemProvider], targetPlaylist: Playlist) -> Bool {
+        // First check if this is a drag-and-drop of playlists/folders (for organization)
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                _ = provider.loadObject(ofClass: NSString.self) { object, error in
+                    guard let dragData = object as? String else { 
+                        // If it's not drag data, fall back to the existing file drop handler
+                        return
+                    }
+                    
+                    Task { @MainActor in
+                        do {
+                            if dragData.hasPrefix("playlist:") {
+                                let playlistId = String(dragData.dropFirst("playlist:".count))
+                                // Validate that playlist exists and is not the same as target
+                                if let playlist = playlistService.playlists.first(where: { $0.id == playlistId }),
+                                   playlistId != targetPlaylist.id,
+                                   playlist.folderId != targetPlaylist.folderId {
+                                    try await playlistService.movePlaylistToFolder(playlistId: playlistId, folderId: targetPlaylist.folderId)
+                                }
+                            } else if dragData.hasPrefix("folder:") {
+                                let folderId = String(dragData.dropFirst("folder:".count))
+                                // Validate that folder exists and prevent invalid moves
+                                if let folder = playlistService.folders.first(where: { $0.id == folderId }),
+                                   folder.parentFolderId != targetPlaylist.folderId {
+                                    try await playlistService.moveFolderToFolder(folderId: folderId, parentFolderId: targetPlaylist.folderId)
+                                }
+                            }
+                        } catch {
+                            print("Error handling playlist drop: \(error)")
+                            // Error handling should be done at the parent level
+                        }
+                    }
+                }
+                return true
+            }
+        }
+        
+        // Fall back to existing file drop handler
+        return onDrop(providers, targetPlaylist)
+    }
+}
+
+struct FolderItemView: View {
+    let folder: PlaylistFolder
+    @ObservedObject var playlistService: PlaylistService
+    let onRename: () -> Void
+    let onDelete: () -> Void
+    let onCreateSubfolder: () -> Void
+    let onCreatePlaylist: () -> Void
+    let draggedOver: Bool
+    
+    private var isExpanded: Bool {
+        playlistService.folderExpandedStates[folder.id] ?? folder.isExpanded
+    }
+    
+    private var hasChildren: Bool {
+        let childFolders = playlistService.folders.filter { $0.parentFolderId == folder.id }
+        let childPlaylists = playlistService.playlists.filter { $0.folderId == folder.id }
+        return !childFolders.isEmpty || !childPlaylists.isEmpty
+    }
+    
+    private var childCount: (folders: Int, playlists: Int) {
+        let childFolders = playlistService.folders.filter { $0.parentFolderId == folder.id }
+        let childPlaylists = playlistService.playlists.filter { $0.folderId == folder.id }
+        return (childFolders.count, childPlaylists.count)
+    }
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            // Expansion chevron
+            if hasChildren {
+                Button(action: toggleExpansion) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .frame(width: 12, height: 12)
+                }
+                .buttonStyle(PlainButtonStyle())
+            } else {
+                Spacer()
+                    .frame(width: 12, height: 12)
+            }
+            
+            // Folder icon
+            Image(systemName: "folder.fill")
+                .font(.system(size: 14))
+                .foregroundColor(.blue)
+            
+            // Folder name and info
+            VStack(alignment: .leading, spacing: 2) {
+                Text(folder.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                
+                if hasChildren {
+                    let counts = childCount
+                    HStack {
+                        if counts.playlists > 0 {
+                            Text("\(counts.playlists) playlist\(counts.playlists == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        if counts.folders > 0 {
+                            if counts.playlists > 0 {
+                                Text("•")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text("\(counts.folders) folder\(counts.folders == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .background(draggedOver ? Color.blue.opacity(0.2) : Color.clear)
+        .overlay(
+            draggedOver ? 
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(Color.blue, lineWidth: 2)
+                .animation(.easeInOut(duration: 0.2), value: draggedOver)
+            : nil
+        )
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("Create Playlist") {
+                onCreatePlaylist()
+            }
+            
+            Button("Create Subfolder") {
+                onCreateSubfolder()
+            }
+            
+            Divider()
+            
+            Button("Rename") {
+                onRename()
+            }
+            
+            Button("Delete", role: .destructive) {
+                onDelete()
+            }
+        }
+    }
+    
+    private func toggleExpansion() {
+        playlistService.folderExpandedStates[folder.id] = !isExpanded
+    }
+}
+
+struct PlaylistItemView: View {
+    let playlist: Playlist
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onRename: () -> Void
+    let onDuplicate: () -> Void
+    let onExport: () -> Void
+    let onDelete: () -> Void
+    let onDrop: ([NSItemProvider]) -> Bool
+    let draggedOver: Bool
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            // Playlist icon
+            Image(systemName: "music.note.list")
+                .font(.system(size: 14))
+                .foregroundColor(.orange)
+            
+            // Playlist info
+            VStack(alignment: .leading, spacing: 4) {
+                Text(playlist.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                
+                HStack {
+                    Text("\(playlist.trackPaths.count) tracks")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    if playlist.duration > 0 {
+                        Text("•")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text(playlist.formattedDuration)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .background(
+            isSelected ? Color.blue.opacity(0.2) : 
+            draggedOver ? Color.green.opacity(0.2) : 
+            Color.clear
+        )
+        .overlay(
+            draggedOver ? 
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(Color.green, lineWidth: 2)
+                .animation(.easeInOut(duration: 0.2), value: draggedOver)
+            : nil
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onSelect()
+        }
+        .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
+            onDrop(providers)
+        }
+        .contextMenu {
+            Button("Rename") {
+                onRename()
+            }
+            
+            Button("Duplicate") {
+                onDuplicate()
+            }
+            
+            Button("Export") {
+                onExport()
+            }
+            
+            Divider()
+            
+            Button("Delete", role: .destructive) {
+                onDelete()
             }
         }
     }
