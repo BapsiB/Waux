@@ -910,7 +910,12 @@ class PlaylistService: ObservableObject {
     // MARK: - Folder Management
     func loadFolders() async throws {
         guard let _ = activeCollectionDefinition else {
-            throw PlaylistError.noActiveCollection
+            // Silently return if no collection is active yet - this is normal during app startup
+            await MainActor.run {
+                self.folders = []
+                self.isLoading = false
+            }
+            return
         }
         
         await MainActor.run {
