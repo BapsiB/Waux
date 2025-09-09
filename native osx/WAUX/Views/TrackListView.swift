@@ -64,8 +64,6 @@ struct TrackTable: View {
     @ObservedObject var waveformServiceHolder: WaveformServiceHolder
     @ObservedObject var collectionService: CollectionService
     let onDoubleClick: (Track) -> Void
-    let trackContextMenu: () -> AnyView
-    let columnContextMenu: () -> AnyView
     let onKeyPressA: () -> Void
     let onKeyPressSpace: () -> Void
     let onColumnWidthChange: () -> Void
@@ -75,9 +73,6 @@ struct TrackTable: View {
             // Drag handle column - always visible and first
             TableColumn("") { (track: Track) in
                 dragHandle(for: track)
-                    .contextMenu {
-                        trackContextMenu()
-                    }
             }
             .width(24)
             
@@ -90,26 +85,17 @@ struct TrackTable: View {
                     collectionService: collectionService
                 )
                 .id("waveform-\(track.id ?? -1)-\(track.waveformPointCount)")
-                .contextMenu {
-                    trackContextMenu()
-                }
             }
             .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
             
             TableColumn("Title", value: \.title) { track in
                 titleCell(for: track)
-                    .contextMenu {
-                        trackContextMenu()
-                    }
             }
             .width(min: 150, ideal: columnWidths[.title] ?? 250)
             
             if visibleColumns.contains(.artist) {
                 TableColumn("Artist", value: \.artist) { track in
                     Text(track.artist)
-                        .contextMenu {
-                            trackContextMenu()
-                        }
                 }
                 .width(min: 100, ideal: columnWidths[.artist] ?? 150)
             }
@@ -117,9 +103,6 @@ struct TrackTable: View {
             if visibleColumns.contains(.album) {
                 TableColumn("Album", value: \.album) { track in
                     Text(track.album)
-                        .contextMenu {
-                            trackContextMenu()
-                        }
                 }
                 .width(min: 100, ideal: columnWidths[.album] ?? 120)
             }
@@ -127,9 +110,6 @@ struct TrackTable: View {
             if visibleColumns.contains(.duration) {
                 TableColumn("Duration", value: \.formattedDuration) { track in
                     Text(track.formattedDuration)
-                        .contextMenu {
-                            trackContextMenu()
-                        }
                 }
                 .width(min: 5, ideal: 10, max:80)
             }
@@ -137,9 +117,6 @@ struct TrackTable: View {
             if visibleColumns.contains(.rating) {
                 TableColumn("Rating", value: \.rating) { track in
                     ratingCell(for: track)
-                        .contextMenu {
-                            trackContextMenu()
-                        }
                 }
                 .width(min: 60, ideal: columnWidths[.rating] ?? 70, max: 100)
             }
@@ -147,9 +124,6 @@ struct TrackTable: View {
 //            if visibleColumns.contains(.type) {
 //                TableColumn("Type", value: \.sourceType.rawValue) { track in
 //                    typeCell(for: track)
-//                        .contextMenu {
-//                            trackContextMenu()
-//                        }
 //                }
 //                .width(min: 60, ideal: columnWidths[.type] ?? 80)
 //            }
@@ -157,9 +131,6 @@ struct TrackTable: View {
             if visibleColumns.contains(.dateAdded) {
                 TableColumn("Date Added", value: \.formattedDateAdded) { track in
                     Text(track.formattedDateAdded)
-                        .contextMenu {
-                            trackContextMenu()
-                        }
                 }
                 .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
             }
@@ -167,9 +138,6 @@ struct TrackTable: View {
             if visibleColumns.contains(.composer) {
                 TableColumn("Composer", value: \Track.composerText) { track in
                     Text(track.composerText)
-                        .contextMenu {
-                            trackContextMenu()
-                        }
                 }
                 .width(min: 100, ideal: columnWidths[.composer] ?? 150)
             }
@@ -182,9 +150,6 @@ struct TrackTable: View {
                             metadataManager: metadataManager,
                             isTextFieldFocused: $isTextFieldFocused
                         )
-                        .contextMenu {
-                            trackContextMenu()
-                        }
                     }
                 }
                 .width(min: 120, ideal: columnWidths[.generalTags] ?? 220)
@@ -192,9 +157,6 @@ struct TrackTable: View {
         }
         .tableStyle(.bordered)
         .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: onColumnWidthChange))
-        .contextMenu {
-            columnContextMenu()
-        }
         .onTapGesture(count: 2) {
             if let selectedTrack = selectedTracks.first,
                let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
@@ -460,12 +422,6 @@ struct TrackListView: View {
                         audioService.play()
                     }
                 },
-                trackContextMenu: {
-                    AnyView(trackContextMenu())
-                },
-                columnContextMenu: {
-                    AnyView(columnContextMenu())
-                },
                 onKeyPressA: {
                     selectedTracks = Set(filteredTracks.compactMap { $0.id })
                 },
@@ -487,6 +443,19 @@ struct TrackListView: View {
                 },
                 onColumnWidthChange: saveColumnWidths
             )
+        }
+        .background(
+            TableSelectionHandler(
+                selectedTracks: $selectedTracks,
+                filteredTracks: filteredTracks
+            )
+        )
+        .contextMenu {
+            if !selectedTracks.isEmpty {
+                trackContextMenu()
+            } else {
+                columnContextMenu()
+            }
         }
         .alert("Rating Update Error", isPresented: $showingRatingError) {
             Button("OK") { }
@@ -1175,4 +1144,88 @@ struct FileChangesData: Identifiable {
     let newFiles: [String]
     let deletedTracks: [Track]
     let movedUpdates: [CollectionService.MovedFileUpdate]
+}
+
+// MARK: - Table Selection Handler
+struct TableSelectionHandler: NSViewRepresentable {
+    @Binding var selectedTracks: Set<Track.ID>
+    let filteredTracks: [Track]
+    
+    func makeNSView(context: Context) -> NSView {
+        let view = TableSelectionView(selectedTracks: _selectedTracks)
+        view.filteredTracks = filteredTracks
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let view = nsView as? TableSelectionView {
+            view.filteredTracks = filteredTracks
+        }
+    }
+}
+
+class TableSelectionView: NSView {
+    var selectedTracks: Binding<Set<Track.ID>>
+    var filteredTracks: [Track] = []
+    
+    init(selectedTracks: Binding<Set<Track.ID>>) {
+        self.selectedTracks = selectedTracks
+        super.init(frame: .zero)
+        self.wantsLayer = true
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return super.hitTest(point)
+    }
+    
+    override func rightMouseDown(with event: NSEvent) {
+        // Find the NSTableView in the view hierarchy
+        if let tableView = findTableView(in: self.window?.contentView) {
+            // Convert the event location to the table view's coordinate space
+            let locationInTableView = tableView.convert(event.locationInWindow, from: nil)
+            let row = tableView.row(at: locationInTableView)
+            
+            if row >= 0 && row < filteredTracks.count {
+                let track = filteredTracks[row]
+                if let trackId = track.id {
+                    // Select the clicked row
+                    selectedTracks.wrappedValue = [trackId]
+                    
+                    // Update the table view selection
+                    let indexSet = IndexSet(integer: row)
+                    tableView.selectRowIndexes(indexSet, byExtendingSelection: false)
+                }
+            }
+        }
+        
+        // Forward the event to the next responder to show context menu
+        self.nextResponder?.rightMouseDown(with: event)
+    }
+    
+    private func findTableView(in view: NSView?) -> NSTableView? {
+        guard let view = view else { return nil }
+        
+        // Look for the actual SwiftUI Table's NSTableView, not the List's
+        if let tableView = view as? NSTableView {
+            let className = String(describing: type(of: tableView))
+            
+            // Skip ListCoreOutlineView (SwiftUI List) and look for Table's NSTableView
+            if className.contains("ListCore") {
+                // Continue searching for the actual Table
+            } else {
+                return tableView
+            }
+        }
+        
+        for subview in view.subviews {
+            if let tableView = findTableView(in: subview) {
+                return tableView
+            }
+        }
+        return nil
+    }
 }
