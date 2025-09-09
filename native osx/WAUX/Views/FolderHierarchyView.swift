@@ -95,14 +95,52 @@ struct FolderHierarchyView: View {
                     showMetadataEditor = true
                 }
                 Divider()
+                Button("Reveal in Finder") {
+                    revealSelectedTracksInFinder()
+                }
+                Divider()
             }
             
             if !folderManager.selectedFolders.isEmpty {
                 Button("Add Selected Folders to Playlist") {
                     // TODO: Implement add to playlist functionality
                 }
+                Button("Reveal in Finder") {
+                    revealSelectedFoldersInFinder()
+                }
                 Divider()
             }
+        }
+    }
+    
+    // MARK: - Reveal in Finder Functions
+    
+    private func revealSelectedTracksInFinder() {
+        let selectedTracksList = selectedTracks.compactMap { trackId in
+            collectionService.tracks.first { $0.id == trackId }
+        }
+        
+        guard !selectedTracksList.isEmpty else { return }
+        
+        // Get unique parent directories
+        let parentDirectories = Set(selectedTracksList.map { track in
+            URL(fileURLWithPath: track.path).deletingLastPathComponent().path
+        })
+        
+        // Reveal each parent directory in Finder
+        for directory in parentDirectories {
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: directory)
+        }
+    }
+    
+    private func revealSelectedFoldersInFinder() {
+        let selectedFolderPaths = folderManager.selectedFolders
+        
+        guard !selectedFolderPaths.isEmpty else { return }
+        
+        // Reveal each selected folder in Finder
+        for folderPath in selectedFolderPaths {
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folderPath)
         }
     }
 }
@@ -261,6 +299,11 @@ struct FolderHeaderView: View {
             
             return NSItemProvider(object: payload as NSString)
         }
+        .contextMenu {
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
+            }
+        }
     }
 }
 
@@ -350,6 +393,19 @@ struct FolderTrackRowView: View {
         }
         .onTapGesture(count: 2) {
             onDoubleClick(track)
+        }
+        .contextMenu {
+            Button("Play") {
+                Task {
+                    await audioService.loadTrack(track)
+                    audioService.play()
+                }
+            }
+            Button("Reveal in Finder") {
+                let trackURL = URL(fileURLWithPath: track.path)
+                let parentDirectory = trackURL.deletingLastPathComponent().path
+                NSWorkspace.shared.selectFile(track.path, inFileViewerRootedAtPath: parentDirectory)
+            }
         }
     }
     
