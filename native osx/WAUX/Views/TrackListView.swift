@@ -1192,17 +1192,24 @@ class TableSelectionView: NSView {
             if row >= 0 && row < filteredTracks.count {
                 let track = filteredTracks[row]
                 if let trackId = track.id {
-                    // Select the clicked row
+                    // Select the clicked row immediately and synchronously
                     selectedTracks.wrappedValue = [trackId]
                     
                     // Update the table view selection
                     let indexSet = IndexSet(integer: row)
                     tableView.selectRowIndexes(indexSet, byExtendingSelection: false)
+                    
+                    // Use a small delay to ensure the selection is processed before showing context menu
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+                        // Forward the event to the next responder to show context menu
+                        self.nextResponder?.rightMouseDown(with: event)
+                    }
+                    return
                 }
             }
         }
         
-        // Forward the event to the next responder to show context menu
+        // If no valid row was found, forward immediately
         self.nextResponder?.rightMouseDown(with: event)
     }
     
