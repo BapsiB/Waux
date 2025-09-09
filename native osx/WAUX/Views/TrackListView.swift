@@ -68,6 +68,7 @@ struct TrackTable: View {
     let columnContextMenu: () -> AnyView
     let onKeyPressA: () -> Void
     let onKeyPressSpace: () -> Void
+    let onColumnWidthChange: () -> Void
     
     var body: some View {
         Table(filteredTracks, selection: $selectedTracks, sortOrder: $sortOrder) {
@@ -120,7 +121,7 @@ struct TrackTable: View {
                             trackContextMenu()
                         }
                 }
-                .width(min: 100, ideal: columnWidths[.album] ?? 150)
+                .width(min: 100, ideal: columnWidths[.album] ?? 120)
             }
             
             if visibleColumns.contains(.duration) {
@@ -130,7 +131,7 @@ struct TrackTable: View {
                             trackContextMenu()
                         }
                 }
-                .width(min: 50, ideal: columnWidths[.duration] ?? 70)
+                .width(min: 5, ideal: 10, max:80)
             }
             
             if visibleColumns.contains(.rating) {
@@ -140,7 +141,7 @@ struct TrackTable: View {
                             trackContextMenu()
                         }
                 }
-                .width(min: 80, ideal: columnWidths[.rating] ?? 100)
+                .width(min: 60, ideal: columnWidths[.rating] ?? 70, max: 100)
             }
             
 //            if visibleColumns.contains(.type) {
@@ -186,11 +187,11 @@ struct TrackTable: View {
                         }
                     }
                 }
-                .width(min: 120, ideal: columnWidths[.generalTags] ?? 220, max: 320)
+                .width(min: 120, ideal: columnWidths[.generalTags] ?? 220)
             }
         }
         .tableStyle(.bordered)
-        .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: {}))
+        .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: onColumnWidthChange))
         .contextMenu {
             columnContextMenu()
         }
@@ -483,7 +484,8 @@ struct TrackListView: View {
                             }
                         }
                     }
-                }
+                },
+                onColumnWidthChange: saveColumnWidths
             )
         }
         .alert("Rating Update Error", isPresented: $showingRatingError) {
