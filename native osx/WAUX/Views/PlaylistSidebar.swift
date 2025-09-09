@@ -927,9 +927,16 @@ struct HierarchicalItemView: View {
             {
                 switch item.type {
                 case .playlist(let playlist):
-                    return selectedPlaylist?.id == playlist.id ? AppStyle.secondaryColor.opacity(0.6) : Color.clear
+                    if selectedPlaylist?.id == playlist.id {
+                        return RoundedRectangle(cornerRadius: 6)
+                            .fill(AppStyle.secondaryColor.opacity(0.6))
+                    } else {
+                        return RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.clear)
+                    }
                 case .folder:
-                    return Color.clear
+                    return RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.clear)
                 }
             }()
         )
