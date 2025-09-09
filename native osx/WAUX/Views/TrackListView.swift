@@ -64,20 +64,24 @@ struct TrackTable: View {
     @ObservedObject var waveformServiceHolder: WaveformServiceHolder
     @ObservedObject var collectionService: CollectionService
     let onDoubleClick: (Track) -> Void
-    let contextMenu: () -> AnyView
+    let trackContextMenu: () -> AnyView
+    let columnContextMenu: () -> AnyView
     let onKeyPressA: () -> Void
     let onKeyPressSpace: () -> Void
     
     var body: some View {
         Table(filteredTracks, selection: $selectedTracks, sortOrder: $sortOrder) {
             // Drag handle column - always visible and first
-            TableColumn("", value: \.title) { track in
+            TableColumn("") { (track: Track) in
                 dragHandle(for: track)
+                    .contextMenu {
+                        trackContextMenu()
+                    }
             }
             .width(24)
             
             // Waveform column - always visible and second
-            TableColumn("Waveform", value: \Track.waveformPointCount) { track in
+            TableColumn("Waveform", value: \.waveformPointCount) { track in
                 WaveformColumn(
                     track: track,
                     audioService: audioService,
@@ -85,32 +89,56 @@ struct TrackTable: View {
                     collectionService: collectionService
                 )
                 .id("waveform-\(track.id ?? -1)-\(track.waveformPointCount)")
+                .contextMenu {
+                    trackContextMenu()
+                }
             }
             .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
             
             TableColumn("Title", value: \.title) { track in
                 titleCell(for: track)
+                    .contextMenu {
+                        trackContextMenu()
+                    }
             }
             .width(min: 150, ideal: columnWidths[.title] ?? 250)
             
             if visibleColumns.contains(.artist) {
-                TableColumn("Artist", value: \.artist)
-                    .width(min: 100, ideal: columnWidths[.artist] ?? 150)
+                TableColumn("Artist", value: \.artist) { track in
+                    Text(track.artist)
+                        .contextMenu {
+                            trackContextMenu()
+                        }
+                }
+                .width(min: 100, ideal: columnWidths[.artist] ?? 150)
             }
             
             if visibleColumns.contains(.album) {
-                TableColumn("Album", value: \.album)
-                    .width(min: 100, ideal: columnWidths[.album] ?? 150)
+                TableColumn("Album", value: \.album) { track in
+                    Text(track.album)
+                        .contextMenu {
+                            trackContextMenu()
+                        }
+                }
+                .width(min: 100, ideal: columnWidths[.album] ?? 150)
             }
             
             if visibleColumns.contains(.duration) {
-                TableColumn("Duration", value: \.formattedDuration)
-                    .width(min: 50, ideal: columnWidths[.duration] ?? 70)
+                TableColumn("Duration", value: \.formattedDuration) { track in
+                    Text(track.formattedDuration)
+                        .contextMenu {
+                            trackContextMenu()
+                        }
+                }
+                .width(min: 50, ideal: columnWidths[.duration] ?? 70)
             }
             
             if visibleColumns.contains(.rating) {
                 TableColumn("Rating", value: \.rating) { track in
                     ratingCell(for: track)
+                        .contextMenu {
+                            trackContextMenu()
+                        }
                 }
                 .width(min: 80, ideal: columnWidths[.rating] ?? 100)
             }
@@ -118,18 +146,31 @@ struct TrackTable: View {
 //            if visibleColumns.contains(.type) {
 //                TableColumn("Type", value: \.sourceType.rawValue) { track in
 //                    typeCell(for: track)
+//                        .contextMenu {
+//                            trackContextMenu()
+//                        }
 //                }
 //                .width(min: 60, ideal: columnWidths[.type] ?? 80)
 //            }
             
             if visibleColumns.contains(.dateAdded) {
-                TableColumn("Date Added", value: \.formattedDateAdded)
-                    .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
+                TableColumn("Date Added", value: \.formattedDateAdded) { track in
+                    Text(track.formattedDateAdded)
+                        .contextMenu {
+                            trackContextMenu()
+                        }
+                }
+                .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
             }
             
             if visibleColumns.contains(.composer) {
-                TableColumn("Composer", value: \Track.composerText)
-                    .width(min: 100, ideal: columnWidths[.composer] ?? 150)
+                TableColumn("Composer", value: \Track.composerText) { track in
+                    Text(track.composerText)
+                        .contextMenu {
+                            trackContextMenu()
+                        }
+                }
+                .width(min: 100, ideal: columnWidths[.composer] ?? 150)
             }
             
             if visibleColumns.contains(.generalTags) {
@@ -140,6 +181,9 @@ struct TrackTable: View {
                             metadataManager: metadataManager,
                             isTextFieldFocused: $isTextFieldFocused
                         )
+                        .contextMenu {
+                            trackContextMenu()
+                        }
                     }
                 }
                 .width(min: 120, ideal: columnWidths[.generalTags] ?? 220, max: 320)
@@ -147,14 +191,14 @@ struct TrackTable: View {
         }
         .tableStyle(.bordered)
         .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: {}))
+        .contextMenu {
+            columnContextMenu()
+        }
         .onTapGesture(count: 2) {
             if let selectedTrack = selectedTracks.first,
                let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
                 onDoubleClick(track)
             }
-        }
-        .contextMenu {
-            contextMenu()
         }
         .onKeyPress("a", phases: .down) { press in
             if press.modifiers.contains(.command) {
@@ -415,8 +459,11 @@ struct TrackListView: View {
                         audioService.play()
                     }
                 },
-                contextMenu: {
-                    AnyView(columnContextMenu)
+                trackContextMenu: {
+                    AnyView(trackContextMenu())
+                },
+                columnContextMenu: {
+                    AnyView(columnContextMenu())
                 },
                 onKeyPressA: {
                     selectedTracks = Set(filteredTracks.compactMap { $0.id })
@@ -622,11 +669,11 @@ struct TrackListView: View {
         }
     }
     
-    // MARK: - Context Menu
+    // MARK: - Context Menus
     
     @ViewBuilder
-    private var columnContextMenu: some View {
-        // Track actions
+    private func trackContextMenu() -> some View {
+        // Track actions only
         if !selectedTracks.isEmpty {
             Button("Play") {
                 if let selectedTrack = selectedTracks.first,
@@ -665,11 +712,12 @@ struct TrackListView: View {
                     revealInFinder(track: track)
                 }
             }
-            
-            Divider()
         }
-        
-        // Column visibility
+    }
+    
+    @ViewBuilder
+    private func columnContextMenu() -> some View {
+        // Column visibility only
         ForEach(TrackColumn.allCases, id: \.self) { column in
             Button {
                 if visibleColumns.contains(column) {

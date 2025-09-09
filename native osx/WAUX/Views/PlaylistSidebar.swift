@@ -162,7 +162,7 @@ struct PlaylistSidebar: View {
             }
         }
         .frame(width: 200)
-        .background(Color(.controlBackgroundColor))
+        .background(Color(.textBackgroundColor))
         .sheet(isPresented: $showingCreatePlaylistSheet) {
             CreatePlaylistSheet(
                 newPlaylistName: $newPlaylistName,
@@ -793,7 +793,7 @@ struct ExportPlaylistSheet: View {
                                 .foregroundColor(.secondary)
                         }
                         .padding()
-                        .background(Color(.controlBackgroundColor))
+                        .background(Color(.textBackgroundColor))
                         .cornerRadius(8)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -879,11 +879,12 @@ struct HierarchicalItemView: View {
     }
     
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             // Indentation spacer
             if item.depth > 0 {
                 Spacer()
                     .frame(width: indentationWidth)
+                    .background(Color.red.opacity(0.5)) // DEBUG: Red for indentation
             }
             
             switch item.type {
@@ -919,10 +920,19 @@ struct HierarchicalItemView: View {
                     handlePlaylistDrop(providers: providers, targetPlaylist: playlist)
                 }
             }
-            
-            Spacer()
         }
-        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            // Apply selection highlight at HierarchicalItemView level for full width
+            {
+                switch item.type {
+                case .playlist(let playlist):
+                    return selectedPlaylist?.id == playlist.id ? AppStyle.secondaryColor.opacity(0.6) : Color.clear
+                case .folder:
+                    return Color.clear
+                }
+            }()
+        )
     }
     
     private func handleFolderDrop(providers: [NSItemProvider], targetFolder: PlaylistFolder) -> Bool {
@@ -1042,7 +1052,7 @@ struct FolderItemView: View {
                 .buttonStyle(PlainButtonStyle())
             } else {
                 Spacer()
-                    .frame(width: 12, height: 12)
+                    .frame(width: 12, height: 8)
             }
             
             // Folder icon
@@ -1059,11 +1069,6 @@ struct FolderItemView: View {
                 if hasChildren {
                     let counts = childCount
                     HStack {
-                        if counts.playlists > 0 {
-                            Text("\(counts.playlists) playlist\(counts.playlists == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
                         
                         if counts.folders > 0 {
                             if counts.playlists > 0 {
@@ -1079,8 +1084,10 @@ struct FolderItemView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
-        .background(draggedOver ? Color.blue.opacity(0.2) : Color.clear)
+        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(draggedOver ? Color.blue.opacity(0.5) : Color.clear)
         .overlay(
             draggedOver ? 
             RoundedRectangle(cornerRadius: 4)
@@ -1134,15 +1141,12 @@ struct PlaylistItemView: View {
                 .foregroundColor(.orange)
             
             // Playlist info
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(playlist.name)
-                    .font(.headline)
+                    .font(.body)
                     .lineLimit(1)
                 
                 HStack {
-                    Text("\(playlist.trackPaths.count) tracks")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                     
                     if playlist.duration > 0 {
                         Text("•")
@@ -1155,12 +1159,14 @@ struct PlaylistItemView: View {
                     }
                 }
             }
+            
+            Spacer()
         }
         .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            isSelected ? Color.blue.opacity(0.2) : 
-            draggedOver ? Color.green.opacity(0.2) : 
-            Color.clear
+            draggedOver ? Color.green.opacity(0.2) : Color.clear
         )
         .overlay(
             draggedOver ? 
