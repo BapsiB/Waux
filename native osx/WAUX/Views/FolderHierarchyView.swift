@@ -10,6 +10,7 @@ struct FolderHierarchyView: View {
     @StateObject private var metadataManager: TrackMetadataManager
     @State private var selectedTracks = Set<Track.ID>()
     @State private var lastSelectedTrackId: Track.ID? = nil
+    @State private var lastSelectedFolderId: String? = nil
     @State private var showTagEditor = false
     @State private var showMetadataEditor = false
     @FocusState private var isTextFieldFocused: Bool
@@ -35,6 +36,7 @@ struct FolderHierarchyView: View {
                             collectionService: collectionService,
                             selectedTracks: $selectedTracks,
                             lastSelectedTrackId: $lastSelectedTrackId,
+                            lastSelectedFolderId: $lastSelectedFolderId,
                             searchService: searchService,
                             isTextFieldFocused: Binding(
                                 get: { isTextFieldFocused },
@@ -154,6 +156,7 @@ struct FolderNodeView: View {
     @ObservedObject var collectionService: CollectionService
     @Binding var selectedTracks: Set<Track.ID>
     @Binding var lastSelectedTrackId: Track.ID?
+    @Binding var lastSelectedFolderId: String?
     @ObservedObject var searchService: SearchService
     @Binding var isTextFieldFocused: Bool
     let onDoubleClick: (Track) -> Void
@@ -165,7 +168,8 @@ struct FolderNodeView: View {
                 folder: folder,
                 folderManager: folderManager,
                 isExpanded: folderManager.isExpanded(folder.path),
-                isSelected: folderManager.isSelected(folder.path)
+                isSelected: folderManager.isSelected(folder.path),
+                lastSelectedFolderId: $lastSelectedFolderId
             )
             
             // Child folders and tracks when expanded
@@ -182,6 +186,7 @@ struct FolderNodeView: View {
                             collectionService: collectionService,
                             selectedTracks: $selectedTracks,
                             lastSelectedTrackId: $lastSelectedTrackId,
+                            lastSelectedFolderId: $lastSelectedFolderId,
                             searchService: searchService,
                             isTextFieldFocused: $isTextFieldFocused,
                             onDoubleClick: onDoubleClick
@@ -221,6 +226,7 @@ struct FolderHeaderView: View {
     @ObservedObject var folderManager: FolderHierarchyManager
     let isExpanded: Bool
     let isSelected: Bool
+    @Binding var lastSelectedFolderId: String?
     
     var body: some View {
         HStack(spacing: 8) {
@@ -283,7 +289,7 @@ struct FolderHeaderView: View {
         .cornerRadius(4)
         .contentShape(Rectangle())
         .onTapGesture {
-            folderManager.toggleSelection(for: folder.path)
+            handleFolderSelection(folderPath: folder.path)
         }
         .onDrag {
             let paths = folder.allTracks.map { $0.path }
@@ -304,6 +310,106 @@ struct FolderHeaderView: View {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
             }
         }
+    }
+    
+    // MARK: - Folder Selection Logic
+    
+    private func handleFolderSelection(folderPath: String) {
+        print("🔍 [FolderHierarchyView] handleFolderSelection called:")
+        print("   - Folder path: \(folderPath)")
+        
+        // Check for modifier keys using NSEvent
+        var modifierFlags: EventModifiers = []
+        
+        if NSEvent.modifierFlags.contains(.command) {
+            print("🔍 [FolderHierarchyView] Command key detected")
+            modifierFlags.insert(.command)
+        }
+        if NSEvent.modifierFlags.contains(.shift) {
+            print("🔍 [FolderHierarchyView] Shift key detected")
+            modifierFlags.insert(.shift)
+        }
+        
+        print("🔍 [FolderHierarchyView] Detected modifier flags: \(modifierFlags)")
+        
+        if modifierFlags.contains(.command) {
+            print("🔍 [FolderHierarchyView] Processing command+click selection")
+            // Command+click: Add/remove from selection
+            if folderManager.selectedFolders.contains(folderPath) {
+                folderManager.selectedFolders.remove(folderPath)
+                print("🔍 [FolderHierarchyView] Removed folder from selection")
+            } else {
+                folderManager.selectedFolders.insert(folderPath)
+                print("🔍 [FolderHierarchyView] Added folder to selection")
+            }
+            lastSelectedFolderId = folderPath
+        } else if modifierFlags.contains(.shift) {
+            print("🔍 [FolderHierarchyView] Processing shift+click selection")
+            // Shift+click: Select range (for folders, this means select all folders between)
+            if let lastSelected = lastSelectedFolderId {
+                print("🔍 [FolderHierarchyView] Selecting range from \(lastSelected) to \(folderPath)")
+                selectFolderRange(from: lastSelected, to: folderPath)
+            } else {
+                print("🔍 [FolderHierarchyView] No previous selection, just selecting this folder")
+                // If no previous selection, just select this folder
+                folderManager.selectedFolders.insert(folderPath)
+                lastSelectedFolderId = folderPath
+            }
+        } else {
+            print("🔍 [FolderHierarchyView] Processing simple click selection")
+            // Simple click: Select only this folder (clear all others)
+            folderManager.selectedFolders.removeAll()
+            folderManager.selectedFolders.insert(folderPath)
+            lastSelectedFolderId = folderPath
+            print("🔍 [FolderHierarchyView] Cleared all folder selections and selected only this folder")
+        }
+        
+        print("🔍 [FolderHierarchyView] Final folder selection count: \(folderManager.selectedFolders.count)")
+    }
+    
+    private func selectFolderRange(from startPath: String, to endPath: String) {
+        print("🔍 [FolderHierarchyView] selectFolderRange called:")
+        print("   - Start path: \(startPath)")
+        print("   - End path: \(endPath)")
+        
+        // Get all folder paths in the hierarchy
+        let allFolderPaths = getAllFolderPaths()
+        
+        guard let startIndex = allFolderPaths.firstIndex(of: startPath),
+              let endIndex = allFolderPaths.firstIndex(of: endPath) else {
+            print("🔍 [FolderHierarchyView] ERROR: Could not find folder indices")
+            return
+        }
+        
+        let rangeStart = min(startIndex, endIndex)
+        let rangeEnd = max(startIndex, endIndex)
+        
+        print("🔍 [FolderHierarchyView] Range indices: \(rangeStart) to \(rangeEnd)")
+        print("🔍 [FolderHierarchyView] Total folders: \(allFolderPaths.count)")
+        
+        // Add all folders in the range to selection
+        var addedCount = 0
+        for index in rangeStart...rangeEnd {
+            folderManager.selectedFolders.insert(allFolderPaths[index])
+            addedCount += 1
+        }
+        
+        print("🔍 [FolderHierarchyView] Added \(addedCount) folders to selection")
+        lastSelectedFolderId = endPath
+    }
+    
+    private func getAllFolderPaths() -> [String] {
+        var allPaths: [String] = []
+        
+        func collectPaths(from folders: [FolderNode]) {
+            for folder in folders {
+                allPaths.append(folder.path)
+                collectPaths(from: folder.children)
+            }
+        }
+        
+        collectPaths(from: folderManager.rootFolders)
+        return allPaths
     }
 }
 
