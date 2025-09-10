@@ -111,12 +111,31 @@ struct ContentView: View {
                 menuActionState.shouldRegenerateWaveforms = false
             }
         }
-        .onChange(of: collectionService.tracks) { _, newTracks in
+        .onChange(of: collectionService.tracks) { oldTracks, newTracks in
             print("[ContentView] tracks changed, count=\(newTracks.count)")
-            // Keep playlistTracks in sync when tags/ratings change in the library
-            if let playlist = selectedPlaylist {
-                print("[ContentView] reloading playlist tracks for \(playlist.name)")
+            
+            // Only reload playlist tracks if the track structure changed (added/removed tracks)
+            // Don't reload for metadata changes (tags, ratings, etc.)
+            let oldTrackIds = Set(oldTracks.compactMap(\.id))
+            let newTrackIds = Set(newTracks.compactMap(\.id))
+            let tracksAddedOrRemoved = oldTrackIds != newTrackIds
+            
+            if tracksAddedOrRemoved, let playlist = selectedPlaylist {
+                print("[ContentView] track structure changed, reloading playlist tracks for \(playlist.name)")
                 Task { await loadPlaylistTracks(playlist) }
+            } else if let playlist = selectedPlaylist {
+                // For metadata-only changes, update playlist tracks in place
+                print("[ContentView] metadata changed, updating playlist tracks in place for \(playlist.name)")
+                Task { @MainActor in
+                    // Update existing playlist tracks with new metadata
+                    playlistTracks = playlistTracks.compactMap { playlistTrack in
+                        if let trackId = playlistTrack.id,
+                           let updatedTrack = newTracks.first(where: { $0.id == trackId }) {
+                            return updatedTrack
+                        }
+                        return playlistTrack
+                    }
+                }
             }
         }
         .onAppear {

@@ -384,6 +384,7 @@ struct TrackListView: View {
     @State private var showDeleteConfirmation = false
     @State private var tracksToDelete: [Track] = []
     @FocusState private var isTextFieldFocused: Bool
+    @State private var preservedSelection: Set<Track.ID> = []
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
     
@@ -500,13 +501,6 @@ struct TrackListView: View {
                 trackIds: selectedTrackIds
             )
         }
-        .sheet(isPresented: $showDatabaseRepair) {
-            DatabaseRepairView(
-                collectionService: collectionService,
-                corruptedTracks: $corruptedTracks,
-                isScanning: $isScanningDatabase
-            )
-        }
         .sheet(item: $fileChangesData) { data in
             FileChangesSheet(
                 newFiles: data.newFiles,
@@ -518,15 +512,12 @@ struct TrackListView: View {
                 onApply: { adds, deletes, moves in
                     Task {
                         do {
-                            print("🔍 [TrackListView] Applying filesystem changes - adds: \(adds.count), deletes: \(deletes.count), moves: \(moves.count)")
                             try await collectionService.applyFilesystemChanges(
                                 newFiles: adds,
                                 deletedTrackIds: deletes,
                                 movedUpdates: moves
                             )
-                            print("🔍 [TrackListView] Successfully applied filesystem changes")
                         } catch {
-                            print("❌ [TrackListView] Failed to apply filesystem changes: \(error)")
                             await MainActor.run {
                                 // Show error alert to user
                                 ratingErrorMessage = "Failed to apply filesystem changes: \(error.localizedDescription)"
@@ -576,6 +567,15 @@ struct TrackListView: View {
             if isComplete {
                 hasRunInitialScan = false
             }
+        }
+        .onChange(of: filteredTracks) { oldTracks, newTracks in
+            // Preserve selection for tracks that still exist
+            let newTrackIds: Set<Int> = Set(newTracks.compactMap { $0.id })
+            let validSelections = selectedTracks.filter { trackId in
+                guard let trackId = trackId else { return false }
+                return newTrackIds.contains(trackId)
+            }
+            selectedTracks = validSelections
         }
     }
     

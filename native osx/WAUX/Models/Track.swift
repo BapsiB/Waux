@@ -226,6 +226,32 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
             && lhs.generalTags == rhs.generalTags
             && lhs.waveformPointCount == rhs.waveformPointCount
     }
+    
+    // MARK: - Update Helper
+    func withUpdates(_ updates: [String: Any]) -> Track {
+        return Track(
+            id: self.id,
+            title: updates["title"] as? String ?? self.title,
+            artist: updates["artist"] as? String ?? self.artist,
+            album: updates["album"] as? String ?? self.album,
+            albumArtist: updates["albumArtist"] as? String ?? self.albumArtist,
+            composer: updates["composer"] as? String ?? self.composer,
+            genre: updates["genre"] as? String ?? self.genre,
+            year: updates["year"] as? Int ?? self.year,
+            trackNumber: updates["trackNumber"] as? Int ?? self.trackNumber,
+            discNumber: updates["discNumber"] as? Int ?? self.discNumber,
+            bpm: updates["bpm"] as? Int ?? self.bpm,
+            path: self.path,
+            isUrl: self.isUrl,
+            duration: self.duration,
+            timeMarkers: self.timeMarkers,
+            waveformData: updates["waveformData"] as? [Double] ?? self.waveformData,
+            rating: updates["rating"] as? Int ?? self.rating,
+            comment: updates["comment"] as? String ?? self.comment,
+            generalTags: updates["generalTags"] as? [String] ?? self.generalTags,
+            dateAdded: self.dateAdded
+        )
+    }
 }
 
 // MARK: - CollectionDefinition

@@ -316,7 +316,7 @@ struct FolderTrackRowView: View {
     @Binding var selectedTracks: Set<Track.ID>
     @Binding var lastSelectedTrackId: Track.ID?
     @Binding var isTextFieldFocused: Bool
-    let onDoubleClick: (Track) -> Void
+    let onDoubleClick: (Track) -> Void  
     let allTracks: [Track]
     
     var body: some View {

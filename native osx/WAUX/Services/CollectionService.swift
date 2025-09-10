@@ -1745,33 +1745,9 @@ class CollectionService: ObservableObject {
                     Task { @MainActor in
                         print("[CollectionService] 🔄 Updating tracks array on main thread...")
                         if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
-                            // Create a completely new array to force SwiftUI to refresh
-                            var newTracks = self.tracks
-                            newTracks[index] = Track(
-                                id: self.tracks[index].id,
-                                title: self.tracks[index].title,
-                                artist: self.tracks[index].artist,
-                                album: self.tracks[index].album,
-                                albumArtist: self.tracks[index].albumArtist,
-                                composer: self.tracks[index].composer,
-                                genre: self.tracks[index].genre,
-                                year: self.tracks[index].year,
-                                trackNumber: self.tracks[index].trackNumber,
-                                discNumber: self.tracks[index].discNumber,
-                                bpm: self.tracks[index].bpm,
-                                path: self.tracks[index].path,
-                                isUrl: self.tracks[index].isUrl,
-                                duration: self.tracks[index].duration,
-                                timeMarkers: self.tracks[index].timeMarkers,
-                                waveformData: waveformData,
-                                rating: self.tracks[index].rating,
-                                comment: self.tracks[index].comment,
-                                generalTags: self.tracks[index].generalTags,
-                                dateAdded: self.tracks[index].dateAdded
-                            )
-                            
-                            // Replace the entire array to force SwiftUI refresh
-                            self.tracks = newTracks
+                            // Update track in place using withUpdates method
+                            let updates = ["waveformData": waveformData as Any]
+                            self.tracks[index] = self.tracks[index].withUpdates(updates)
                             print("[CollectionService] ✅ Successfully updated tracks array for track \(trackId)")
                             
                             // Force a UI refresh
@@ -1834,30 +1810,9 @@ class CollectionService: ObservableObject {
                     // Update the track in the local array on the main thread
                     Task { @MainActor in
                         if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
-                            var updatedTracks = self.tracks
-                            updatedTracks[index] = Track(
-                                id: self.tracks[index].id,
-                                title: self.tracks[index].title,
-                                artist: self.tracks[index].artist,
-                                album: self.tracks[index].album,
-                                albumArtist: self.tracks[index].albumArtist,
-                                composer: self.tracks[index].composer,
-                                genre: self.tracks[index].genre,
-                                year: self.tracks[index].year,
-                                trackNumber: self.tracks[index].trackNumber,
-                                discNumber: self.tracks[index].discNumber,
-                                bpm: self.tracks[index].bpm,
-                                path: self.tracks[index].path,
-                                isUrl: self.tracks[index].isUrl,
-                                duration: self.tracks[index].duration,
-                                timeMarkers: self.tracks[index].timeMarkers,
-                                waveformData: self.tracks[index].waveformData,
-                                rating: newRating,
-                                comment: self.tracks[index].comment,
-                                generalTags: self.tracks[index].generalTags,
-                                dateAdded: self.tracks[index].dateAdded
-                            )
-                            self.tracks = updatedTracks
+                            // Update track in place using withUpdates method
+                            let updates = ["rating": newRating as Any]
+                            self.tracks[index] = self.tracks[index].withUpdates(updates)
                         }
                     }
                     
@@ -1982,32 +1937,8 @@ class CollectionService: ObservableObject {
                     // Update the track in the local array on the main thread
                     Task { @MainActor in
                         if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
-                            var updatedTracks = self.tracks
-                            let currentTrack = self.tracks[index]
-                            
-                            updatedTracks[index] = Track(
-                                id: currentTrack.id,
-                                title: updates["title"] as? String ?? currentTrack.title,
-                                artist: updates["artist"] as? String ?? currentTrack.artist,
-                                album: updates["album"] as? String ?? currentTrack.album,
-                                albumArtist: updates["albumArtist"] as? String ?? currentTrack.albumArtist,
-                                composer: updates["composer"] as? String ?? currentTrack.composer,
-                                genre: updates["genre"] as? String ?? currentTrack.genre,
-                                year: updates["year"] as? Int ?? currentTrack.year,
-                                trackNumber: updates["trackNumber"] as? Int ?? currentTrack.trackNumber,
-                                discNumber: updates["discNumber"] as? Int ?? currentTrack.discNumber,
-                                bpm: updates["bpm"] as? Int ?? currentTrack.bpm,
-                                path: currentTrack.path,
-                                isUrl: currentTrack.isUrl,
-                                duration: currentTrack.duration,
-                                timeMarkers: currentTrack.timeMarkers,
-                                waveformData: currentTrack.waveformData,
-                                rating: currentTrack.rating,
-                                comment: updates["comment"] as? String ?? currentTrack.comment,
-                                generalTags: updates["generalTags"] as? [String] ?? currentTrack.generalTags,
-                                dateAdded: currentTrack.dateAdded
-                            )
-                            self.tracks = updatedTracks
+                            // Update track in place using withUpdates method
+                            self.tracks[index] = self.tracks[index].withUpdates(updates)
                         }
                     }
                     
@@ -2300,31 +2231,10 @@ class CollectionService: ObservableObject {
                             return 
                         }
                         print("[CollectionService] updating track \(trackId) tags from \(self.tracks[index].generalTags) to \(newTags)")
-                        var updatedTracks = self.tracks
-                        updatedTracks[index] = Track(
-                            id: self.tracks[index].id,
-                            title: self.tracks[index].title,
-                            artist: self.tracks[index].artist,
-                            album: self.tracks[index].album,
-                            albumArtist: self.tracks[index].albumArtist,
-                            composer: self.tracks[index].composer,
-                            genre: self.tracks[index].genre,
-                            year: self.tracks[index].year,
-                            trackNumber: self.tracks[index].trackNumber,
-                            discNumber: self.tracks[index].discNumber,
-                            bpm: self.tracks[index].bpm,
-                            path: self.tracks[index].path,
-                            isUrl: self.tracks[index].isUrl,
-                            duration: self.tracks[index].duration,
-                            timeMarkers: self.tracks[index].timeMarkers,
-                            waveformData: self.tracks[index].waveformData,
-                            rating: self.tracks[index].rating,
-                            comment: self.tracks[index].comment,
-                            generalTags: newTags,
-                            dateAdded: self.tracks[index].dateAdded
-                        )
-                        self.tracks = updatedTracks
-                        print("[CollectionService] track \(trackId) updated, new tags: \(updatedTracks[index].generalTags)")
+                        // Update track in place using withUpdates method
+                        let updates = ["generalTags": newTags as Any]
+                        self.tracks[index] = self.tracks[index].withUpdates(updates)
+                        print("[CollectionService] track \(trackId) updated, new tags: \(self.tracks[index].generalTags)")
                         print("[CollectionService] tracks array updated, count: \(self.tracks.count)")
                         
                         // Force a UI update cycle to ensure the change is propagated
