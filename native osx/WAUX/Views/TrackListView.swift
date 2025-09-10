@@ -59,6 +59,7 @@ struct TrackTable: View {
     @Binding var visibleColumns: Set<TrackColumn>
     @Binding var columnWidths: [TrackColumn: CGFloat]
     @Binding var isTextFieldFocused: Bool
+    @FocusState var isTableFocused: Bool
     @ObservedObject var audioService: AudioService
     @ObservedObject var metadataManager: TrackMetadataManager
     @ObservedObject var waveformServiceHolder: WaveformServiceHolder
@@ -158,6 +159,7 @@ struct TrackTable: View {
         }
         .tableStyle(.bordered)
         .focusable()
+        .focused($isTableFocused)
         .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: onColumnWidthChange))
         .onTapGesture(count: 2) {
             if let selectedTrack = selectedTracks.first,
@@ -173,15 +175,21 @@ struct TrackTable: View {
             return .ignored
         }
         .onKeyPress(.space, phases: .down) { press in
-            if !isTextFieldFocused && !selectedTracks.isEmpty {
+            if !isTextFieldFocused && isTableFocused {
                 onKeyPressSpace()
                 return .handled
             }
             return .ignored
         }
         .onDeleteCommand {
-            if !isTextFieldFocused && !selectedTracks.isEmpty {
+            if !isTextFieldFocused && isTableFocused && !selectedTracks.isEmpty {
                 onKeyPressBackspace()
+            }
+        }
+        .onAppear {
+            // Set focus to the table when it appears to ensure it can receive keyboard events
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isTableFocused = true
             }
         }
     }
@@ -436,20 +444,10 @@ struct TrackListView: View {
                     selectedTracks = Set(filteredTracks.compactMap { $0.id })
                 },
                 onKeyPressSpace: {
-                    if let selectedTrack = selectedTracks.first,
-                       let track = filteredTracks.first(where: { $0.id == selectedTrack }) {
-                        // Check if this track is already loaded and playing
-                        if audioService.currentTrack?.id == track.id {
-                            // Same track - toggle play/pause
-                            audioService.togglePlayPause()
-                        } else {
-                            // Different track - load and play
-                            Task {
-                                await audioService.loadTrack(track)
-                                audioService.play()
-                            }
-                        }
-                    }
+
+                    // Same track - toggle play/pause
+                    audioService.togglePlayPause()
+
                 },
                 onKeyPressBackspace: {
                     let selectedTracksList = filteredTracks.filter { selectedTracks.contains($0.id) }
