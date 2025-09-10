@@ -500,18 +500,45 @@ struct FolderTrackRowView: View {
         .onTapGesture(count: 2) {
             onDoubleClick(track)
         }
-        .contextMenu {
-            Button("Play") {
-                Task {
-                    await audioService.loadTrack(track)
-                    audioService.play()
+        .background(
+            RightClickDetector(
+                onRightClick: {
+                    // Select the track when right-clicking if it's not already selected
+                    if let trackId = track.id, !selectedTracks.contains(trackId) {
+                        selectedTracks.removeAll()
+                        selectedTracks.insert(trackId)
+                        lastSelectedTrackId = trackId
+                    }
+                    // Show native context menu
+                    showNativeContextMenu()
                 }
-            }
-            Button("Reveal in Finder") {
-                let trackURL = URL(fileURLWithPath: track.path)
-                let parentDirectory = trackURL.deletingLastPathComponent().path
-                NSWorkspace.shared.selectFile(track.path, inFileViewerRootedAtPath: parentDirectory)
-            }
+            )
+        )
+    }
+    
+    // MARK: - Context Menu
+    
+    private func showNativeContextMenu() {
+        let menu = NSMenu()
+        
+        // Create a coordinator to handle the actions
+        let coordinator = ContextMenuCoordinator(
+            track: track,
+            audioService: audioService
+        )
+        
+        let playItem = NSMenuItem(title: "Play", action: #selector(ContextMenuCoordinator.playTrack), keyEquivalent: "")
+        playItem.target = coordinator
+        menu.addItem(playItem)
+        
+        let revealItem = NSMenuItem(title: "Reveal in Finder", action: #selector(ContextMenuCoordinator.revealInFinder), keyEquivalent: "")
+        revealItem.target = coordinator
+        menu.addItem(revealItem)
+        
+        // Show menu at current mouse location
+        if let window = NSApp.keyWindow {
+            let mouseLocation = NSEvent.mouseLocation
+            menu.popUp(positioning: nil, at: mouseLocation, in: nil)
         }
     }
     
@@ -623,6 +650,65 @@ struct FolderTrackRowView: View {
         print("   - Payload content: '\(payload)'")
         
         return NSItemProvider(object: payload as NSString)
+    }
+}
+
+class ContextMenuCoordinator: NSObject {
+    let track: Track
+    let audioService: AudioService
+    
+    init(track: Track, audioService: AudioService) {
+        self.track = track
+        self.audioService = audioService
+    }
+    
+    @objc func playTrack() {
+        Task {
+            await audioService.loadTrack(track)
+            audioService.play()
+        }
+    }
+    
+    @objc func revealInFinder() {
+        let trackURL = URL(fileURLWithPath: track.path)
+        let parentDirectory = trackURL.deletingLastPathComponent().path
+        NSWorkspace.shared.selectFile(track.path, inFileViewerRootedAtPath: parentDirectory)
+    }
+}
+
+struct RightClickDetector: NSViewRepresentable {
+    let onRightClick: () -> Void
+    
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        
+        // Add a gesture recognizer for right-clicks
+        let rightClickGesture = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleRightClick))
+        rightClickGesture.buttonMask = 2 // Right mouse button
+        view.addGestureRecognizer(rightClickGesture)
+        
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // No updates needed
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onRightClick: onRightClick)
+    }
+    
+    class Coordinator: NSObject {
+        let onRightClick: () -> Void
+        
+        init(onRightClick: @escaping () -> Void) {
+            self.onRightClick = onRightClick
+        }
+        
+        @objc func handleRightClick() {
+            onRightClick()
+        }
     }
 }
 
