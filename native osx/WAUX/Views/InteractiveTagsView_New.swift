@@ -63,26 +63,43 @@ struct InteractiveTagsView_New: View {
     
     var body: some View {
         HStack(spacing: 6) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(tags, id: \.self) { tag in
-                        HStack(spacing: 4) {
-                            Text(tag)
-                                .font(.caption)
-                                .padding(.vertical, 2)
-                                .padding(.horizontal, 6)
-                                .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.15)))
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .onTapGesture {
-                                    metadataManager.removeTag(from: [trackId], tag: tag)
-                                }
+            if tags.count <= 3 {
+                // Single line layout for 3 or fewer tags
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(tags, id: \.self) { tag in
+                            TagView(tag: tag, onDelete: {
+                                metadataManager.removeTag(from: [trackId], tag: tag)
+                            })
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                // Two-line layout for more than 3 tags
+                VStack(alignment: .leading, spacing: 2) {
+                    // First line - first half of tags
+                    HStack(spacing: 4) {
+                        ForEach(Array(tags.prefix((tags.count + 1) / 2).enumerated()), id: \.offset) { index, tag in
+                            TagView(tag: tag, onDelete: {
+                                metadataManager.removeTag(from: [trackId], tag: tag)
+                            })
+                        }
+                        Spacer()
+                    }
+                    
+                    // Second line - remaining tags
+                    HStack(spacing: 4) {
+                        ForEach(Array(tags.suffix(tags.count / 2).enumerated()), id: \.offset) { index, tag in
+                            TagView(tag: tag, onDelete: {
+                                metadataManager.removeTag(from: [trackId], tag: tag)
+                            })
+                        }
+                        Spacer()
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             
             ZStack(alignment: .leading) {
                 // Custom NSTextField that can intercept Tab key
@@ -142,6 +159,42 @@ struct InteractiveTagsView_New: View {
         }
         input = ""
         focused = true
+    }
+}
+
+// Tag view with hover delete functionality
+struct TagView: View {
+    let tag: String
+    let onDelete: () -> Void
+    @State private var isHovered = false
+    
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            // Tag background
+            Text(tag)
+                .font(.caption)
+                .padding(.vertical, 2)
+                .padding(.horizontal, 6)
+                // .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.15)))
+            
+            // Delete button - appears on hover
+            if isHovered {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .background(Circle().fill(Color.white))
+                    .offset(x: 6, y: 0)
+                    .onTapGesture {
+                        onDelete()
+                    }
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
