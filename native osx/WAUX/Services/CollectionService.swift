@@ -1033,6 +1033,37 @@ class CollectionService: ObservableObject {
             throw CollectionError.queryFailed(message: err)
         }
     }
+    
+    /// Deletes a track from the database and moves the file to trash
+    func deleteTrackAndMoveToTrash(_ id: Int) throws {
+        // First, get the track information before deleting from database
+        guard let track = tracks.first(where: { $0.id == id }) else {
+            throw CollectionError.queryFailed(message: "Track with ID \(id) not found")
+        }
+        
+        // Only move local files to trash (not URLs)
+        if !track.isUrl {
+            let fileURL = URL(fileURLWithPath: track.path)
+            
+            // Check if file exists before trying to move to trash
+            if FileManager.default.fileExists(atPath: track.path) {
+                do {
+                    try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
+                    print("✅ Moved file to trash: \(track.path)")
+                } catch {
+                    print("⚠️ Failed to move file to trash: \(track.path) - \(error)")
+                    // Continue with database deletion even if trash operation fails
+                }
+            } else {
+                print("⚠️ File does not exist on disk, skipping trash operation: \(track.path)")
+            }
+        } else {
+            print("ℹ️ Skipping trash operation for URL track: \(track.path)")
+        }
+        
+        // Delete from database
+        try deleteTrack(id)
+    }
 
     func updateTrackPath(trackId: Int, newPath: String) throws {
         guard let db = database else { throw CollectionError.databaseNotOpen }

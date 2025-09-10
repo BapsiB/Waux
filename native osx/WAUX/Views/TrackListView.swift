@@ -66,6 +66,7 @@ struct TrackTable: View {
     let onDoubleClick: (Track) -> Void
     let onKeyPressA: () -> Void
     let onKeyPressSpace: () -> Void
+    let onKeyPressBackspace: () -> Void
     let onColumnWidthChange: () -> Void
     
     var body: some View {
@@ -156,6 +157,7 @@ struct TrackTable: View {
             }
         }
         .tableStyle(.bordered)
+        .focusable()
         .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: onColumnWidthChange))
         .onTapGesture(count: 2) {
             if let selectedTrack = selectedTracks.first,
@@ -176,6 +178,11 @@ struct TrackTable: View {
                 return .handled
             }
             return .ignored
+        }
+        .onDeleteCommand {
+            if !isTextFieldFocused && !selectedTracks.isEmpty {
+                onKeyPressBackspace()
+            }
         }
     }
     
@@ -374,6 +381,8 @@ struct TrackListView: View {
     @State private var showFileChangesSheet = false
     @State private var fileChangesData: FileChangesData? = nil
     @State private var hasRunInitialScan = false
+    @State private var showDeleteConfirmation = false
+    @State private var tracksToDelete: [Track] = []
     @FocusState private var isTextFieldFocused: Bool
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
@@ -439,6 +448,13 @@ struct TrackListView: View {
                                 audioService.play()
                             }
                         }
+                    }
+                },
+                onKeyPressBackspace: {
+                    let selectedTracksList = filteredTracks.filter { selectedTracks.contains($0.id) }
+                    if !selectedTracksList.isEmpty {
+                        tracksToDelete = selectedTracksList
+                        showDeleteConfirmation = true
                     }
                 },
                 onColumnWidthChange: saveColumnWidths
@@ -521,6 +537,21 @@ struct TrackListView: View {
                 }
             )
         }
+        .alert("Delete Tracks", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {
+                tracksToDelete = []
+            }
+            Button("Delete", role: .destructive) {
+                deleteSelectedTracks()
+            }
+        } message: {
+            let count = tracksToDelete.count
+            if count == 1 {
+                Text("Delete '\(tracksToDelete.first?.title ?? "this track")'? The file will be moved to trash.")
+            } else {
+                Text("Delete \(count) tracks? The files will be moved to trash.")
+            }
+        }
         .onAppear {
             // Set up auto-play callback for AudioService
             audioService.setNextTrackCallback { [self] in
@@ -589,6 +620,42 @@ struct TrackListView: View {
     }
     
     // MARK: - Helper Functions
+    
+    private func deleteSelectedTracks() {
+        guard !tracksToDelete.isEmpty else { return }
+        
+        let tracksToDeleteCount = tracksToDelete.count
+        
+        Task {
+            do {
+                // Delete tracks from database and move files to trash
+                for track in tracksToDelete {
+                    if let trackId = track.id {
+                        try collectionService.deleteTrackAndMoveToTrash(trackId)
+                        print("✅ Successfully deleted track and moved to trash: \(track.title)")
+                    }
+                }
+                
+                // Reload tracks to reflect changes
+                try await collectionService.loadAllTracks()
+                
+                // Clear selection and tracks to delete
+                await MainActor.run {
+                    selectedTracks.removeAll()
+                    tracksToDelete.removeAll()
+                }
+                
+                print("✅ Successfully deleted \(tracksToDeleteCount) tracks")
+                
+            } catch {
+                print("❌ Failed to delete tracks: \(error)")
+                await MainActor.run {
+                    ratingErrorMessage = "Failed to delete tracks: \(error.localizedDescription)"
+                    showingRatingError = true
+                }
+            }
+        }
+    }
     
     private func revealInFinder(track: Track) {
         let fileURL = URL(fileURLWithPath: track.path)
@@ -664,6 +731,16 @@ struct TrackListView: View {
             }
             Button("Edit Metadata…") {
                 showMetadataEditor = true
+            }
+            
+            Divider()
+            
+            Button("Move to Trash", role: .destructive) {
+                let selectedTracksList = filteredTracks.filter { selectedTracks.contains($0.id) }
+                if !selectedTracksList.isEmpty {
+                    tracksToDelete = selectedTracksList
+                    showDeleteConfirmation = true
+                }
             }
             
             // Only show "Refresh Data" for local files
