@@ -929,7 +929,7 @@ struct HierarchicalItemView: View {
                 case .playlist(let playlist):
                     if selectedPlaylist?.id == playlist.id {
                         return RoundedRectangle(cornerRadius: 6)
-                            .fill(AppStyle.secondaryColor.opacity(0.6))
+                            .fill(AppStyle.secondaryColor.opacity(0.1))
                     } else {
                         return RoundedRectangle(cornerRadius: 6)
                             .fill(Color.clear)

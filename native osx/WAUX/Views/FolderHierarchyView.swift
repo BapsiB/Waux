@@ -248,7 +248,7 @@ struct FolderHeaderView: View {
             
             // Folder icon
             Image(systemName: "folder")
-                .foregroundColor(.blue)
+                .foregroundColor(AppStyle.secondaryColor.opacity(0.8))
                 .font(.system(size: 14))
                 .padding(.leading, -10) // Move 10px to the left
             
@@ -267,19 +267,19 @@ struct FolderHeaderView: View {
             Spacer()
             
             // Selection checkbox
-            Button(action: {
-                folderManager.toggleSelection(for: folder.path)
-            }) {
-                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                    .foregroundColor(isSelected ? .blue : .secondary)
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(PlainButtonStyle())
+            // Button(action: {
+            //     folderManager.toggleSelection(for: folder.path)
+            // }) {
+            //     Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+            //         .foregroundColor(isSelected ? AppStyle.secondaryColor.opacity(0.2) : .secondary)
+            //         .font(.system(size: 12))
+            // }
+            // .buttonStyle(PlainButtonStyle())
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
         .padding(.leading, CGFloat(folder.level * 20)) // Add visual indentation based on folder depth
-        .background(isSelected ? Color.blue.opacity(0.2) : Color.clear)
+        .background(isSelected ? AppStyle.secondaryColor.opacity(0.1) : Color.clear)
         .cornerRadius(4)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -357,19 +357,19 @@ struct FolderTrackRowView: View {
             
             // Selection checkbox
             if let trackId = track.id {
-                Button(action: {
-                    handleSelection(trackId: trackId, modifierFlags: [])
-                }) {
-                    Image(systemName: selectedTracks.contains(trackId) ? "checkmark.square.fill" : "square")
-                        .foregroundColor(selectedTracks.contains(trackId) ? .blue : .secondary)
-                        .font(.system(size: 12))
-                }
-                .buttonStyle(PlainButtonStyle())
+                // Button(action: {
+                //     handleSelection(trackId: trackId, modifierFlags: [])
+                // }) {
+                    // Image(systemName: selectedTracks.contains(trackId) ? "checkmark.square.fill" : "square")
+                    //     .foregroundColor(selectedTracks.contains(trackId) ? AppStyle.secondaryColor.opacity(0.2) : .secondary)
+                    //     .font(.system(size: 12))
+                // }
+                // .buttonStyle(PlainButtonStyle())
             }
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
-        .background(selectedTracks.contains(track.id) ? Color.blue.opacity(0.1) : Color.clear)
+        .background(selectedTracks.contains(track.id) ? AppStyle.secondaryColor.opacity(0.1) : Color.clear)
         .cornerRadius(4)
         .contentShape(Rectangle())
         .onTapGesture {
