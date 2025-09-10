@@ -66,23 +66,26 @@ struct SubtleSlider: View {
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                .offset(x: -8)
                             
                             Text(formatTime(totalDuration))
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .trailing)
+                                .offset(x: 8)
                         }
                         .frame(width: 300)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         
-                        // Small triangle pointing down
+                        // Small triangle pointing up
                         Triangle()
                             .fill(Color(NSColor.windowBackgroundColor))
                             .frame(width: 8, height: 4)
-                            .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)
+                            .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: -1)
+                            .rotationEffect(.degrees(180))
                     }
-                    .offset(y: -15)
+                    .offset(y: 15)
                 }
             }
         )
