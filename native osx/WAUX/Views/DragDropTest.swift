@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 // Test file to verify drag-and-drop functionality
 struct DragDropTest: View {
     @StateObject private var playlistService = PlaylistService()
-    @State private var selectedPlaylist: Playlist?
+    @State private var selectedItem: SelectableItem?
     
     var body: some View {
         VStack {
@@ -18,7 +18,7 @@ struct DragDropTest: View {
             // Test the PlaylistSidebar with drag-and-drop
             PlaylistSidebar(
                 playlistService: playlistService,
-                selectedPlaylist: $selectedPlaylist
+                selectedItem: $selectedItem
             )
             .frame(width: 300, height: 400)
             .border(Color.gray)

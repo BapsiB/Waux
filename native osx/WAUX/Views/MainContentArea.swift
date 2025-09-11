@@ -7,7 +7,7 @@ struct MainContentArea: View {
     let playlistTracks: [Track]
     let isLoadingPlaylistTracks: Bool
     @Binding var showingFolderPicker: Bool
-    @Binding var selectedPlaylist: Playlist?
+    @Binding var selectedItem: SelectableItem?
     @Binding var isImportingNewFolder: Bool
     let initialLoadComplete: Bool
     @StateObject private var searchService = SearchService()
@@ -29,12 +29,12 @@ struct MainContentArea: View {
             if collectionService.isLoading {
                 ProgressView("Loading collection...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let playlist = selectedPlaylist {
+            } else if let item = selectedItem {
                 // Show playlist tracks
                 VStack(spacing: 0) {
                     // Header with title, audio player, and search
-                    headerView(title: playlist.name, showCloseButton: true) {
-                        selectedPlaylist = nil
+                    headerView(title: item.name, showCloseButton: true) {
+                        selectedItem = nil
                     }
                     
                     if isLoadingPlaylistTracks {

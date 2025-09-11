@@ -171,17 +171,32 @@ class PlaylistService: ObservableObject {
             throw PlaylistError.noActiveCollection
         }
         
-        return try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                Task {
-                    do {
-                        let result = try await operation()
-                        continuation.resume(returning: result)
-                    } catch {
-                        continuation.resume(throwing: error)
-                    }
+        print("🔍 withDatabaseQueue called on thread: \(Thread.current), queue: \(queue)")
+        
+        // Use a semaphore to ensure true serialization
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<T, Error>?
+        
+        queue.async {
+            print("🔍 Database queue async block executing on thread: \(Thread.current)")
+            Task {
+                do {
+                    let operationResult = try await operation()
+                    result = .success(operationResult)
+                } catch {
+                    result = .failure(error)
                 }
+                semaphore.signal()
             }
+        }
+        
+        semaphore.wait()
+        
+        switch result! {
+        case .success(let value):
+            return value
+        case .failure(let error):
+            throw error
         }
     }
     
@@ -190,6 +205,7 @@ class PlaylistService: ObservableObject {
         guard let db = database else {
             throw PlaylistError.noActiveCollection
         }
+        print("🔍 getDatabaseConnection called on thread: \(Thread.current), db: \(db)")
         return db
     }
     
@@ -1488,6 +1504,132 @@ class PlaylistService: ObservableObject {
         // Calculate depth of the new parent and add 1
         let parentDepth = try await self.calculateFolderDepth(folderId: parentId)
         return parentDepth + 1
+    }
+    
+    // MARK: - Folder as Playlist Support
+    
+    /// Get all track paths from all playlists within a folder (recursively)
+    func getFolderTrackPaths(folderId: String) async throws -> [String] {
+        print("🔍 getFolderTrackPaths called for folder: \(folderId) on thread: \(Thread.current)")
+        
+        guard let queue = databaseQueue else {
+            throw PlaylistError.noActiveCollection
+        }
+        
+        // Use a semaphore to ensure true serialization
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<[String], Error>?
+        
+        queue.async {
+            print("🔍 Database queue async block executing on thread: \(Thread.current)")
+            do {
+                let trackPaths = try self.getFolderTrackPathsSync(folderId: folderId)
+                result = .success(trackPaths)
+            } catch {
+                result = .failure(error)
+            }
+            semaphore.signal()
+        }
+        
+        semaphore.wait()
+        
+        switch result! {
+        case .success(let value):
+            return value
+        case .failure(let error):
+            throw error
+        }
+    }
+    
+    /// Synchronous helper method to get folder track paths (used within database queue context)
+    private func getFolderTrackPathsSync(folderId: String) throws -> [String] {
+        print("🔍 Inside database queue for folder: \(folderId) on thread: \(Thread.current)")
+        let db = try self.getDatabaseConnection()
+        
+        // Use a single recursive CTE query to get all track paths from the folder and its descendants
+        let query = """
+            WITH RECURSIVE folder_hierarchy AS (
+                -- Base case: start with the specified folder
+                SELECT \(self.columnPlaylistFoldersId) as folder_id
+                FROM \(self.tablePlaylistFolders)
+                WHERE \(self.columnPlaylistFoldersId) = ?
+                
+                UNION ALL
+                
+                -- Recursive case: get all child folders
+                SELECT f.\(self.columnPlaylistFoldersId) as folder_id
+                FROM \(self.tablePlaylistFolders) f
+                INNER JOIN folder_hierarchy fh ON f.\(self.columnPlaylistFoldersParentId) = fh.folder_id
+            )
+            SELECT pt.\(self.columnPlaylistTracksTrackPath)
+            FROM \(self.tablePlaylistTracks) pt
+            JOIN \(self.tablePlaylists) p ON pt.\(self.columnPlaylistTracksPlaylistId) = p.\(self.columnPlaylistsId)
+            JOIN folder_hierarchy fh ON p.\(self.columnPlaylistsFolderId) = fh.folder_id
+            ORDER BY pt.\(self.columnPlaylistTracksSortOrder)
+        """
+        
+        print("🔍 About to prepare statement for folder: \(folderId)")
+        var statement: OpaquePointer?
+        let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+        defer { sqlite3_finalize(statement) }
+        
+        if result != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            print("❌ SQLite prepare failed: \(errorMessage)")
+            throw PlaylistError.queryFailed(message: errorMessage)
+        }
+        
+        print("🔍 Statement prepared successfully for folder: \(folderId)")
+        sqlite3_bind_text(statement, 1, (folderId as NSString).utf8String, -1, nil)
+        
+        var trackPaths: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let trackPathPtr = sqlite3_column_text(statement, 0) {
+                let trackPath = String(cString: trackPathPtr)
+                trackPaths.append(trackPath)
+            }
+        }
+        
+        print("🔍 Found \(trackPaths.count) tracks for folder: \(folderId)")
+        return trackPaths
+    }
+    
+    /// Get the total duration of all tracks in a folder
+    func getFolderDuration(folderId: String) async throws -> TimeInterval {
+        let trackPaths = try await getFolderTrackPaths(folderId: folderId)
+        
+        // We need to get the duration from the collection service
+        guard let collectionService = collectionService else {
+            return 0
+        }
+        
+        var totalDuration: TimeInterval = 0
+        
+        for trackPath in trackPaths {
+            if let track = collectionService.tracks.first(where: { $0.path == trackPath }) {
+                totalDuration += Double(track.duration)
+            }
+        }
+        
+        return totalDuration
+    }
+    
+    /// Get a SelectableItem for a folder with computed track paths and duration
+    func getSelectableItem(for folder: PlaylistFolder) async throws -> SelectableItem {
+        let trackPaths = try await getFolderTrackPaths(folderId: folder.id)
+        let duration = try await getFolderDuration(folderId: folder.id)
+        
+        // Create a temporary folder with computed properties
+        var folderWithTracks = folder
+        // Note: We can't directly modify the trackPaths and duration properties
+        // since they're computed properties. The UI will need to use the service methods.
+        
+        return .folder(folderWithTracks)
+    }
+    
+    /// Get a SelectableItem for a playlist
+    func getSelectableItem(for playlist: Playlist) -> SelectableItem {
+        return .playlist(playlist)
     }
 }
 

@@ -16,7 +16,7 @@ struct ContentView: View {
     @State private var showingFolderPicker = false
     @State private var showingError = false
     @State private var errorMessage = ""
-    @State private var selectedPlaylist: Playlist?
+    @State private var selectedItem: SelectableItem?
     @State private var playlistTracks: [Track] = []
     @State private var isLoadingPlaylistTracks = false
     @State private var hasAttemptedAutoLoad = false
@@ -35,7 +35,7 @@ struct ContentView: View {
                     // Sidebar
                     PlaylistSidebar(
                         playlistService: playlistService,
-                        selectedPlaylist: $selectedPlaylist
+                        selectedItem: $selectedItem
                     )
                     
                     // Main area
@@ -46,7 +46,7 @@ struct ContentView: View {
                         playlistTracks: playlistTracks,
                         isLoadingPlaylistTracks: isLoadingPlaylistTracks,
                         showingFolderPicker: $showingFolderPicker,
-                        selectedPlaylist: $selectedPlaylist,
+                        selectedItem: $selectedItem,
                         isImportingNewFolder: $isImportingNewFolder,
                         initialLoadComplete: initialLoadComplete
                     )
@@ -79,14 +79,8 @@ struct ContentView: View {
         } message: {
             Text(errorMessage)
         }
-        .onChange(of: selectedPlaylist) { _, newPlaylist in
-            if let playlist = newPlaylist {
-                Task {
-                    await loadPlaylistTracks(playlist)
-                }
-            } else {
-                playlistTracks = []
-            }
+        .onChange(of: selectedItem) { _, newItem in
+            handleSelectedItemChange(newItem)
         }
         .onChange(of: menuActionState.shouldOpenFolder) { _, shouldOpen in
             if shouldOpen {
@@ -123,12 +117,12 @@ struct ContentView: View {
             let newTrackIds = Set(newTracks.compactMap(\.id))
             let tracksAddedOrRemoved = oldTrackIds != newTrackIds
             
-            if tracksAddedOrRemoved, let playlist = selectedPlaylist {
-                print("[ContentView] track structure changed, reloading playlist tracks for \(playlist.name)")
-                Task { await loadPlaylistTracks(playlist) }
-            } else if let playlist = selectedPlaylist {
+            if tracksAddedOrRemoved, let item = selectedItem {
+                print("[ContentView] track structure changed, reloading playlist tracks for \(item.name)")
+                Task { await loadPlaylistTracks(for: item) }
+            } else if let item = selectedItem {
                 // For metadata-only changes, update playlist tracks in place
-                print("[ContentView] metadata changed, updating playlist tracks in place for \(playlist.name)")
+                print("[ContentView] metadata changed, updating playlist tracks in place for \(item.name)")
                 Task { @MainActor in
                     // Update existing playlist tracks with new metadata
                     playlistTracks = playlistTracks.compactMap { playlistTrack in
@@ -196,20 +190,42 @@ struct ContentView: View {
         print("No last folder to load or failed to load last folder")
     }
     
-    private func loadPlaylistTracks(_ playlist: Playlist) async {
+    private func handleSelectedItemChange(_ newItem: SelectableItem?) {
+        if let item = newItem {
+            Task {
+                await loadPlaylistTracks(for: item)
+            }
+        } else {
+            playlistTracks = []
+        }
+    }
+    
+    private func loadPlaylistTracks(for item: SelectableItem) async {
         await MainActor.run {
             isLoadingPlaylistTracks = true
         }
         
         do {
-            print("Loading playlist: \(playlist.name)")
-            print("Playlist has \(playlist.trackPaths.count) track paths")
+            let trackPaths: [String]
+            let itemName: String
+            
+            switch item {
+            case .playlist(let playlist):
+                trackPaths = playlist.trackPaths
+                itemName = playlist.name
+            case .folder(let folder):
+                trackPaths = try await playlistService.getFolderTrackPaths(folderId: folder.id)
+                itemName = folder.name
+            }
+            
+            print("Loading \(item.isFolder ? "folder" : "playlist"): \(itemName)")
+            print("Item has \(trackPaths.count) track paths")
             print("Collection has \(collectionService.tracks.count) tracks")
             
-            // Debug: Print first few playlist track paths
-            if !playlist.trackPaths.isEmpty {
-                print("First 3 playlist track paths:")
-                for (index, path) in playlist.trackPaths.prefix(3).enumerated() {
+            // Debug: Print first few track paths
+            if !trackPaths.isEmpty {
+                print("First 3 track paths:")
+                for (index, path) in trackPaths.prefix(3).enumerated() {
                     print("  \(index): \(path)")
                 }
             }
@@ -222,10 +238,10 @@ struct ContentView: View {
                 }
             }
             
-            // Get tracks that match the playlist track paths
+            // Get tracks that match the track paths
             // Try exact match first
             var tracks = collectionService.tracks.filter { track in
-                playlist.trackPaths.contains(track.path)
+                trackPaths.contains(track.path)
             }
             
             print("Found \(tracks.count) exact matching tracks")
@@ -233,7 +249,7 @@ struct ContentView: View {
             // If no exact matches, try filename matching
             if tracks.isEmpty {
                 tracks = collectionService.tracks.filter { track in
-                    playlist.trackPaths.contains { playlistPath in
+                    trackPaths.contains { playlistPath in
                         let trackFilename = URL(fileURLWithPath: track.path).lastPathComponent
                         let playlistFilename = URL(fileURLWithPath: playlistPath).lastPathComponent
                         return trackFilename == playlistFilename
@@ -245,7 +261,7 @@ struct ContentView: View {
             // If still no matches, try normalized path matching
             if tracks.isEmpty {
                 tracks = collectionService.tracks.filter { track in
-                    playlist.trackPaths.contains { playlistPath in
+                    trackPaths.contains { playlistPath in
                         let normalizedTrackPath = URL(fileURLWithPath: track.path).standardized.path
                         let normalizedPlaylistPath = URL(fileURLWithPath: playlistPath).standardized.path
                         return normalizedTrackPath == normalizedPlaylistPath
@@ -254,8 +270,8 @@ struct ContentView: View {
                 print("Found \(tracks.count) normalized matching tracks")
             }
             
-            // Sort tracks according to playlist order
-            let sortedTracks = playlist.trackPaths.compactMap { trackPath in
+            // Sort tracks according to track order
+            let sortedTracks = trackPaths.compactMap { trackPath in
                 tracks.first { track in
                     track.path == trackPath || 
                     URL(fileURLWithPath: track.path).standardized.path == URL(fileURLWithPath: trackPath).standardized.path ||

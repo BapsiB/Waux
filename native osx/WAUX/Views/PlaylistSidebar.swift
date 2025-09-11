@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct PlaylistSidebar: View {
     @ObservedObject var playlistService: PlaylistService
-    @Binding var selectedPlaylist: Playlist?
+    @Binding var selectedItem: SelectableItem?
     @State private var showingCreatePlaylistSheet = false
     @State private var showingCreateFolderSheet = false
     @State private var showingRenameSheet = false
@@ -112,7 +112,7 @@ struct PlaylistSidebar: View {
                     ForEach(hierarchicalItems, id: \.id) { item in
                         HierarchicalItemView(
                             item: item,
-                            selectedPlaylist: $selectedPlaylist,
+                            selectedItem: $selectedItem,
                             playlistService: playlistService,
                             onPlaylistRename: { playlist in
                                 playlistToRename = playlist
@@ -377,7 +377,7 @@ struct PlaylistSidebar: View {
                 let newPlaylist = try await playlistService.duplicatePlaylist(playlistId: playlist.id, newName: trimmedName)
                 // Optionally select the new playlist
                 await MainActor.run {
-                    selectedPlaylist = newPlaylist
+                    selectedItem = .playlist(newPlaylist)
                 }
             } catch {
                 await MainActor.run {
@@ -394,8 +394,8 @@ struct PlaylistSidebar: View {
                 try await playlistService.deletePlaylist(playlistId: playlist.id)
                 // If the deleted playlist was selected, clear the selection
                 await MainActor.run {
-                    if selectedPlaylist?.id == playlist.id {
-                        selectedPlaylist = nil
+                    if case .playlist(let selectedPlaylist) = selectedItem, selectedPlaylist.id == playlist.id {
+                        selectedItem = nil
                     }
                 }
             } catch {
@@ -860,7 +860,7 @@ struct HierarchicalItem: Identifiable {
 
 struct HierarchicalItemView: View {
     let item: HierarchicalItem
-    @Binding var selectedPlaylist: Playlist?
+    @Binding var selectedItem: SelectableItem?
     @ObservedObject var playlistService: PlaylistService
     let onPlaylistRename: (Playlist) -> Void
     let onPlaylistDuplicate: (Playlist) -> Void
@@ -891,6 +891,13 @@ struct HierarchicalItemView: View {
                 FolderItemView(
                     folder: folder,
                     playlistService: playlistService,
+                    isSelected: {
+                        if case .folder(let selectedFolder) = selectedItem {
+                            return selectedFolder.id == folder.id
+                        }
+                        return false
+                    }(),
+                    onSelect: { selectedItem = .folder(folder) },
                     onRename: { onFolderRename(folder) },
                     onDelete: { onFolderDelete(folder) },
                     onCreateSubfolder: { onCreateSubfolder(folder) },
@@ -905,8 +912,13 @@ struct HierarchicalItemView: View {
             case .playlist(let playlist):
                 PlaylistItemView(
                     playlist: playlist,
-                    isSelected: selectedPlaylist?.id == playlist.id,
-                    onSelect: { selectedPlaylist = playlist },
+                    isSelected: {
+                        if case .playlist(let selectedPlaylist) = selectedItem {
+                            return selectedPlaylist.id == playlist.id
+                        }
+                        return false
+                    }(),
+                    onSelect: { selectedItem = .playlist(playlist) },
                     onRename: { onPlaylistRename(playlist) },
                     onDuplicate: { onPlaylistDuplicate(playlist) },
                     onExport: { onPlaylistExport(playlist) },
@@ -926,16 +938,21 @@ struct HierarchicalItemView: View {
             {
                 switch item.type {
                 case .playlist(let playlist):
-                    if selectedPlaylist?.id == playlist.id {
+                    if case .playlist(let selectedPlaylist) = selectedItem, selectedPlaylist.id == playlist.id {
                         return RoundedRectangle(cornerRadius: 6)
-                            .fill(AppStyle.secondaryColor.opacity(0.2))
+                            .fill(AppStyle.mainColor.opacity(0.2))
                     } else {
                         return RoundedRectangle(cornerRadius: 6)
                             .fill(Color.clear)
                     }
-                case .folder:
-                    return RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.clear)
+                case .folder(let folder):
+                    if case .folder(let selectedFolder) = selectedItem, selectedFolder.id == folder.id {
+                        return RoundedRectangle(cornerRadius: 6)
+                            .fill(AppStyle.mainColor.opacity(0.2))
+                    } else {
+                        return RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.clear)
+                    }
                 }
             }()
         )
@@ -1023,6 +1040,8 @@ struct HierarchicalItemView: View {
 struct FolderItemView: View {
     let folder: PlaylistFolder
     @ObservedObject var playlistService: PlaylistService
+    let isSelected: Bool
+    let onSelect: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
     let onCreateSubfolder: () -> Void
@@ -1044,6 +1063,9 @@ struct FolderItemView: View {
         let childPlaylists = playlistService.playlists.filter { $0.folderId == folder.id }
         return (childFolders.count, childPlaylists.count)
     }
+    
+    @State private var folderTrackCount: Int = 0
+    @State private var folderDuration: TimeInterval = 0
     
     var body: some View {
         HStack(spacing: 8) {
@@ -1078,21 +1100,7 @@ struct FolderItemView: View {
                     .foregroundColor(.primary)
                     .lineLimit(1)
                 
-                if hasChildren {
-                    let counts = childCount
-                    HStack {
-                        if counts.folders > 0 {
-                            if counts.playlists > 0 {
-                                Text("•")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Text("\(counts.folders) folder\(counts.folders == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
+
             }
             
             Spacer()
@@ -1109,6 +1117,9 @@ struct FolderItemView: View {
             : nil
         )
         .contentShape(Rectangle())
+        .onTapGesture {
+            onSelect()
+        }
         .contextMenu {
             Button("Create Playlist") {
                 onCreatePlaylist()
@@ -1128,10 +1139,41 @@ struct FolderItemView: View {
                 onDelete()
             }
         }
+        .onAppear {
+            loadFolderInfo()
+        }
+        .onChange(of: playlistService.playlists) { _ in
+            loadFolderInfo()
+        }
+        .onChange(of: playlistService.folders) { _ in
+            loadFolderInfo()
+        }
     }
     
     private func toggleExpansion() {
         playlistService.folderExpandedStates[folder.id] = !isExpanded
+    }
+    
+    private func loadFolderInfo() {
+        Task {
+            do {
+                let trackPaths = try await playlistService.getFolderTrackPaths(folderId: folder.id)
+                let duration = try await playlistService.getFolderDuration(folderId: folder.id)
+                
+                await MainActor.run {
+                    self.folderTrackCount = trackPaths.count
+                    self.folderDuration = duration
+                }
+            } catch {
+                print("Error loading folder info: \(error)")
+            }
+        }
+    }
+    
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 
