@@ -22,6 +22,9 @@ struct ContentView: View {
     @State private var hasAttemptedAutoLoad = false
     @State private var isImportingNewFolder = false
     @State private var initialLoadComplete = false
+    @State private var hasRunInitialScan = false
+    @State private var showFileChangesSheet = false
+    @State private var fileChangesData: FileChangesData? = nil
     @EnvironmentObject private var menuActionState: MenuActionState
     
     var body: some View {
@@ -146,6 +149,33 @@ struct ContentView: View {
                 }
             }
         }
+        .sheet(item: $fileChangesData) { data in
+            FileChangesSheet(
+                newFiles: data.newFiles,
+                deletedTracks: data.deletedTracks,
+                movedUpdates: data.movedUpdates,
+                onDismiss: {
+                    fileChangesData = nil
+                },
+                onApply: { adds, deletes, moves in
+                    Task {
+                        do {
+                            try await collectionService.applyFilesystemChanges(
+                                newFiles: adds,
+                                deletedTrackIds: deletes,
+                                movedUpdates: moves
+                            )
+                        } catch {
+                            await MainActor.run {
+                                // Show error alert to user
+                                errorMessage = "Failed to apply filesystem changes: \(error.localizedDescription)"
+                                showingError = true
+                            }
+                        }
+                    }
+                }
+            )
+        }
     }
     
     private func attemptLoadLastFolder() async {
@@ -250,9 +280,10 @@ struct ContentView: View {
     }
     
     private func openFolder(url: URL) async {
-        // Reset initial load complete flag for new folder
+        // Reset initial load complete flag and scan flag for new folder
         await MainActor.run {
             initialLoadComplete = false
+            hasRunInitialScan = false
         }
         
         do {
@@ -343,6 +374,9 @@ struct ContentView: View {
                 initialLoadComplete = true
             }
             
+            // Scan for file changes once at startup
+            await scanForFileChanges()
+            
             // Trigger waveform processing for newly added tracks (if any)
             if !collectionService.pendingWaveformTrackIds.isEmpty {
                 print("[OpenFolder] Queuing waveform processing for \(collectionService.pendingWaveformTrackIds.count) tracks")
@@ -364,6 +398,38 @@ struct ContentView: View {
                 showingError = true
             }
             print("Error opening folder: \(error)")
+        }
+    }
+    
+    private func scanForFileChanges() async {
+        // Skip scan if we're currently importing a new folder or have already run the scan
+        if isImportingNewFolder || hasRunInitialScan {
+            print("🔍 [ContentView] Skipping scan - importing: \(isImportingNewFolder), already scanned: \(hasRunInitialScan)")
+            return
+        }
+        
+        do {
+            print("🔍 [ContentView] Starting filesystem scan at startup...")
+            hasRunInitialScan = true
+            let changes = try await collectionService.scanFilesystemChanges()
+            print("🔍 [ContentView] Scan completed - new: \(changes.newFiles.count), deleted: \(changes.deletedTracks.count), moved: \(changes.movedUpdates.count)")
+            
+            if !changes.newFiles.isEmpty || !changes.deletedTracks.isEmpty || !changes.movedUpdates.isEmpty {
+                print("🔍 [ContentView] Changes detected, showing sheet...")
+                print("🔍 [ContentView] New files: \(changes.newFiles.count), Deleted: \(changes.deletedTracks.count), Moved: \(changes.movedUpdates.count)")
+                
+                await MainActor.run {
+                    fileChangesData = FileChangesData(
+                        newFiles: changes.newFiles,
+                        deletedTracks: changes.deletedTracks,
+                        movedUpdates: changes.movedUpdates
+                    )
+                }
+            } else {
+                print("🔍 [ContentView] No changes detected")
+            }
+        } catch {
+            print("🔍 [ContentView] Scan failed: \(error)")
         }
     }
     
@@ -398,6 +464,186 @@ struct ContentView: View {
                 showingError = true
             }
         }
+    }
+}
+
+// MARK: - File Changes Data
+struct FileChangesData: Identifiable {
+    let id = UUID()
+    let newFiles: [String]
+    let deletedTracks: [Track]
+    let movedUpdates: [CollectionService.MovedFileUpdate]
+}
+
+// MARK: - File Changes Sheet
+struct FileChangesSheet: View {
+    let newFiles: [String]
+    let deletedTracks: [Track]
+    let movedUpdates: [CollectionService.MovedFileUpdate]
+    var onDismiss: () -> Void
+    var onApply: (_ adds: [String], _ deletes: [Int], _ moves: [CollectionService.MovedFileUpdate]) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header
+            HStack {
+                Image(systemName: "info.circle.fill")
+                    .foregroundColor(.blue)
+                    .font(.title2)
+                Text("Library Changes Detected")
+                    .font(.title2)
+                    .bold()
+            }
+            
+            Text("The following changes have been detected in your music library:")
+                .foregroundColor(.secondary)
+            
+            // Summary
+            VStack(alignment: .leading, spacing: 8) {
+                if !newFiles.isEmpty {
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundColor(.green)
+                        Text("\(newFiles.count) new file\(newFiles.count == 1 ? "" : "s") added to library")
+                            .fontWeight(.medium)
+                    }
+                }
+                
+                if !deletedTracks.isEmpty {
+                    HStack {
+                        Image(systemName: "minus.circle.fill")
+                            .foregroundColor(.red)
+                        Text("\(deletedTracks.count) file\(deletedTracks.count == 1 ? "" : "s") removed from library")
+                            .fontWeight(.medium)
+                    }
+                }
+                
+                if !movedUpdates.isEmpty {
+                    HStack {
+                        Image(systemName: "arrow.right.arrow.left.circle.fill")
+                            .foregroundColor(.blue)
+                        Text("\(movedUpdates.count) file\(movedUpdates.count == 1 ? "" : "s") moved/renamed")
+                            .fontWeight(.medium)
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+            
+            // Details section
+            if !newFiles.isEmpty || !deletedTracks.isEmpty || !movedUpdates.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Details:")
+                        .font(.headline)
+                    
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            // New files
+                            if !newFiles.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("New Files:")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.green)
+                                    
+                                    ForEach(newFiles.prefix(10), id: \.self) { path in
+                                        HStack {
+                                            Image(systemName: "plus.circle")
+                                                .foregroundColor(.green)
+                                                .font(.caption)
+                                            Text(URL(fileURLWithPath: path).lastPathComponent)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    
+                                    if newFiles.count > 10 {
+                                        Text("... and \(newFiles.count - 10) more")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .italic()
+                                    }
+                                }
+                            }
+                            
+                            // Deleted files
+                            if !deletedTracks.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Removed Files:")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.red)
+                                    
+                                    ForEach(deletedTracks.prefix(10), id: \.id) { track in
+                                        HStack {
+                                            Image(systemName: "minus.circle")
+                                                .foregroundColor(.red)
+                                                .font(.caption)
+                                            Text(track.displayTitle)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    
+                                    if deletedTracks.count > 10 {
+                                        Text("... and \(deletedTracks.count - 10) more")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .italic()
+                                    }
+                                }
+                            }
+                            
+                            // Moved files
+                            if !movedUpdates.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Moved Files:")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.blue)
+                                    
+                                    ForEach(movedUpdates.prefix(10), id: \.id) { upd in
+                                        HStack {
+                                            Image(systemName: "arrow.right.arrow.left")
+                                                .foregroundColor(.blue)
+                                                .font(.caption)
+                                            Text(upd.trackTitle)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    
+                                    if movedUpdates.count > 10 {
+                                        Text("... and \(movedUpdates.count - 10) more")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .italic()
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 200)
+                }
+            }
+            
+            Spacer()
+            
+            // Action button
+            HStack {
+                Spacer()
+                Button("OK") {
+                    // Apply all changes when OK is clicked
+                    let deletedIds = deletedTracks.compactMap { $0.id }
+                    onApply(newFiles, deletedIds, movedUpdates)
+                    onDismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(minWidth: 500, minHeight: 300)
     }
 }
 
