@@ -163,11 +163,17 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
     var timeMarkersCount: Int { timeMarkers.count }
     var waveformPointCount: Int { waveformData?.count ?? 0 }
     var generalTagsText: String { generalTags.joined(separator: ", ") }
-    var formattedDateAdded: String {
+    
+    // Static formatter for better performance - created once and reused
+    private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        return formatter.string(from: dateAdded)
+        return formatter
+    }()
+    
+    var formattedDateAdded: String {
+        return Track.dateFormatter.string(from: dateAdded)
     }
     
     // MARK: - Comparable
