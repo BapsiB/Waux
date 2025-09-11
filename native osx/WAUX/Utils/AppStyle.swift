@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AppStyle {
-    static let mainColor = Color(hex: 0xDF9075)
+    static let mainColor = Color(hex: 0xDF8363)
     static let secondaryColor = Color(hex: 0xE0BCB7)
     
     // You can add more style constants here as needed

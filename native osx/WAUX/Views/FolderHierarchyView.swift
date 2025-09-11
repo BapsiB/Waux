@@ -254,7 +254,7 @@ struct FolderHeaderView: View {
             
             // Folder icon
             Image(systemName: "folder")
-                .foregroundColor(AppStyle.secondaryColor.opacity(0.8))
+                .foregroundColor(AppStyle.mainColor)
                 .font(.system(size: 14))
                 .padding(.leading, -10) // Move 10px to the left
             

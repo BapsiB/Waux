@@ -884,7 +884,6 @@ struct HierarchicalItemView: View {
             if item.depth > 0 {
                 Spacer()
                     .frame(width: indentationWidth)
-                    .background(Color.red.opacity(0.5)) // DEBUG: Red for indentation
             }
             
             switch item.type {
@@ -929,7 +928,7 @@ struct HierarchicalItemView: View {
                 case .playlist(let playlist):
                     if selectedPlaylist?.id == playlist.id {
                         return RoundedRectangle(cornerRadius: 6)
-                            .fill(AppStyle.secondaryColor.opacity(0.1))
+                            .fill(AppStyle.secondaryColor.opacity(0.2))
                     } else {
                         return RoundedRectangle(cornerRadius: 6)
                             .fill(Color.clear)
@@ -1048,35 +1047,40 @@ struct FolderItemView: View {
     
     var body: some View {
         HStack(spacing: 8) {
-            // Expansion chevron
+            // Expansion chevron with larger clickable area
             if hasChildren {
                 Button(action: toggleExpansion) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.caption)
                         .foregroundColor(.secondary)
-                        .frame(width: 12, height: 12)
+                        .frame(width: 16, height: 16)
+                        .padding(.vertical, 2) // Add 2px vertical padding for minimal height increase
+                        .contentShape(Rectangle()) // Ensure the entire padded area is clickable
                 }
                 .buttonStyle(PlainButtonStyle())
             } else {
-                Spacer()
-                    .frame(width: 12, height: 8)
+                // Spacer for alignment when no children
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(width: 16, height: 36) // Match the size of the button with padding
             }
             
             // Folder icon
-            Image(systemName: "folder.fill")
+            Image(systemName: "folder")
+                .foregroundColor(AppStyle.mainColor)
                 .font(.system(size: 14))
-                .foregroundColor(.blue)
+                .padding(.leading, -5) // Move 10px to the left
             
             // Folder name and info
             VStack(alignment: .leading, spacing: 2) {
                 Text(folder.name)
-                    .font(.headline)
+                    .font(.system(size: 14))
+                    .foregroundColor(.primary)
                     .lineLimit(1)
                 
                 if hasChildren {
                     let counts = childCount
                     HStack {
-                        
                         if counts.folders > 0 {
                             if counts.playlists > 0 {
                                 Text("•")
@@ -1090,8 +1094,10 @@ struct FolderItemView: View {
                     }
                 }
             }
+            
+            Spacer()
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 0)
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(draggedOver ? Color.blue.opacity(0.5) : Color.clear)
@@ -1145,7 +1151,7 @@ struct PlaylistItemView: View {
             // Playlist icon
             Image(systemName: "music.note.list")
                 .font(.system(size: 14))
-                .foregroundColor(.orange)
+                .foregroundColor(AppStyle.mainColor)
             
             // Playlist info
             VStack(alignment: .leading, spacing: 0) {
@@ -1176,7 +1182,7 @@ struct PlaylistItemView: View {
             draggedOver ? Color.green.opacity(0.2) : Color.clear
         )
         .overlay(
-            draggedOver ? 
+            draggedOver ?
             RoundedRectangle(cornerRadius: 4)
                 .stroke(Color.green, lineWidth: 2)
                 .animation(.easeInOut(duration: 0.2), value: draggedOver)
