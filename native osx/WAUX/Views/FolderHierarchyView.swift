@@ -44,7 +44,7 @@ struct FolderHierarchyView: View {
                             ),
                             onDoubleClick: { track in
                                 Task {
-                                    await audioService.loadTrack(track)
+                                    _ = await audioService.loadTrack(track)
                                     audioService.play()
                                 }
                             }
@@ -85,7 +85,7 @@ struct FolderHierarchyView: View {
                     if let selectedTrack = selectedTracks.first,
                        let track = collectionService.tracks.first(where: { $0.id == selectedTrack }) {
                         Task {
-                            await audioService.loadTrack(track)
+                            _ = await audioService.loadTrack(track)
                             audioService.play()
                         }
                     }
@@ -664,7 +664,7 @@ class ContextMenuCoordinator: NSObject {
     
     @objc func playTrack() {
         Task {
-            await audioService.loadTrack(track)
+            _ = await audioService.loadTrack(track)
             audioService.play()
         }
     }

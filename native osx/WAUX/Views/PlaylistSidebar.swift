@@ -155,7 +155,7 @@ struct PlaylistSidebar: View {
                         )
                     }
                 }
-                .listStyle(SidebarListStyle())
+                .listStyle(PlainListStyle())
                 .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
                     handleRootLevelDrop(providers: providers)
                 }
@@ -1257,7 +1257,7 @@ struct PlaylistItemView: View {
                 onDelete()
             }
         }
-        .offset(x:20)
+        .offset(x:18)
     }
 }
 
