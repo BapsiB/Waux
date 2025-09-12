@@ -173,6 +173,13 @@ class TrackMetadataManager: ObservableObject {
     private func handleTracksUpdate(_ newTracks: [Track]) {
         print("[TrackMetadataManager] Received tracks update: \(newTracks.count) tracks")
         
+        // Check if tracks actually changed to prevent unnecessary UI updates
+        let tracksChanged = tracks != newTracks
+        if !tracksChanged {
+            print("[TrackMetadataManager] Tracks unchanged, skipping UI update")
+            return
+        }
+        
         // Update base tracks
         tracks = newTracks
         
@@ -181,7 +188,7 @@ class TrackMetadataManager: ObservableObject {
         let updatedTrackIds = Set(newTracks.compactMap { $0.id })
         optimisticChanges = optimisticChanges.filter { !updatedTrackIds.contains($0.key) }
         
-        // Trigger UI update
+        // Trigger UI update only if tracks actually changed
         objectWillChange.send()
     }
     

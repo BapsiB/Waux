@@ -902,9 +902,9 @@ private struct TableWidthObserver: NSViewRepresentable {
         func setupObserver(for tableView: NSTableView) {
             self.tableView = tableView
             
-            // Start a timer to periodically check column widths
+            // Start a timer to periodically check column widths - reduced frequency for better performance
             timer?.invalidate()
-            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
                 self?.checkColumnWidths()
             }
         }

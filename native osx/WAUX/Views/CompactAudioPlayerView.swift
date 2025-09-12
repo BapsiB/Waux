@@ -167,6 +167,7 @@ struct CompactAudioPlayerView: View {
 struct CustomVolumeSlider: View {
     @Binding var value: Double
     @State private var isDragging = false
+    @State private var isHovered = false
     
     var body: some View {
         GeometryReader { geometry in
@@ -185,10 +186,16 @@ struct CustomVolumeSlider: View {
                 Circle()
                     .fill(AppStyle.mainColor)
                     .frame(width: 12, height: 12)
+                    .scaleEffect(isHovered ? 1.2 : 1.0)
+                    .animation(.easeInOut(duration: 0.2), value: isHovered)
                     .position(
-                        x: 6 + (geometry.size.width - 12) * CGFloat(value),
+                        x: 8 + (geometry.size.width - 16) * CGFloat(value),
                         y: geometry.size.height / 2
                     )
+                    .animation(.easeInOut(duration: 0.2))
+                    .onHover { hovering in
+                        isHovered = hovering
+                    }
                     .gesture(
                         DragGesture()
                             .onChanged { gesture in

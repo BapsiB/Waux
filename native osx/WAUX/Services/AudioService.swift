@@ -16,6 +16,11 @@ class AudioService: NSObject, ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let preferenceService = PreferenceService.shared
     
+    // Timer optimization
+    private var isIdle = true
+    private let idleUpdateInterval: TimeInterval = 1.0  // 1 second when idle
+    private let activeUpdateInterval: TimeInterval = 0.1 // 0.1 seconds when playing
+    
     // Callbacks to get the next/previous track for auto-play and manual navigation
     var getNextTrack: (() -> Track?)?
     var getPreviousTrack: (() -> Track?)?
@@ -46,15 +51,33 @@ class AudioService: NSObject, ObservableObject {
     }
     
     private func setupTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        updateTimerInterval()
+    }
+    
+    private func updateTimerInterval() {
+        timer?.invalidate()
+        
+        let interval = isIdle ? idleUpdateInterval : activeUpdateInterval
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.updateProgress()
         }
     }
     
     private func updateProgress() {
         guard let player = audioPlayer else { return }
-        currentTime = player.currentTime
-        duration = player.duration
+        
+        let newCurrentTime = player.currentTime
+        let newDuration = player.duration
+        
+        // Only update @Published properties if values actually changed
+        // This prevents unnecessary SwiftUI view updates
+        if abs(newCurrentTime - currentTime) > 0.01 { // 10ms threshold
+            currentTime = newCurrentTime
+        }
+        
+        if abs(newDuration - duration) > 0.01 { // 10ms threshold
+            duration = newDuration
+        }
     }
     
     private func loadVolumeFromPreferences() {
@@ -110,7 +133,9 @@ class AudioService: NSObject, ObservableObject {
                 duration = track.isUrl ? audioPlayer?.duration ?? 0 : TimeInterval(track.duration / 1000)
                 currentTime = 0
                 isPlaying = false
+                isIdle = true
                 isLoading = false
+                updateTimerInterval()
             }
             
         } catch {
@@ -137,12 +162,16 @@ class AudioService: NSObject, ObservableObject {
         guard let player = audioPlayer else { return }
         player.play()
         isPlaying = true
+        isIdle = false
+        updateTimerInterval()
     }
     
     func pause() {
         guard let player = audioPlayer else { return }
         player.pause()
         isPlaying = false
+        isIdle = true
+        updateTimerInterval()
     }
     
     func stop() {
@@ -151,7 +180,9 @@ class AudioService: NSObject, ObservableObject {
         player.stop()
         player.currentTime = 0
         isPlaying = false
+        isIdle = true
         currentTime = 0
+        updateTimerInterval()
     }
     
     func seek(to timeS: TimeInterval) {
@@ -258,7 +289,9 @@ extension AudioService: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         DispatchQueue.main.async {
             self.isPlaying = false
+            self.isIdle = true
             self.currentTime = 0
+            self.updateTimerInterval()
             print("audioPlayerDidFinishPlaying")
             
             // Auto-play next track if available
@@ -272,6 +305,8 @@ extension AudioService: AVAudioPlayerDelegate {
         print("Audio player decode error: \(error?.localizedDescription ?? "Unknown error")")
         DispatchQueue.main.async {
             self.isPlaying = false
+            self.isIdle = true
+            self.updateTimerInterval()
             self.errorMessage = error?.localizedDescription ?? "Unknown error"
         }
     }
