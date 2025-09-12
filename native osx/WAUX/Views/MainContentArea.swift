@@ -158,49 +158,53 @@ struct MainContentArea: View {
     
     @ViewBuilder
     private func headerView(title: String, showCloseButton: Bool = false, showViewToggle: Bool = false, onClose: (() -> Void)? = nil) -> some View {
-        HStack(spacing: 16) {
-            // Title
-            Text(title)
-                .font(.title2)
-                .fontWeight(.bold)
-            
-            // View toggle button (only show for "All Tracks")
-            if showViewToggle {
-                Menu {
-                    Button(action: {
-                        showFolderView = false
-                    }) {
-                        HStack {
-                            Image(systemName: "list.bullet")
-                            Text("List")
+        HStack(alignment: .center, spacing: 16) {
+            // Title and menu section aligned with play buttons
+            HStack(spacing: 16) {
+                // Title
+                Text(title)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                // View toggle button (only show for "All Tracks")
+                if showViewToggle {
+                    Menu {
+                        Button(action: {
+                            showFolderView = false
+                        }) {
+                            HStack {
+                                Image(systemName: "list.bullet")
+                                Text("List")
+                            }
                         }
-                    }
-                    
-                    Button(action: {
-                        showFolderView = true
-                    }) {
-                        HStack {
-                            Image(systemName: "folder")
-                            Text("Folders")
+                        
+                        Button(action: {
+                            showFolderView = true
+                        }) {
+                            HStack {
+                                Image(systemName: "folder")
+                                Text("Folders")
+                            }
                         }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Image(systemName: showFolderView ? "folder" : "list.bullet")
+                                .font(.system(size: 16))
+                                .frame(minWidth: 30)
+                                .contentShape(Rectangle())
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .frame(minHeight: 30)
+                                .contentShape(Rectangle())
+                        }
+                        .offset(x: -5)
                     }
-                } label: {
-                    HStack(spacing: 2) {
-                        Image(systemName: showFolderView ? "folder" : "list.bullet")
-                            .font(.system(size: 16))
-                            .frame(minWidth: 30)
-                            .contentShape(Rectangle())
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .frame(minHeight: 30)
-                            .contentShape(Rectangle())
-                    }
-                    .offset(x: -5)
+                    .buttonStyle(PlainButtonStyle())
+                    .help(showFolderView ? "Switch to list view" : "Switch to folder view")
                 }
-                .buttonStyle(PlainButtonStyle())
-                .help(showFolderView ? "Switch to list view" : "Switch to folder view")
             }
+            .offset(y: -10) // Align with the CompactAudioPlayerView offset
             
             if showCloseButton {
                 Button(action: {
@@ -212,6 +216,7 @@ struct MainContentArea: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help("Close playlist and return to all tracks")
+                .offset(y: -10) // Align with the CompactAudioPlayerView offset
             }
             
             Spacer()
@@ -224,7 +229,7 @@ struct MainContentArea: View {
             Spacer()
             
             // Search bar
-            SearchBarView(searchService: searchService)
+            SearchBarView(searchService: searchService).offset(y: -10)
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
