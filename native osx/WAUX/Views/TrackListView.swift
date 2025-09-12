@@ -433,7 +433,7 @@ struct TrackListView: View {
                     print("Is URL: \(track.isUrl)")
                     print("Duration: \(track.duration) ms")
                     Task {
-                        await audioService.loadTrack(track)
+                        _ = await audioService.loadTrack(track)
                         audioService.play()
                     }
                 },
@@ -677,7 +677,7 @@ struct TrackListView: View {
                     print("Is URL: \(track.isUrl)")
                     print("Duration: \(track.duration) ms")
                     Task {
-                        await audioService.loadTrack(track)
+                        _ = await audioService.loadTrack(track)
                         audioService.play()
                     }
                 }

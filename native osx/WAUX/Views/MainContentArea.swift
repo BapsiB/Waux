@@ -141,7 +141,7 @@ struct MainContentArea: View {
                 
                 let firstTrack = newTracks.first!
                 Task {
-                    await audioService.loadTrack(firstTrack)
+                    _ = await audioService.loadTrack(firstTrack)
                     print("[UI] First track loaded: \(firstTrack.title)")
                 }
             }

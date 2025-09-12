@@ -121,17 +121,28 @@ struct WaveformView: View {
         // The waveform bars are distributed across the full width with spacing
         // The last bar is at (data.count - 1) * spacing, which might not reach the very right edge
         // So we should normalize the tap position relative to the actual waveform bounds
-        guard !waveformData.isEmpty else { return }
+        guard !waveformData.isEmpty else { 
+            print("[WaveformView] handleTap: waveformData is empty")
+            return 
+        }
         
         let targetPoints = max(1, Int(size.width / 2.0))
         let data = downsample(waveformData, to: targetPoints)
-        if data.isEmpty { return }
+        if data.isEmpty { 
+            print("[WaveformView] handleTap: downsampled data is empty")
+            return 
+        }
         
         let spacing = size.width / CGFloat(max(1, data.count - 1))
         let actualWaveformWidth = CGFloat(data.count - 1) * spacing
         
         // Calculate ratio based on the actual waveform width, not the full view width
         let ratio = max(0.0, min(1.0, location.x / actualWaveformWidth))
+        
+        // Concise logging for debugging tap issues (NEW VERSION)
+        print("🎯 [WaveformView] TAP: x=\(Int(location.x))/\(Int(size.width)) → ratio=\(String(format: "%.3f", ratio)) (\(Int(ratio * 100))%)")
+        print("  📊 Data: \(waveformData.count)→\(data.count) points, spacing=\(String(format: "%.1f", spacing)), width=\(String(format: "%.1f", actualWaveformWidth))")
+        
         onTap?(ratio)
     }
 
@@ -142,6 +153,7 @@ struct WaveformView: View {
 
         var result = Array(repeating: 0.0, count: targetPoints)
         let ratio = Double(source.count) / Double(targetPoints)
+        
         for i in 0..<targetPoints {
             let start = Int(Double(i) * ratio)
             let end = min(Int(Double(i + 1) * ratio), source.count)
@@ -158,6 +170,7 @@ struct WaveformView: View {
             }
             result[i] = maxValue
         }
+        
         return result
     }
 }
@@ -185,6 +198,7 @@ struct WaveformColumn: View {
                     }
                     return 0.0
                 }()
+                
                 
                 let isPlaying: Bool = {
                     if let current = audioService.currentTrack?.id,
@@ -295,7 +309,7 @@ struct WaveformColumn: View {
         } else {
             // Different track - load and play
             Task {
-                await audioService.loadTrack(track)
+                _ = await audioService.loadTrack(track)
                 audioService.play()
             }
         }
@@ -318,16 +332,40 @@ struct WaveformColumn: View {
     }
     
     private func handleWaveformTap(track: Track, ratio: Double) {
+        // Concise logging for debugging time calculation (NEW VERSION)
+        print("🎵 [WaveformColumn] SEEK: Track \(track.id ?? -1) '\(track.title)'")
+        print("  ⏱️ Stored: \(track.duration)ms (\(track.duration/1000)s) | Current Audio: \(String(format: "%.1f", audioService.duration))s | Ratio: \(String(format: "%.3f", ratio))")
+        
         if audioService.currentTrack?.id == track.id {
-            let newTime = Double(track.duration) * ratio
+            // Current track - use current audio duration
+            let seekTimeSeconds = audioService.duration * ratio
+            print("  🎯 Current track seek: \(String(format: "%.1f", seekTimeSeconds))s")
             audioService.play()
-            audioService.seek(to: newTime / 1000)
+            audioService.seek(to: seekTimeSeconds)
         } else {
             Task {
-                await audioService.loadTrack(track)
+                let player = await audioService.loadTrack(track)
                 audioService.play()
-                let newTime = Double(track.duration) * ratio
-                audioService.seek(to: newTime / 1000)
+                
+                // Get the duration directly from the returned player
+                if let player = player {
+                    // Do an initial seek to 0 to get the correct duration
+                    player.currentTime = 0.0
+                    let correctDuration = player.duration
+                    
+                    let seekTimeSeconds = correctDuration * ratio
+                    print("  🎯 New track seek: \(String(format: "%.1f", seekTimeSeconds))s (correct duration: \(String(format: "%.1f", correctDuration))s)")
+                    audioService.seek(to: seekTimeSeconds)
+
+                    let correctDuration2 = player.duration
+                    if(abs(correctDuration2 - correctDuration) > 1.0) {
+                        let seekTimeSeconds = correctDuration2 * ratio
+                        print("  🎯 New track seek: \(String(format: "%.1f", seekTimeSeconds))s (correct duration: \(String(format: "%.1f", correctDuration))s)")
+                        audioService.seek(to: seekTimeSeconds)
+                    }
+                } else {
+                    print("  ❌ Failed to load track")
+                }
             }
         }
     }

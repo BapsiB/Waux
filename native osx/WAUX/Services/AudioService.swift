@@ -84,7 +84,7 @@ class AudioService: NSObject, ObservableObject {
         volume = preferenceService.volume
     }
     
-    func loadTrack(_ track: Track) async {
+    func loadTrack(_ track: Track) async -> AVAudioPlayer? {
         await MainActor.run {
             isLoading = true
             errorMessage = nil
@@ -124,19 +124,27 @@ class AudioService: NSObject, ObservableObject {
             audioPlayer?.delegate = self
             audioPlayer?.volume = volume
             
+            // Set currentTime to 0 to stabilize duration
+            audioPlayer?.currentTime = 0
+            
             print("Audio player created successfully")
             print("Duration: \(audioPlayer?.duration ?? 0) seconds")
             print("Format: \(audioPlayer?.format.description ?? "Unknown")")
             
             await MainActor.run {
                 currentTrack = track
-                duration = track.isUrl ? audioPlayer?.duration ?? 0 : TimeInterval(track.duration / 1000)
+                // Always use the actual audio player duration, not the stored track duration
+                let playerDuration = audioPlayer?.duration ?? 0
+                duration = playerDuration
                 currentTime = 0
                 isPlaying = false
                 isIdle = true
                 isLoading = false
                 updateTimerInterval()
+                print("🔍 [AudioService] loadTrack: player.duration=\(String(format: "%.1f", playerDuration))s, set duration=\(String(format: "%.1f", duration))s")
             }
+            
+            return audioPlayer
             
         } catch {
             print("Error loading track: \(error)")
@@ -155,6 +163,7 @@ class AudioService: NSObject, ObservableObject {
                 errorMessage = errorDescription
                 isLoading = false
             }
+            return nil
         }
     }
     
@@ -187,8 +196,17 @@ class AudioService: NSObject, ObservableObject {
     
     func seek(to timeS: TimeInterval) {
         guard let player = audioPlayer else { return }
+        let durationBefore = player.duration
         player.currentTime = timeS
+        let durationAfter = player.duration  // This is the correct duration
         currentTime = timeS
+        
+        // Update our stored duration with the correct value (after seeking)
+        if abs(durationAfter - duration) > 0.01 {
+            duration = durationAfter
+        }
+        
+        print("🔍 [AudioService] seek: requested=\(String(format: "%.1f", timeS))s, durationBefore=\(String(format: "%.1f", durationBefore))s, durationAfter=\(String(format: "%.1f", durationAfter))s, currentTime=\(String(format: "%.1f", currentTime))s")
     }
     
     func seekToRatio(_ ratio: Double) {
@@ -238,7 +256,7 @@ class AudioService: NSObject, ObservableObject {
         
         print("Auto-playing next track: \(nextTrack.title)")
         Task {
-            await loadTrack(nextTrack)
+            _ = await loadTrack(nextTrack)
             play()
         }
     }
@@ -251,7 +269,7 @@ class AudioService: NSObject, ObservableObject {
         }
         
         print("Manually playing next track: \(nextTrack.title)")
-        await loadTrack(nextTrack)
+        _ = await loadTrack(nextTrack)
         play()
     }
     
@@ -263,7 +281,7 @@ class AudioService: NSObject, ObservableObject {
         }
         
         print("Manually playing previous track: \(previousTrack.title)")
-        await loadTrack(previousTrack)
+        _ = await loadTrack(previousTrack)
         play()
     }
 }
@@ -309,6 +327,13 @@ extension AudioService: AVAudioPlayerDelegate {
             self.updateTimerInterval()
             self.errorMessage = error?.localizedDescription ?? "Unknown error"
         }
+    }
+    
+    /// Get the current audio player duration (for immediate access after loading)
+    var currentAudioPlayerDuration: TimeInterval {
+        let duration = audioPlayer?.duration ?? 0
+        print("🔍 [AudioService] currentAudioPlayerDuration: \(String(format: "%.1f", duration))s")
+        return duration
     }
 }
 
