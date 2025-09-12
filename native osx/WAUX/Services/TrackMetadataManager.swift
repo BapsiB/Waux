@@ -154,19 +154,59 @@ class TrackMetadataManager: ObservableObject {
     func updateTrackMetadata(trackId: Int, updates: [String: Any]) async throws {
         print("[TrackMetadataManager] Updating metadata for track \(trackId) with updates: \(updates)")
         
-        // Apply optimistic changes immediately
-        var changes = optimisticChanges[trackId] ?? TrackChanges()
-        changes.metadataUpdates.merge(updates) { _, new in new }
-        optimisticChanges[trackId] = changes
-        
-        // Trigger UI update
-        objectWillChange.send()
-        
-        // Execute update immediately for metadata changes
-        try await collectionService.updateTrackMetadata(trackId: trackId, updates: updates)
-        
-        // Clear optimistic changes after successful update
-        optimisticChanges.removeValue(forKey: trackId)
+        // Check if title is being updated and handle file renaming
+        if let newTitle = updates["title"] as? String,
+           let currentTrack = tracks.first(where: { $0.id == trackId }),
+           newTitle != currentTrack.title,
+           !currentTrack.isUrl {
+            
+            print("[TrackMetadataManager] Title changed for track \(trackId), will rename file: '\(currentTrack.title)' -> '\(newTitle)'")
+            
+            // Apply optimistic changes immediately
+            var changes = optimisticChanges[trackId] ?? TrackChanges()
+            changes.metadataUpdates.merge(updates) { _, new in new }
+            optimisticChanges[trackId] = changes
+            
+            // Trigger UI update
+            objectWillChange.send()
+            
+            // First rename the file (this handles title, path, and file metadata)
+            do {
+                try await collectionService.renameFileForTrack(trackId: trackId, newTitle: newTitle)
+                print("[TrackMetadataManager] Successfully renamed file for track \(trackId)")
+                
+                // Now update any remaining metadata (excluding title since it's already updated via file rename)
+                var metadataUpdates = updates
+                metadataUpdates.removeValue(forKey: "title")
+                
+                if !metadataUpdates.isEmpty {
+                    try await collectionService.updateTrackMetadata(trackId: trackId, updates: metadataUpdates)
+                    print("[TrackMetadataManager] Successfully updated remaining metadata for track \(trackId)")
+                }
+                
+                // Clear optimistic changes after successful completion
+                optimisticChanges.removeValue(forKey: trackId)
+                objectWillChange.send()
+                
+            } catch {
+                print("[TrackMetadataManager] Failed to rename file or update metadata for track \(trackId): \(error)")
+                // Clear optimistic changes on error
+                optimisticChanges.removeValue(forKey: trackId)
+                objectWillChange.send()
+                throw error
+            }
+        } else {
+            // Apply optimistic changes immediately
+            var changes = optimisticChanges[trackId] ?? TrackChanges()
+            changes.metadataUpdates.merge(updates) { _, new in new }
+            optimisticChanges[trackId] = changes
+            
+            // Trigger UI update
+            objectWillChange.send()
+            
+            // Execute update immediately for metadata changes
+            try await collectionService.updateTrackMetadata(trackId: trackId, updates: updates)
+        }
     }
     
     // MARK: - Private Methods

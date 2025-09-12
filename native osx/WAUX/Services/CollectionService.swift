@@ -3,6 +3,9 @@ import AVFoundation
 import SQLite3
 import Combine
 import SwiftUI
+import ID3TagEditor
+
+// Note: ID3Tag initializer is internal, so we'll use a different approach
 
 class CollectionService: ObservableObject {
     // MARK: - Constants
@@ -1429,6 +1432,15 @@ class CollectionService: ObservableObject {
                     }
                 print("🔧 Fallback parsing successful, found tags: \(tags)")
                 return tags
+            } else {
+                // Try parsing as plain comma-separated string (not JSON array)
+                let tags = cleanedString.components(separatedBy: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                if !tags.isEmpty {
+                    print("🔧 Parsed as comma-separated string, found tags: \(tags)")
+                    return tags
+                }
             }
             
             throw error
@@ -2827,6 +2839,383 @@ class CollectionService: ObservableObject {
                 }
             }
         }
+    }
+    
+    // MARK: - File Renaming
+    
+    /// Renames a file based on the new title and updates both file metadata and database
+    func renameFileForTrack(trackId: Int, newTitle: String) async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    if self.isReadOnlyMode { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot rename files in read-only mode."))
+                        return
+                    }
+                    
+                    // Get the current track information
+                    guard let currentTrack = self.tracks.first(where: { $0.id == trackId }) else {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Track with ID \(trackId) not found"))
+                        return
+                    }
+                    
+                    // Only rename local files (not URLs)
+                    guard !currentTrack.isUrl else {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot rename URL tracks"))
+                        return
+                    }
+                    
+                    print("🔄 [CollectionService] Renaming file for track \(trackId): '\(currentTrack.title)' -> '\(newTitle)'")
+                    
+                    // Resolve the current absolute path
+                    let currentAbsolutePath = self.resolveTrackPathForWaveform(currentTrack)
+                    print("🔄 [CollectionService] Current file path: \(currentAbsolutePath)")
+                    let currentURL = URL(fileURLWithPath: currentAbsolutePath)
+                    
+                    // Check if the current file exists
+                    guard FileManager.default.fileExists(atPath: currentAbsolutePath) else {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Current file does not exist: \(currentAbsolutePath)"))
+                        return
+                    }
+                    
+                    // Generate the new filename
+                    let fileExtension = currentURL.pathExtension
+                    let sanitizedTitle = self.sanitizeFilename(newTitle)
+                    
+                    // Ensure we have a valid filename
+                    guard !sanitizedTitle.isEmpty else {
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Invalid title: cannot create filename from empty or invalid characters"))
+                        return
+                    }
+                    
+                    let newFilename = "\(sanitizedTitle).\(fileExtension)"
+                    let newURL = currentURL.deletingLastPathComponent().appendingPathComponent(newFilename)
+                    
+                    // Check if the new filename already exists and generate a unique name if needed
+                    let finalURL = self.generateUniqueFilename(baseURL: newURL)
+                    let finalPath = finalURL.path
+                    
+                    print("🔄 [CollectionService] Final file path: \(finalPath)")
+                    
+                    // Step 1: Update the file metadata first (before moving the file)
+                    do {
+                        try self.updateFileMetadata(at: currentURL, title: newTitle)
+                        print("✅ [CollectionService] Successfully updated file metadata")
+                    } catch {
+                        print("⚠️ [CollectionService] Failed to update file metadata: \(error)")
+                        // Continue with file rename even if metadata update fails
+                    }
+                    
+                    // Step 2: Rename the file
+                    do {
+                        try FileManager.default.moveItem(at: currentURL, to: finalURL)
+                        print("✅ [CollectionService] Successfully renamed file from '\(currentURL.path)' to '\(finalPath)'")
+                    } catch {
+                        print("❌ [CollectionService] Failed to rename file: \(error)")
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Failed to rename file: \(error.localizedDescription)"))
+                        return
+                    }
+                    
+                    // Step 3: Update the database with both new title and new path
+                    let newRelativePath = self.convertToRelativePath(finalPath)
+                    try self.updateTrackTitleAndPath(trackId: trackId, newTitle: newTitle, newPath: newRelativePath)
+                    
+                    print("✅ [CollectionService] Successfully updated database title and path for track \(trackId)")
+                    
+                    // Step 4: Reload tracks to reflect all changes
+                    Task { @MainActor in
+                        try? await self.loadAllTracks()
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /// Sanitizes a filename by removing invalid characters
+    private func sanitizeFilename(_ filename: String) -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "/\\:*?\"<>|")
+        var sanitized = filename.components(separatedBy: invalidCharacters).joined(separator: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "  ", with: " ") // Replace multiple spaces with single space
+        
+        // Remove leading/trailing dots and spaces
+        sanitized = sanitized.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        
+        // Ensure the filename doesn't start with a dot (hidden files)
+        if sanitized.hasPrefix(".") {
+            sanitized = "_" + sanitized
+        }
+        
+        // Limit filename length to avoid filesystem issues
+        if sanitized.count > 200 {
+            sanitized = String(sanitized.prefix(200))
+        }
+        
+        return sanitized
+    }
+    
+    /// Generates a unique filename by appending a number if the file already exists
+    private func generateUniqueFilename(baseURL: URL) -> URL {
+        var finalURL = baseURL
+        var counter = 1
+        
+        while FileManager.default.fileExists(atPath: finalURL.path) {
+            let filename = baseURL.deletingPathExtension().lastPathComponent
+            let fileExtension = baseURL.pathExtension
+            let newFilename = "\(filename) (\(counter)).\(fileExtension)"
+            finalURL = baseURL.deletingLastPathComponent().appendingPathComponent(newFilename)
+            counter += 1
+        }
+        
+        return finalURL
+    }
+    
+    /// Updates the file metadata (ID3 tags) with the new title
+    private func updateFileMetadata(at url: URL, title: String) throws {
+        print("🔄 [CollectionService] Updating file metadata for: \(url.lastPathComponent)")
+        print("🔄 [CollectionService] New title: \(title)")
+        
+        // Check if the file is writable by checking file permissions
+        guard FileManager.default.isWritableFile(atPath: url.path) else {
+            print("⚠️ [CollectionService] File is not writable, skipping metadata update")
+            return
+        }
+        
+        let fileExtension = url.pathExtension.lowercased()
+        
+        switch fileExtension {
+        case "mp3":
+            // Use ID3TagEditor for MP3 files
+            try updateMP3Metadata(at: url, title: title)
+        case "m4a", "aac", "wav", "aiff":
+            // Use AVFoundation for other formats
+            try updateAVFoundationMetadata(at: url, title: title)
+        default:
+            print("⚠️ [CollectionService] Unsupported file format for metadata update: \(fileExtension)")
+            return
+        }
+    }
+    
+    /// Updates MP3 metadata using ID3TagEditor
+    private func updateMP3Metadata(at url: URL, title: String) throws {
+        print("🔄 [CollectionService] Updating MP3 metadata using ID3TagEditor")
+        
+        let id3TagEditor = ID3TagEditor()
+        
+        do {
+            // Read existing metadata
+            let existingTag = try id3TagEditor.read(from: url.path)
+            
+            if let existingTag = existingTag {
+                // Update existing tag with new title
+                var updatedTag = existingTag
+                updatedTag.frames[.title] = ID3FrameWithStringContent(content: title)
+                try id3TagEditor.write(tag: updatedTag, to: url.path)
+                print("✅ [CollectionService] Successfully updated existing MP3 metadata")
+            } else {
+                // Cannot create new tags due to internal initializer access
+                print("⚠️ [CollectionService] No existing MP3 metadata found - cannot create new tags due to library limitations")
+                print("⚠️ [CollectionService] File will be renamed but metadata won't be created")
+            }
+            
+        } catch {
+            print("❌ [CollectionService] Failed to update MP3 metadata: \(error)")
+            // Don't throw error - file renaming should still work even if metadata update fails
+            print("⚠️ [CollectionService] Continuing with file rename despite metadata update failure")
+        }
+    }
+    
+    /// Updates metadata for non-MP3 files using AVFoundation
+    private func updateAVFoundationMetadata(at url: URL, title: String) throws {
+        print("🔄 [CollectionService] Updating metadata using AVFoundation")
+        
+        // Use AVFoundation to update file metadata
+        let asset = AVURLAsset(url: url)
+        
+        // Create a mutable metadata item for the title
+        let titleMetadata = AVMutableMetadataItem()
+        titleMetadata.identifier = .commonIdentifierTitle
+        titleMetadata.value = title as NSString
+        titleMetadata.locale = Locale.current
+        
+        // Get existing metadata and update it
+        var metadata = asset.metadata
+        metadata.removeAll { item in
+            item.identifier == .commonIdentifierTitle
+        }
+        metadata.append(titleMetadata)
+        
+        // Create export session to write the metadata
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+            print("⚠️ [CollectionService] Could not create export session for metadata update")
+            return
+        }
+        
+        // Create temporary file for the export
+        let tempURL = url.appendingPathExtension("temp")
+        exportSession.outputURL = tempURL
+        
+        // Determine the correct file type based on the original file extension
+        let fileExtension = url.pathExtension.lowercased()
+        let outputFileType: AVFileType
+        switch fileExtension {
+        case "m4a", "aac":
+            outputFileType = .m4a
+        case "wav":
+            outputFileType = .wav
+        case "aiff":
+            outputFileType = .aiff
+        default:
+            print("⚠️ [CollectionService] Unsupported file format for AVFoundation metadata update: \(fileExtension)")
+            return
+        }
+        
+        exportSession.outputFileType = outputFileType
+        exportSession.metadata = metadata
+        
+        // Use a semaphore to make this synchronous
+        let semaphore = DispatchSemaphore(value: 0)
+        var exportError: Error?
+        
+        exportSession.exportAsynchronously {
+            if exportSession.status == .completed {
+                // Replace original file with the updated one
+                do {
+                    _ = try FileManager.default.replaceItem(at: url, withItemAt: tempURL, backupItemName: nil, options: [], resultingItemURL: nil)
+                    print("✅ [CollectionService] Successfully updated file metadata")
+                } catch {
+                    print("❌ [CollectionService] Failed to replace file with updated metadata: \(error)")
+                    exportError = error
+                }
+            } else {
+                print("❌ [CollectionService] Export failed with status: \(exportSession.status.rawValue)")
+                if let error = exportSession.error {
+                    print("❌ [CollectionService] Export error: \(error)")
+                    exportError = error
+                }
+            }
+            semaphore.signal()
+        }
+        
+        // Wait for export to complete (with timeout)
+        let result = semaphore.wait(timeout: .now() + 30)
+        if result == .timedOut {
+            exportSession.cancelExport()
+            throw CollectionError.queryFailed(message: "Metadata update timed out")
+        }
+        
+        if let error = exportError {
+            throw error
+        }
+    }
+    
+    /// Fixes corrupted tag data in the database by converting comma-separated strings to JSON
+    func fixCorruptedTagData() async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else { 
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    if self.isReadOnlyMode { 
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot fix corrupted data in read-only mode."))
+                        return
+                    }
+                    
+                    print("🔧 [CollectionService] Fixing corrupted tag data...")
+                    
+                    // Find tracks with comma-separated tags (not JSON)
+                    let query = "SELECT \(self.columnId), \(self.columnGeneralTags) FROM \(self.tableMusic) WHERE \(self.columnGeneralTags) IS NOT NULL AND \(self.columnGeneralTags) != '[]' AND \(self.columnGeneralTags) != ''"
+                    var statement: OpaquePointer?
+                    
+                    let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    var fixedCount = 0
+                    
+                    while sqlite3_step(statement) == SQLITE_ROW {
+                        let trackId = Int(sqlite3_column_int(statement, 0))
+                        let tagsData = String(cString: sqlite3_column_text(statement, 1))
+                        
+                        // Check if this is comma-separated data (not JSON)
+                        if !tagsData.hasPrefix("[") || !tagsData.hasSuffix("]") {
+                            // Convert comma-separated string to JSON array
+                            let tags = tagsData.components(separatedBy: ",")
+                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                .filter { !$0.isEmpty }
+                            
+                            if !tags.isEmpty {
+                                let encoder = JSONEncoder()
+                                let jsonData = try encoder.encode(tags)
+                                let jsonString = String(data: jsonData, encoding: .utf8) ?? "[]"
+                                
+                                // Update the database
+                                let updateSQL = "UPDATE \(self.tableMusic) SET \(self.columnGeneralTags) = ? WHERE \(self.columnId) = ?"
+                                var updateStatement: OpaquePointer?
+                                
+                                if sqlite3_prepare_v2(db, updateSQL, -1, &updateStatement, nil) == SQLITE_OK {
+                                    defer { sqlite3_finalize(updateStatement) }
+                                    sqlite3_bind_text(updateStatement, 1, jsonString, -1, self.SQLITE_TRANSIENT)
+                                    sqlite3_bind_int(updateStatement, 2, Int32(trackId))
+                                    
+                                    if sqlite3_step(updateStatement) == SQLITE_DONE {
+                                        print("🔧 [CollectionService] Fixed tags for track \(trackId): '\(tagsData)' -> '\(jsonString)'")
+                                        fixedCount += 1
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    print("✅ [CollectionService] Fixed \(fixedCount) tracks with corrupted tag data")
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /// Updates both the title and path in the database
+    private func updateTrackTitleAndPath(trackId: Int, newTitle: String, newPath: String) throws {
+        guard let db = self.database else { throw CollectionError.databaseNotOpen }
+        if self.isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot update in read-only mode.") }
+        
+        var stmt: OpaquePointer?
+        let sql = "UPDATE \(self.tableMusic) SET \(self.columnTitle) = ?, \(self.columnPath) = ? WHERE \(self.columnId) = ?"
+        
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let err = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: err)
+        }
+        defer { sqlite3_finalize(stmt) }
+        
+        // Bind parameters
+        sqlite3_bind_text(stmt, 1, newTitle, -1, self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, newPath, -1, self.SQLITE_TRANSIENT)
+        sqlite3_bind_int(stmt, 3, Int32(trackId))
+        
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            let err = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: err)
+        }
+        
+        print("✅ [CollectionService] Updated database: title='\(newTitle)', path='\(newPath)' for track \(trackId)")
     }
     
     /// Removes duplicate tracks from the database (keeps the first occurrence)

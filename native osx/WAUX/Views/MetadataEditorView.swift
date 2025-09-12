@@ -10,6 +10,7 @@ struct MetadataEditorView: View {
     @State private var metadataValues: [String: String] = [:]
     @State private var metadataNumbers: [String: Int?] = [:]
     @State private var errorMessage: String? = nil
+    @State private var isRenamingFiles = false
     
     // Computed properties for current metadata state
     private var tracks: [Track] {
@@ -37,7 +38,15 @@ struct MetadataEditorView: View {
                     // Basic metadata
                     GroupBox("Basic Information") {
                         VStack(alignment: .leading, spacing: 12) {
-                            metadataField("Title", key: "title", isRequired: true)
+                            VStack(alignment: .leading, spacing: 4) {
+                                metadataField("Title", key: "title", isRequired: true)
+                                if !isMultipleTracks && !(tracks.first?.isUrl ?? false) {
+                                    Text("Note: Changing the title will rename the file on disk")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .italic()
+                                }
+                            }
                             metadataField("Artist", key: "artist", isRequired: true)
                             metadataField("Album", key: "album", isRequired: true)
                             metadataField("Album Artist", key: "albumArtist")
@@ -84,11 +93,11 @@ struct MetadataEditorView: View {
             }
             
             HStack {
-                if metadataManager.isUpdating {
+                if metadataManager.isUpdating || isRenamingFiles {
                     HStack {
                         ProgressView()
                             .scaleEffect(0.8)
-                        Text("Saving...")
+                        Text(isRenamingFiles ? "Renaming files and updating metadata..." : "Saving...")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -98,7 +107,7 @@ struct MetadataEditorView: View {
                     .keyboardShortcut(.cancelAction)
                 Button("Save") { saveMetadata() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(metadataManager.isUpdating)
+                    .disabled(metadataManager.isUpdating || isRenamingFiles)
             }
         }
         .padding(16)
@@ -259,6 +268,24 @@ struct MetadataEditorView: View {
     private func saveMetadata() {
         Task {
             do {
+                // Check if any tracks will have their files renamed
+                let tracksWithTitleChanges = trackIds.filter { trackId in
+                    if let track = tracks.first(where: { $0.id == trackId }),
+                       let newTitle = metadataValues["title"],
+                       newTitle != "multiple" && newTitle != track.title,
+                       !track.isUrl {
+                        return true
+                    }
+                    return false
+                }
+                
+                if !tracksWithTitleChanges.isEmpty {
+                    await MainActor.run {
+                        isRenamingFiles = true
+                        print("🔄 [MetadataEditorView] Will rename \(tracksWithTitleChanges.count) file(s)")
+                    }
+                }
+                
                 for trackId in trackIds {
                     var updates: [String: Any] = [:]
                     
@@ -300,10 +327,12 @@ struct MetadataEditorView: View {
                 }
                 
                 await MainActor.run {
+                    isRenamingFiles = false
                     dismiss()
                 }
             } catch {
                 await MainActor.run {
+                    isRenamingFiles = false
                     errorMessage = "Failed to save metadata: \(error.localizedDescription)"
                 }
             }
