@@ -91,7 +91,7 @@ struct PlaylistSidebar: View {
                 .focusable(false)
                 .help("Create new playlist or folder")
             }
-            .padding()
+            // .padding()
             
             if playlistService.isLoading {
                 ProgressView("Loading playlists...")
@@ -904,6 +904,7 @@ struct HierarchicalItemView: View {
                     onCreatePlaylist: { onCreatePlaylistInFolder(folder) },
                     draggedOver: draggedOver
                 )
+                .offset(x: -5) // Move folders 5px to the left
                 .draggable("folder:\(folder.id)")
                 .onDrop(of: [UTType.plainText], isTargeted: $draggedOver) { providers in
                     handleFolderDrop(providers: providers, targetFolder: folder)
@@ -1256,6 +1257,7 @@ struct PlaylistItemView: View {
                 onDelete()
             }
         }
+        .offset(x:20)
     }
 }
 
