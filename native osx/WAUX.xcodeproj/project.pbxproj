@@ -424,7 +424,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 0.2;
 				MODULE_CACHE_DIR = "$(PROJECT_TEMP_DIR)/ModuleCache";
 				PRODUCT_BUNDLE_IDENTIFIER = com.waux.audio.WAUX;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -456,7 +456,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 0.2;
 				MODULE_CACHE_DIR = "$(PROJECT_TEMP_DIR)/ModuleCache";
 				PRODUCT_BUNDLE_IDENTIFIER = com.waux.audio.WAUX;
 				PRODUCT_NAME = "$(TARGET_NAME)";

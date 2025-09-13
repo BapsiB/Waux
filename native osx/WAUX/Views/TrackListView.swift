@@ -154,7 +154,7 @@ struct TrackTable: View {
                         )
                     }
                 }
-                .width(min: 120, ideal: columnWidths[.generalTags] ?? 220)
+                .width(min: 120, ideal: columnWidths[.generalTags] ?? 200, max:600)
             }
         }
         .tableStyle(.bordered)
@@ -412,6 +412,8 @@ struct TrackListView: View {
     }
     
     var body: some View {
+        let _ = print("🎨 [TrackListView] Body view rendering - columnWidths: \(columnWidths.map { "\($0.key.displayName): \($0.value)" })")
+        
         VStack {
             TrackTable(
                 filteredTracks: filteredTracks,
@@ -817,15 +819,26 @@ struct TrackListView: View {
     // MARK: - Column Width Persistence
     
     private func loadPreferences() {
-        guard !hasLoadedPreferences else { return }
+        print("🔧 [TrackListView] Loading preferences...")
+        guard !hasLoadedPreferences else { 
+            print("🔧 [TrackListView] Preferences already loaded, skipping")
+            return 
+        }
         hasLoadedPreferences = true
+        
         // Visible columns
         if let stored = UserDefaults.standard.stringArray(forKey: visibleColumnsDefaultsKey) {
             let set = Set(stored.compactMap { TrackColumn(rawValue: $0) })
             if !set.isEmpty {
                 visibleColumns = set
+                print("🔧 [TrackListView] Loaded visible columns: \(set.map { $0.displayName })")
+            } else {
+                print("🔧 [TrackListView] No valid visible columns found in stored data: \(stored)")
             }
+        } else {
+            print("🔧 [TrackListView] No stored visible columns found, using defaults")
         }
+        
         // Column widths
         if let dict = UserDefaults.standard.dictionary(forKey: columnWidthsDefaultsKey) as? [String: Double] {
             var result: [TrackColumn: CGFloat] = [:]
@@ -835,7 +848,12 @@ struct TrackListView: View {
                 }
             }
             columnWidths = result
+            print("🔧 [TrackListView] Loaded column widths: \(result.map { "\($0.key.displayName): \($0.value)" })")
+        } else {
+            print("🔧 [TrackListView] No stored column widths found")
         }
+        
+        print("🔧 [TrackListView] Preferences loading completed")
     }
     
     private func saveVisibleColumns() {
@@ -942,16 +960,14 @@ private struct TableWidthObserver: NSViewRepresentable {
             guard let tableView = tableView else { return }
             
             var updated = false
-            let columnIdentifiers = ["", "Waveform", "Title", "Artist", "Album", "Duration", "Rating", "Type", "Date Added", "Album Artist", "Composer", "Tags"]
             
-            for (index, identifier) in columnIdentifiers.enumerated() {
-                guard index < tableView.tableColumns.count else { break }
-                let column = tableView.tableColumns[index]
+            for column in tableView.tableColumns {
+                let title = column.title
                 let width = column.width
                 
-                // Map identifier to TrackColumn
+                // Map column title to TrackColumn
                 let trackColumn: TrackColumn? = {
-                    switch identifier {
+                    switch title {
                     case "Title": return .title
                     case "Artist": return .artist
                     case "Album": return .album
@@ -974,6 +990,8 @@ private struct TableWidthObserver: NSViewRepresentable {
                         columnWidths[trackColumn] = width
                         updated = true
                     }
+                } else {
+                    print("🔍 [TrackListView] Unknown column title: '\(title)' (identifier: \(column.identifier.rawValue))")
                 }
             }
             

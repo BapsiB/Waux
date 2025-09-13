@@ -130,64 +130,6 @@
             endingLineNumber = "363"
             landmarkName = "toggleAssignment(for:currentlySelected:)"
             landmarkType = "7">
-            <Locations>
-               <Location
-                  uuid = "56B07332-85B2-4FE5-8401-09E9076A5B7F - ebcacd775e8f8f1f"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(1) suspend resume partial function for closure #1 () async -&gt; () in WAUX.TagEditorView.toggleAssignment(for: Swift.String, currentlySelected: Swift.Bool) -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TagEditorView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "363"
-                  endingLineNumber = "363">
-               </Location>
-               <Location
-                  uuid = "56B07332-85B2-4FE5-8401-09E9076A5B7F - bc40a2680682f272"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(4) await resume partial function for closure #1 () async -&gt; () in WAUX.TagEditorView.toggleAssignment(for: Swift.String, currentlySelected: Swift.Bool) -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TagEditorView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "363"
-                  endingLineNumber = "363">
-               </Location>
-               <Location
-                  uuid = "56B07332-85B2-4FE5-8401-09E9076A5B7F - 4aa6fa02c7e29f17"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(5) suspend resume partial function for closure #1 () async -&gt; () in WAUX.TagEditorView.toggleAssignment(for: Swift.String, currentlySelected: Swift.Bool) -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TagEditorView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "363"
-                  endingLineNumber = "363">
-               </Location>
-               <Location
-                  uuid = "56B07332-85B2-4FE5-8401-09E9076A5B7F - df101f6e50504bb4"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(11) suspend resume partial function for closure #1 () async -&gt; () in WAUX.TagEditorView.toggleAssignment(for: Swift.String, currentlySelected: Swift.Bool) -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TagEditorView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "363"
-                  endingLineNumber = "363">
-               </Location>
-            </Locations>
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -782,12 +724,12 @@
             landmarkType = "7">
             <Locations>
                <Location
-                  uuid = "F73AA437-A948-44E7-85F6-06D9E4E1D8E9 - 607f0f3983746546"
+                  uuid = "F73AA437-A948-44E7-85F6-06D9E4E1D8E9 - 3ba1b7bbd5af985e"
                   shouldBeEnabled = "Yes"
                   ignoreCount = "0"
                   continueAfterRunningActions = "No"
-                  symbolName = "closure #2 @Swift.MainActor @Sendable () -&gt; () in closure #1 () async throws -&gt; () in WAUX.PlaylistService.deleteFolder(folderId: Swift.String) async throws -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
+                  symbolName = "function signature specialization &lt;Arg[1] = Owned To Guaranteed&gt; of function signature specialization &lt;Arg[0] = [Closure Propagated : closure #1 (WAUX.PlaylistFolder) -&gt; Swift.Bool in closure #2 @Swift.MainActor @Sendable () -&gt; () in closure #1 () async throws -&gt; () in WAUX.PlaylistService.deleteFolder(folderId: Swift.String) async throws -&gt; (), Argument Types : [Swift.String]&gt; of generic specialization &lt;Swift.Array&lt;WAUX.PlaylistFolder&gt;&gt; of Swift.MutableCollection._halfStablePartition(isSuffixElement: (&#x3c4;_0_0.Element) throws -&gt; Swift.Bool) throws -&gt; &#x3c4;_0_0.Index"
+                  moduleName = "WAUX"
                   usesParentBreakpointCondition = "Yes"
                   urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Services/PlaylistService.swift"
                   startingColumnNumber = "9223372036854775807"
@@ -796,12 +738,12 @@
                   endingLineNumber = "1174">
                </Location>
                <Location
-                  uuid = "F73AA437-A948-44E7-85F6-06D9E4E1D8E9 - 80ac568e2fe251b0"
+                  uuid = "F73AA437-A948-44E7-85F6-06D9E4E1D8E9 - 3ba1b7bbd5af985e"
                   shouldBeEnabled = "Yes"
                   ignoreCount = "0"
                   continueAfterRunningActions = "No"
-                  symbolName = "closure #1 (WAUX.PlaylistFolder) -&gt; Swift.Bool in closure #2 @Swift.MainActor @Sendable () -&gt; () in closure #1 () async throws -&gt; () in WAUX.PlaylistService.deleteFolder(folderId: Swift.String) async throws -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
+                  symbolName = "function signature specialization &lt;Arg[1] = Owned To Guaranteed&gt; of function signature specialization &lt;Arg[0] = [Closure Propagated : closure #1 (WAUX.PlaylistFolder) -&gt; Swift.Bool in closure #2 @Swift.MainActor @Sendable () -&gt; () in closure #1 () async throws -&gt; () in WAUX.PlaylistService.deleteFolder(folderId: Swift.String) async throws -&gt; (), Argument Types : [Swift.String]&gt; of generic specialization &lt;Swift.Array&lt;WAUX.PlaylistFolder&gt;&gt; of Swift.MutableCollection._halfStablePartition(isSuffixElement: (&#x3c4;_0_0.Element) throws -&gt; Swift.Bool) throws -&gt; &#x3c4;_0_0.Index"
+                  moduleName = "WAUX"
                   usesParentBreakpointCondition = "Yes"
                   urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Services/PlaylistService.swift"
                   startingColumnNumber = "9223372036854775807"
@@ -895,86 +837,6 @@
       <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
-            uuid = "3C79DBB4-E587-4B37-B49A-D4C9A4C0A605"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "127"
-            endingLineNumber = "127"
-            landmarkName = "body"
-            landmarkType = "24">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "F4635D4D-BB41-478D-BB7D-5AF18819BF1C"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "807"
-            endingLineNumber = "807"
-            landmarkName = "color(for:)"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "449FEEE7-038B-41CF-8E45-1CC108630AB2"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "800"
-            endingLineNumber = "800"
-            landmarkName = "iconName(for:)"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "386EEB86-4710-4E95-A97A-2D5DACD14666"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "804"
-            endingLineNumber = "804"
-            landmarkName = "iconName(for:)"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "4740157C-739D-4ACD-9FE9-ED4E1508A593"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "791"
-            endingLineNumber = "791"
-            landmarkName = "typeCell(for:)"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
             uuid = "F402473E-DAB3-4B6F-922E-7B127D7209A1"
             shouldBeEnabled = "No"
             ignoreCount = "0"
@@ -1034,22 +896,6 @@
             endingLineNumber = "653"
             landmarkName = "refreshTrackData(track:)"
             landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "BA090C55-77B8-4354-B198-07CCEE7CBE3F"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "141"
-            endingLineNumber = "141"
-            landmarkName = "body"
-            landmarkType = "24">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -1144,8 +990,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "666"
             endingLineNumber = "666"
-            landmarkName = "TrackListView"
-            landmarkType = "14">
+            landmarkName = "refreshTrackData(track:)"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -1391,22 +1237,6 @@
       <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
-            uuid = "C966782E-2F93-4AB8-A38E-998D31477988"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "942"
-            endingLineNumber = "942"
-            landmarkName = "checkColumnWidths()"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
             uuid = "7A87AC80-89D6-4E7A-B427-2E817EA688D8"
             shouldBeEnabled = "No"
             ignoreCount = "0"
@@ -1448,55 +1278,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "868"
             endingLineNumber = "868"
-            landmarkName = "makeNSView(context:)"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "01687EEE-98C2-4E94-8F4C-3A5D7363C753"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "882"
-            endingLineNumber = "882"
-            landmarkName = "setupObserverWithRetries(context:view:attempt:)"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "2B26C2D2-C2A2-4640-AF4A-6F8F730E18DB"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "973"
-            endingLineNumber = "973"
-            landmarkName = "checkColumnWidths()"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "3C9A437E-9987-4580-B772-BE280E45452B"
-            shouldBeEnabled = "No"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "981"
-            endingLineNumber = "981"
-            landmarkName = "checkColumnWidths()"
+            landmarkName = "saveColumnWidths()"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -1512,7 +1294,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "851"
             endingLineNumber = "851"
-            landmarkName = "saveColumnWidths()"
+            landmarkName = "loadPreferences()"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -1567,122 +1349,16 @@
       <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
-            uuid = "AED4ADA4-F736-495B-9D20-0A805848B3C1"
+            uuid = "7282F0D6-D312-455B-9B19-7E589A7F9A35"
             shouldBeEnabled = "No"
             ignoreCount = "0"
             continueAfterRunningActions = "No"
             filePath = "WAUX/Views/TrackListView.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "953"
-            endingLineNumber = "953"
-            landmarkName = "checkColumnWidths()"
-            landmarkType = "7">
-            <Locations>
-               <Location
-                  uuid = "AED4ADA4-F736-495B-9D20-0A805848B3C1 - d78ca215fd10c0a1"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "WAUX.TableWidthObserver.Coordinator.checkColumnWidths() -&gt; ()"
-                  moduleName = "WAUX"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TrackListView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "954"
-                  endingLineNumber = "954">
-               </Location>
-               <Location
-                  uuid = "AED4ADA4-F736-495B-9D20-0A805848B3C1 - db881ed3a69a5a53"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "WAUX.TableWidthObserver.Coordinator.checkColumnWidths() -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TrackListView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "953"
-                  endingLineNumber = "953">
-               </Location>
-               <Location
-                  uuid = "AED4ADA4-F736-495B-9D20-0A805848B3C1 - 8ec6b2eb35f8b798"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "closure #1 () -&gt; Swift.Optional&lt;WAUX.TrackColumn&gt; in WAUX.TableWidthObserver.Coordinator.checkColumnWidths() -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TrackListView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "953"
-                  endingLineNumber = "953">
-               </Location>
-            </Locations>
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "632994A9-CE98-40E7-B4F7-92B674242436"
-            shouldBeEnabled = "Yes"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "954"
-            endingLineNumber = "954"
-            landmarkName = "checkColumnWidths()"
-            landmarkType = "7">
-            <Locations>
-               <Location
-                  uuid = "632994A9-CE98-40E7-B4F7-92B674242436 - d78ca215fd10c0a1"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "WAUX.TableWidthObserver.Coordinator.checkColumnWidths() -&gt; ()"
-                  moduleName = "WAUX"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TrackListView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "954"
-                  endingLineNumber = "954">
-               </Location>
-               <Location
-                  uuid = "632994A9-CE98-40E7-B4F7-92B674242436 - 8ec6b2eb35f8b77f"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "closure #1 () -&gt; Swift.Optional&lt;WAUX.TrackColumn&gt; in WAUX.TableWidthObserver.Coordinator.checkColumnWidths() -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TrackListView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "954"
-                  endingLineNumber = "954">
-               </Location>
-            </Locations>
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "8B36D477-3DD6-48A2-A4E0-05C3E6B56B62"
-            shouldBeEnabled = "Yes"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "WAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "965"
-            endingLineNumber = "965"
-            landmarkName = "checkColumnWidths()"
+            startingLineNumber = "859"
+            endingLineNumber = "859"
+            landmarkName = "saveVisibleColumns()"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
