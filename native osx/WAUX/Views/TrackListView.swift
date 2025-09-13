@@ -88,7 +88,7 @@ struct TrackTable: View {
                 )
                 .id("waveform-\(track.id ?? -1)-\(track.waveformPointCount)")
             }
-            .width(min: 120, ideal: columnWidths[.waveformData] ?? 160)
+            .width(min: 120, ideal: columnWidths[.waveformData] ?? 160, max:200)
             
             TableColumn("Title", value: \.title) { track in
                 titleCell(for: track)
@@ -862,13 +862,41 @@ private struct TableWidthObserver: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         view.wantsLayer = true
+        
+        // Set up the observer with multiple attempts to find the table view
+        DispatchQueue.main.async {
+            self.setupObserverWithRetries(context: context, view: view)
+        }
+        
         return view
     }
     
     func updateNSView(_ nsView: NSView, context: Context) {
-        // Find the NSTableView in the view hierarchy
+        // Also try to set up observer here as a fallback
         if let tableView = findTableView(in: nsView) {
             context.coordinator.setupObserver(for: tableView)
+        }
+    }
+    
+    private func setupObserverWithRetries(context: Context, view: NSView, attempt: Int = 0) {
+        print("🔍 [TrackListView] Attempting to find NSTableView (attempt \(attempt + 1))")
+        
+        // Try to find the table view in the entire window hierarchy
+        if let window = view.window,
+           let contentView = window.contentView,
+           let tableView = findTableView(in: contentView) {
+            print("🔍 [TrackListView] Found NSTableView in window content view")
+            context.coordinator.setupObserver(for: tableView)
+            return
+        }
+        
+        // If not found and we haven't exceeded max attempts, try again
+        if attempt < 10 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.setupObserverWithRetries(context: context, view: view, attempt: attempt + 1)
+            }
+        } else {
+            print("❌ [TrackListView] Failed to find NSTableView after 10 attempts")
         }
     }
     
@@ -900,6 +928,7 @@ private struct TableWidthObserver: NSViewRepresentable {
         }
         
         func setupObserver(for tableView: NSTableView) {
+            print("🔍 [TrackListView] Setting up column width observer for NSTableView")
             self.tableView = tableView
             
             // Start a timer to periodically check column widths - reduced frequency for better performance
@@ -941,6 +970,7 @@ private struct TableWidthObserver: NSViewRepresentable {
                 if let trackColumn = trackColumn {
                     let currentWidth = columnWidths[trackColumn] ?? 0
                     if abs(currentWidth - width) > 1.0 { // Threshold to avoid noise
+                        print("📏 [TrackListView] Column width changed: \(trackColumn.displayName) from \(currentWidth) to \(width)")
                         columnWidths[trackColumn] = width
                         updated = true
                     }
