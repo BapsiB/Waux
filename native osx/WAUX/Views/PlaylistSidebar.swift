@@ -91,7 +91,7 @@ struct PlaylistSidebar: View {
                 .focusable(false)
                 .help("Create new playlist or folder")
             }
-            // .padding()
+            .padding()
             
             if playlistService.isLoading {
                 ProgressView("Loading playlists...")

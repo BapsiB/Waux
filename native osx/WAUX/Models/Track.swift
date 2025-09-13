@@ -163,6 +163,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
     var timeMarkersCount: Int { timeMarkers.count }
     var waveformPointCount: Int { waveformData?.count ?? 0 }
     var generalTagsText: String { generalTags.joined(separator: ", ") }
+    var dateAddedSortValue: Int { Int(dateAdded.timeIntervalSince1970) }
     
     // Static formatter for better performance - created once and reused
     private static let dateFormatter: DateFormatter = {
@@ -218,6 +219,16 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
         // If both have IDs, compare by stable ID and user-editable fields that affect UI
         if let lhsId = lhs.id, let rhsId = rhs.id {
             return lhsId == rhsId
+                && lhs.title == rhs.title
+                && lhs.artist == rhs.artist
+                && lhs.album == rhs.album
+                && lhs.albumArtist == rhs.albumArtist
+                && lhs.composer == rhs.composer
+                && lhs.genre == rhs.genre
+                && lhs.year == rhs.year
+                && lhs.trackNumber == rhs.trackNumber
+                && lhs.discNumber == rhs.discNumber
+                && lhs.bpm == rhs.bpm
                 && lhs.rating == rhs.rating
                 && lhs.comment == rhs.comment
                 && lhs.generalTags == rhs.generalTags
@@ -227,6 +238,14 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
         return lhs.path == rhs.path
             && lhs.title == rhs.title
             && lhs.artist == rhs.artist
+            && lhs.album == rhs.album
+            && lhs.albumArtist == rhs.albumArtist
+            && lhs.composer == rhs.composer
+            && lhs.genre == rhs.genre
+            && lhs.year == rhs.year
+            && lhs.trackNumber == rhs.trackNumber
+            && lhs.discNumber == rhs.discNumber
+            && lhs.bpm == rhs.bpm
             && lhs.rating == rhs.rating
             && lhs.comment == rhs.comment
             && lhs.generalTags == rhs.generalTags

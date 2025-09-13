@@ -206,6 +206,10 @@ class TrackMetadataManager: ObservableObject {
             
             // Execute update immediately for metadata changes
             try await collectionService.updateTrackMetadata(trackId: trackId, updates: updates)
+            
+            // Clear optimistic changes after successful completion
+            optimisticChanges.removeValue(forKey: trackId)
+            objectWillChange.send()
         }
     }
     

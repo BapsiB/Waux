@@ -131,7 +131,7 @@ struct TrackTable: View {
 //            }
             
             if visibleColumns.contains(.dateAdded) {
-                TableColumn("Date Added", value: \.formattedDateAdded) { track in
+                TableColumn("Date Added", value: \.dateAddedSortValue) { track in
                     Text(track.formattedDateAdded)
                 }
                 .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
@@ -406,7 +406,7 @@ struct TrackListView: View {
 
     
     var filteredTracks: [Track] {
-        let baseTracks = tracksFilter ?? collectionService.tracks
+        let baseTracks = tracksFilter ?? metadataManager.getAllTracks()
         let filteredTracks = searchService.filterTracks(baseTracks)
         return filteredTracks.sorted(using: sortOrder)
     }
