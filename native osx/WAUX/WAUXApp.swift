@@ -13,6 +13,7 @@ class MenuActionState: ObservableObject {
     @Published var shouldImportAudio = false
     @Published var shouldClearSavedFolder = false
     @Published var shouldRegenerateWaveforms = false
+    @Published var shouldShowAbout = false
 }
 
 @main
@@ -46,6 +47,12 @@ struct WAUXApp: App {
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 
 
+            }
+            
+            CommandGroup(replacing: .appInfo) {
+                Button("About WAUX") {
+                    menuActionState.shouldShowAbout = true
+                }
             }
         }
     }
