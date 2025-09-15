@@ -248,6 +248,9 @@ class CollectionService: ObservableObject {
             print("Warning: Could not enable foreign keys")
         }
         
+        // Create performance indexes for track groups
+        try createTrackGroupIndexes()
+        
         print("Successfully opened database")
         
         // Check and migrate database schema if needed
@@ -301,6 +304,42 @@ class CollectionService: ObservableObject {
         
         // Check if track groups tables exist and create them if needed
         try migrateTrackGroupsTables()
+    }
+    
+    /// Creates performance indexes for track group operations
+    private func createTrackGroupIndexes() throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        
+        let indexes = [
+            // Index for fast group lookup by main track ID
+            "CREATE INDEX IF NOT EXISTS idx_track_groups_main_track_id ON \(tableTrackGroups) (main_track_id)",
+            
+            // Index for fast member lookup by track ID
+            "CREATE INDEX IF NOT EXISTS idx_track_group_members_track_id ON \(tableTrackGroupMembers) (track_id)",
+            
+            // Index for fast member lookup by group ID
+            "CREATE INDEX IF NOT EXISTS idx_track_group_members_group_id ON \(tableTrackGroupMembers) (group_id)",
+            
+            // Composite index for efficient joins
+            "CREATE INDEX IF NOT EXISTS idx_track_group_members_composite ON \(tableTrackGroupMembers) (group_id, track_id)",
+            
+            // Index for group name searches (if needed for UI)
+            "CREATE INDEX IF NOT EXISTS idx_track_groups_name ON \(tableTrackGroups) (name)",
+            
+            // Index for date-based queries
+            "CREATE INDEX IF NOT EXISTS idx_track_groups_date_created ON \(tableTrackGroups) (date_created)"
+        ]
+        
+        for indexSQL in indexes {
+            let result = sqlite3_exec(db, indexSQL, nil, nil, nil)
+            if result != SQLITE_OK {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                print("⚠️ Failed to create index: \(errorMessage)")
+                // Don't throw error as indexes are performance optimizations, not critical
+            }
+        }
+        
+        print("✅ Created performance indexes for track groups")
     }
     
     private func migrateTrackGroupsTables() throws {

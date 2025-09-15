@@ -167,7 +167,7 @@ struct TrackTable: View {
             }
             
             if visibleColumns.contains(.generalTags) {
-                TableColumn("Tags", value: \.track.generalTagsText) { displayItem in
+                TableColumn("Tags", value: \.track.generalTags.count) { displayItem in
                     if let trackId = displayItem.track.id {
                         InteractiveTagsView_New(
                             trackId: trackId,

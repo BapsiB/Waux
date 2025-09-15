@@ -134,9 +134,23 @@ class TrackGroupService: ObservableObject {
     private let databaseQueue = DispatchQueue(label: "com.waux.trackgroup.database", qos: .userInitiated)
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     
+    // MARK: - Performance Optimization Properties
+    /// Cache for fast group membership lookups - maps track ID to group ID
+    private var trackToGroupCache: [Int: String] = [:]
+    /// Cache for group lookup by ID
+    private var groupCache: [String: TrackGroup] = [:]
+    /// Queue for cache operations to ensure thread safety
+    private let cacheQueue = DispatchQueue(label: "com.waux.trackgroup.cache", qos: .userInitiated)
+    /// Flag to track if caches are valid
+    private var cacheValid = false
+    
     // MARK: - Database Table Names
     private let tableTrackGroups = "track_groups"
     private let tableTrackGroupMembers = "track_group_members"
+    
+    // MARK: - Prepared Statement Cache
+    private var preparedStatements: [String: OpaquePointer?] = [:]
+    private let statementCacheQueue = DispatchQueue(label: "com.waux.trackgroup.statements", qos: .userInitiated)
     
     // MARK: - Initialization
     init() {
@@ -146,6 +160,49 @@ class TrackGroupService: ObservableObject {
     // MARK: - Database Setup
     func setDatabase(_ database: OpaquePointer?) {
         self.database = database
+        // Clear prepared statements when database changes
+        clearPreparedStatements()
+    }
+    
+    // MARK: - Prepared Statement Management
+    
+    /// Gets or creates a prepared statement for the given SQL
+    private func getPreparedStatement(for sql: String, key: String) -> OpaquePointer? {
+        return statementCacheQueue.sync {
+            if let statement = preparedStatements[key] {
+                return statement
+            }
+            
+            guard let database = database else { return nil }
+            
+            var statement: OpaquePointer?
+            let result = sqlite3_prepare_v2(database, sql, -1, &statement, nil)
+            
+            if result == SQLITE_OK {
+                preparedStatements[key] = statement
+                return statement
+            } else {
+                let errorMessage = String(cString: sqlite3_errmsg(database))
+                print("⚠️ Failed to prepare statement '\(key)': \(errorMessage)")
+                return nil
+            }
+        }
+    }
+    
+    /// Clears all prepared statements
+    private func clearPreparedStatements() {
+        statementCacheQueue.sync {
+            for (_, statement) in preparedStatements {
+                if let stmt = statement {
+                    sqlite3_finalize(stmt)
+                }
+            }
+            preparedStatements.removeAll()
+        }
+    }
+    
+    deinit {
+        clearPreparedStatements()
     }
     
     // MARK: - Group Management Operations
@@ -207,6 +264,9 @@ class TrackGroupService: ObservableObject {
                 self?.groups.append(group)
             }
             
+            // Update cache
+            updateCacheForGroup(group)
+            
             print("✅ Created group '\(group.displayName)' with \(group.trackCount) tracks")
             return group
             
@@ -245,6 +305,9 @@ class TrackGroupService: ObservableObject {
             await MainActor.run { [weak self] in
                 self?.groups.remove(at: groupIndex)
             }
+            
+            // Update cache
+            removeCacheForGroup(groupId)
             
             print("✅ Deleted group '\(group.displayName)' with \(group.trackCount) tracks")
             
@@ -301,6 +364,9 @@ class TrackGroupService: ObservableObject {
             await MainActor.run { [weak self] in
                 self?.groups[groupIndex] = group
             }
+            
+            // Update cache
+            updateCacheForGroup(group)
             
             let addedCount = group.trackIds.count - originalTrackIds.count
             print("✅ Added \(addedCount) tracks to group '\(group.displayName)'")
@@ -375,6 +441,9 @@ class TrackGroupService: ObservableObject {
                 self?.groups[groupIndex] = group
             }
             
+            // Update cache
+            updateCacheForGroup(group)
+            
             print("✅ Removed track \(trackId) from group '\(group.displayName)'")
             
         } catch {
@@ -448,6 +517,9 @@ class TrackGroupService: ObservableObject {
                 self?.groups[groupIndex] = group
             }
             
+            // Update cache
+            updateCacheForGroup(group)
+            
             print("✅ Set track \(trackId) as main track for group '\(group.displayName)' (was \(originalMainTrackId))")
             
         } catch {
@@ -481,6 +553,9 @@ class TrackGroupService: ObservableObject {
             self?.groups.remove(at: groupIndex)
         }
         
+        // Update cache
+        removeCacheForGroup(groupId)
+        
         print("Successfully ungrouped \(group.trackCount) tracks from group '\(group.displayName)'")
     }
     
@@ -503,23 +578,101 @@ class TrackGroupService: ObservableObject {
         }
     }
     
-    /// Efficient lookup method for group membership queries
+    /// Efficient lookup method for group membership queries with caching
     /// - Parameter trackId: ID of the track to find
     /// - Returns: TrackGroup if track is in a group, nil otherwise
     func getGroupForTrack(trackId: Int) -> TrackGroup? {
-        return groups.first { group in
-            group.contains(trackId)
+        return cacheQueue.sync {
+            // Ensure cache is valid
+            if !cacheValid {
+                rebuildCache()
+            }
+            
+            // Fast cache lookup
+            guard let groupId = trackToGroupCache[trackId] else {
+                return nil
+            }
+            
+            return groupCache[groupId]
         }
     }
     
-    /// Gets all tracks that are not in any group
+    /// Batch lookup for multiple tracks - more efficient than individual lookups
+    /// - Parameter trackIds: Array of track IDs to find groups for
+    /// - Returns: Dictionary mapping track ID to TrackGroup (only includes tracks that are in groups)
+    func getGroupsForTracks(_ trackIds: [Int]) -> [Int: TrackGroup] {
+        return cacheQueue.sync {
+            // Ensure cache is valid
+            if !cacheValid {
+                rebuildCache()
+            }
+            
+            var result: [Int: TrackGroup] = [:]
+            for trackId in trackIds {
+                if let groupId = trackToGroupCache[trackId],
+                   let group = groupCache[groupId] {
+                    result[trackId] = group
+                }
+            }
+            return result
+        }
+    }
+    
+    /// Checks if a track is in any group (faster than getGroupForTrack when you only need boolean result)
+    /// - Parameter trackId: ID of the track to check
+    /// - Returns: True if track is in a group, false otherwise
+    func isTrackInGroup(trackId: Int) -> Bool {
+        return cacheQueue.sync {
+            // Ensure cache is valid
+            if !cacheValid {
+                rebuildCache()
+            }
+            
+            return trackToGroupCache[trackId] != nil
+        }
+    }
+    
+    /// Gets all tracks that are not in any group (optimized version)
     /// - Parameter allTracks: Array of all tracks
     /// - Returns: Array of tracks not in groups
     func getUngroupedTracks(from allTracks: [Track]) -> [Track] {
-        let groupedTrackIds = Set(groups.flatMap { $0.trackIds })
-        return allTracks.filter { track in
-            guard let trackId = track.id else { return true }
-            return !groupedTrackIds.contains(trackId)
+        return cacheQueue.sync {
+            // Ensure cache is valid
+            if !cacheValid {
+                rebuildCache()
+            }
+            
+            return allTracks.filter { track in
+                guard let trackId = track.id else { return true }
+                return trackToGroupCache[trackId] == nil
+            }
+        }
+    }
+    
+    /// Optimized method to get all grouped track IDs
+    /// - Returns: Set of all track IDs that are in groups
+    func getAllGroupedTrackIds() -> Set<Int> {
+        return cacheQueue.sync {
+            // Ensure cache is valid
+            if !cacheValid {
+                rebuildCache()
+            }
+            
+            return Set(trackToGroupCache.keys)
+        }
+    }
+    
+    /// Gets performance statistics for monitoring
+    /// - Returns: Dictionary with performance metrics
+    func getPerformanceStatistics() -> [String: Any] {
+        return cacheQueue.sync {
+            return [
+                "totalGroups": groups.count,
+                "totalGroupedTracks": trackToGroupCache.count,
+                "cacheValid": cacheValid,
+                "averageTracksPerGroup": groups.isEmpty ? 0 : Double(trackToGroupCache.count) / Double(groups.count),
+                "expandedGroups": groups.filter { $0.isExpanded }.count
+            ]
         }
     }
     
@@ -563,6 +716,9 @@ class TrackGroupService: ObservableObject {
             await MainActor.run { [weak self] in
                 self?.groups = validGroups
             }
+            
+            // Invalidate cache to force rebuild on next access
+            invalidateCache()
             
             let message = "✅ Loaded \(validGroups.count) track groups from database"
             if !corruptedGroupIds.isEmpty {
@@ -698,6 +854,58 @@ class TrackGroupService: ObservableObject {
                     continuation.resume(throwing: TrackGroupError.databaseError("Failed to cleanup track from groups"))
                 }
             }
+        }
+    }
+    
+    // MARK: - Cache Management Methods
+    
+    /// Rebuilds the internal caches for fast lookups
+    private func rebuildCache() {
+        trackToGroupCache.removeAll()
+        groupCache.removeAll()
+        
+        for group in groups {
+            groupCache[group.id] = group
+            for trackId in group.trackIds {
+                trackToGroupCache[trackId] = group.id
+            }
+        }
+        
+        cacheValid = true
+        print("🔄 [TrackGroupService] Cache rebuilt: \(groups.count) groups, \(trackToGroupCache.count) track mappings")
+    }
+    
+    /// Invalidates the cache (call when groups are modified)
+    private func invalidateCache() {
+        cacheValid = false
+    }
+    
+    /// Updates cache for a specific group (more efficient than full rebuild)
+    private func updateCacheForGroup(_ group: TrackGroup) {
+        cacheQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Remove old mappings for this group
+            self.trackToGroupCache = self.trackToGroupCache.filter { $0.value != group.id }
+            
+            // Add new mappings
+            self.groupCache[group.id] = group
+            for trackId in group.trackIds {
+                self.trackToGroupCache[trackId] = group.id
+            }
+        }
+    }
+    
+    /// Removes cache entries for a deleted group
+    private func removeCacheForGroup(_ groupId: String) {
+        cacheQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Remove group from cache
+            self.groupCache.removeValue(forKey: groupId)
+            
+            // Remove track mappings for this group
+            self.trackToGroupCache = self.trackToGroupCache.filter { $0.value != groupId }
         }
     }
     
