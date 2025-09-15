@@ -123,6 +123,12 @@ struct ContentView: View {
                 menuActionState.shouldRegenerateWaveforms = false
             }
         }
+        .onChange(of: menuActionState.shouldGoToCurrentTrack) { _, shouldGoTo in
+            if shouldGoTo {
+                NotificationCenter.default.post(name: NSNotification.Name("GoToCurrentTrack"), object: nil)
+                menuActionState.shouldGoToCurrentTrack = false
+            }
+        }
         .onChange(of: collectionService.tracks) { oldTracks, newTracks in
             print("[ContentView] tracks changed, count=\(newTracks.count)")
             

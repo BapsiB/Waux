@@ -71,6 +71,7 @@ struct TrackTable: View {
     let onKeyPressBackspace: () -> Void
     let onColumnWidthChange: () -> Void
     let onGroupToggle: (String) -> Void
+    let onGoToCurrentTrack: () -> Void
     
     var body: some View {
         Table(displayItems, selection: $selectedTracks, sortOrder: $sortOrder) {
@@ -210,6 +211,13 @@ struct TrackTable: View {
             if !isTextFieldFocused && isTableFocused && !selectedTracks.isEmpty {
                 onKeyPressBackspace()
             }
+        }
+        .onKeyPress("l", phases: .down) { press in
+            if press.modifiers.contains(.command) {
+                onGoToCurrentTrack()
+                return .handled
+            }
+            return .ignored
         }
         .onAppear {
             // Set focus to the table when it appears to ensure it can receive keyboard events
@@ -828,6 +836,19 @@ struct TrackListView: View {
         displayItems = trackDisplayService.toggleGroupExpansion(groupId: groupId, currentDisplayItems: displayItems)
     }
     
+    private func scrollToCurrentTrack() {
+        guard let currentTrack = audioService.currentTrack else { return }
+        
+        // Find the display item for the current track
+        if let displayItem = displayItems.first(where: { $0.track.id == currentTrack.id }) {
+            // Select the current track - this will make it visible in most cases
+            selectedDisplayItems = [displayItem.id]
+            print("🎯 [TrackListView] Selected current track: \(currentTrack.title)")
+        } else {
+            print("🎯 [TrackListView] Current track not found in display items: \(currentTrack.title)")
+        }
+    }
+    
     var body: some View {
         let _ = print("🎨 [TrackListView] Body view rendering - columnWidths: \(columnWidths.map { "\($0.key.displayName): \($0.value)" })")
         
@@ -861,10 +882,8 @@ struct TrackListView: View {
                     selectedDisplayItems = Set(displayItems.map { $0.id })
                 },
                 onKeyPressSpace: {
-
                     // Same track - toggle play/pause
                     audioService.togglePlayPause()
-
                 },
                 onKeyPressBackspace: {
                     let selectedTracksList = displayItems.filter { selectedDisplayItems.contains($0.id) }.map { $0.track }
@@ -874,8 +893,14 @@ struct TrackListView: View {
                     }
                 },
                 onColumnWidthChange: saveColumnWidths,
-                onGroupToggle: handleGroupToggle
+                onGroupToggle: handleGroupToggle,
+                onGoToCurrentTrack: {
+                    scrollToCurrentTrack()
+                }
             )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("GoToCurrentTrack"))) { _ in
+            scrollToCurrentTrack()
         }
         .background(
             TableSelectionHandler(
@@ -966,6 +991,14 @@ struct TrackListView: View {
         .onAppear {
             // Initialize display items on first load
             updateDisplayItems()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("GoToCurrentTrack"))) { _ in
+            // Handle menu action for Go to Current Track - find current track and select it
+            guard let currentTrack = audioService.currentTrack else { return }
+            
+            if let displayItem = displayItems.first(where: { $0.track.id == currentTrack.id }) {
+                selectedDisplayItems = [displayItem.id]
+            }
         }
     }
     

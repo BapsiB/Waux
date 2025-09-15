@@ -14,6 +14,7 @@ class MenuActionState: ObservableObject {
     @Published var shouldClearSavedFolder = false
     @Published var shouldRegenerateWaveforms = false
     @Published var shouldShowAbout = false
+    @Published var shouldGoToCurrentTrack = false
 }
 
 @main
@@ -46,6 +47,12 @@ struct WAUXApp: App {
                 }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 
+                Divider()
+                
+                Button("Go to Current Track") {
+                    menuActionState.shouldGoToCurrentTrack = true
+                }
+                .keyboardShortcut("l", modifiers: .command)
 
             }
             
