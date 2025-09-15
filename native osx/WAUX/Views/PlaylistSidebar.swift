@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import CoreTransferable
 
 struct PlaylistSidebar: View {
     @ObservedObject var playlistService: PlaylistService
@@ -546,6 +547,9 @@ struct PlaylistSidebar: View {
                 handled = true
             }
         }
+        Task { @MainActor in
+            DragStateManager.shared.reset()
+        }
         return handled
     }
     
@@ -577,6 +581,9 @@ struct PlaylistSidebar: View {
                             showingErrorAlert = true
                         }
                     }
+                }
+                Task { @MainActor in
+                    DragStateManager.shared.reset()
                 }
                 return true
             }
@@ -925,9 +932,22 @@ struct HierarchicalItemView: View {
                     draggedOver: draggedOver
                 )
                 .offset(x: -5) // Move folders 5px to the left
-                .draggable("folder:\(folder.id)")
+                .onDrag {
+                    print("🧲 [SidebarDrag] onDrag begin (kind=folder, id=\(folder.id))")
+                    Task { @MainActor in
+                        DragStateManager.shared.beginFolderDrag()
+                    }
+                    return NSItemProvider(object: "folder:\(folder.id)" as NSString)
+                }
                 .onDrop(of: [UTType.plainText], isTargeted: $draggedOver) { providers in
                     handleFolderDrop(providers: providers, targetFolder: folder)
+                }
+                .onHover { hovering in
+                    if hovering {
+                        print("📦 [FolderItemView] hover enter for folder=\(folder.name) | orgDrag=\(DragStateManager.shared.isOrganizationalDrag)")
+                    } else {
+                        print("📦 [FolderItemView] hover leave for folder=\(folder.name) | orgDrag=\(DragStateManager.shared.isOrganizationalDrag)")
+                    }
                 }
                 
             case .playlist(let playlist):
@@ -947,9 +967,22 @@ struct HierarchicalItemView: View {
                     onDrop: { providers in onDrop(providers, playlist) },
                     draggedOver: draggedOver
                 )
-                .draggable("playlist:\(playlist.id)")
+                .onDrag {
+                    print("🧲 [SidebarDrag] onDrag begin (kind=playlist, id=\(playlist.id))")
+                    Task { @MainActor in
+                        DragStateManager.shared.beginPlaylistDrag()
+                    }
+                    return NSItemProvider(object: "playlist:\(playlist.id)" as NSString)
+                }
                 .onDrop(of: [UTType.plainText], isTargeted: $draggedOver) { providers in
                     handlePlaylistDrop(providers: providers, targetPlaylist: playlist)
+                }
+                .onHover { hovering in
+                    if hovering {
+                        print("🎵 [PlaylistItemView] hover enter for playlist=\(playlist.name)")
+                    } else {
+                        print("🎵 [PlaylistItemView] hover leave for playlist=\(playlist.name)")
+                    }
                 }
             }
         }
@@ -1008,6 +1041,9 @@ struct HierarchicalItemView: View {
                             // Error handling should be done at the parent level
                         }
                     }
+                }
+                Task { @MainActor in
+                    DragStateManager.shared.reset()
                 }
                 return true
             }
@@ -1068,6 +1104,7 @@ struct FolderItemView: View {
     let onCreateSubfolder: () -> Void
     let onCreatePlaylist: () -> Void
     let draggedOver: Bool
+    @ObservedObject private var dragState = DragStateManager.shared
     
     private var isExpanded: Bool {
         playlistService.folderExpandedStates[folder.id] ?? folder.isExpanded
@@ -1129,9 +1166,9 @@ struct FolderItemView: View {
         .padding(.vertical, 0)
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(draggedOver ? Color.blue.opacity(0.5) : Color.clear)
+        .background((draggedOver && dragState.isOrganizationalDrag) ? Color.blue.opacity(0.5) : Color.clear)
         .overlay(
-            draggedOver ? 
+            (draggedOver && dragState.isOrganizationalDrag) ? 
             RoundedRectangle(cornerRadius: 4)
                 .stroke(Color.blue, lineWidth: 2)
                 .animation(.easeInOut(duration: 0.2), value: draggedOver)
@@ -1140,6 +1177,12 @@ struct FolderItemView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             onSelect()
+        }
+        .onChange(of: draggedOver) { newValue in
+            print("📦 [FolderItemView] draggedOver=\(newValue) for folder=\(folder.name) | orgDrag=\(dragState.isOrganizationalDrag)")
+        }
+        .onChange(of: dragState.currentDrag) { _ in
+            print("📦 [FolderItemView] drag kind changed to org=\(dragState.isOrganizationalDrag) for folder=\(folder.name)")
         }
         .contextMenu {
             Button("Create Playlist") {

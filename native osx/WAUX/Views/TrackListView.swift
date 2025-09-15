@@ -384,6 +384,14 @@ struct TrackTable: View {
                 .draggable(dragPayload(for: displayItem.track)) {
                     dragPreview(for: displayItem.track)
                 }
+                .onHover { hovering in
+                    // When the preview is about to show and hover starts during drag, mark drag kind
+                    if hovering {
+                        Task { @MainActor in
+                            DragStateManager.shared.beginTrackDrag()
+                        }
+                    }
+                }
         } else {
             Image(systemName: dragIconForDisplayItem(displayItem))
                 .foregroundColor(.secondary)
@@ -392,6 +400,13 @@ struct TrackTable: View {
                 .contentShape(Rectangle())
                 .help(tooltipText)
                 .onDrag { dragItem(for: displayItem.track) }
+                .onHover { hovering in
+                    if hovering {
+                        Task { @MainActor in
+                            DragStateManager.shared.beginTrackDrag()
+                        }
+                    }
+                }
         }
     }
     
@@ -565,6 +580,10 @@ struct TrackTable: View {
         for (index, dragTrack) in tracks.enumerated() {
             print("   - [\(index)] \(dragTrack.title) (\(dragTrack.path))")
         }
+        // Mark drag kind globally for hover targets
+        Task { @MainActor in
+            DragStateManager.shared.beginTrackDrag()
+        }
         
         return DraggedTracks(paths: paths)
     }
@@ -662,6 +681,10 @@ struct TrackTable: View {
             print("   - [\(index)] \(exportTrack.title)")
         }
         print("   - Payload length: \(payload.count) characters")
+        // Mark drag kind globally for hover targets (legacy path)
+        Task { @MainActor in
+            DragStateManager.shared.beginTrackDrag()
+        }
         
         return NSItemProvider(object: payload as NSString)
     }
