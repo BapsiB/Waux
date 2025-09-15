@@ -23,6 +23,8 @@ struct PlaylistSidebar: View {
     @State private var duplicatePlaylistName = ""
     @State private var parentFolderForNewFolder: PlaylistFolder?
     @State private var parentFolderForNewPlaylist: PlaylistFolder?
+    @State private var showingSnackbar = false
+    @State private var snackbarMessage = ""
     
     // Computed property to generate hierarchical items
     private var hierarchicalItems: [HierarchicalItem] {
@@ -259,6 +261,20 @@ struct PlaylistSidebar: View {
         } message: {
             Text(errorMessage)
         }
+        .overlay(
+            // Snackbar overlay
+            VStack {
+                Spacer()
+                
+                if showingSnackbar {
+                    SnackbarView(message: snackbarMessage) {
+                        showingSnackbar = false
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
+                }
+            }
+        )
         .onAppear {
             Task {
                 do {
@@ -507,20 +523,24 @@ struct PlaylistSidebar: View {
                     
                     Task {
                         print("   - 🚀 Adding tracks to playlist...")
-                        for (pathIndex, path) in paths.enumerated() {
-                            do {
-                                print("     - Adding path \(pathIndex + 1)/\(paths.count): \(path)")
-                                try await playlistService.addTrackToPlaylist(playlistId: playlist.id, absoluteTrackPath: path)
-                                print("     - ✅ Successfully added track")
-                            } catch {
-                                print("     - ❌ Failed to add track: \(error)")
+                        do {
+                            let result = try await playlistService.addTracksToPlaylist(playlistId: playlist.id, trackPaths: paths)
+                            print("   - ✅ Finished adding tracks: \(result.newTracks) new, \(result.duplicateTracks) duplicates")
+                            
+                            // Show snackbar only if there were duplicates
+                            if result.duplicateTracks > 0 {
                                 await MainActor.run {
-                                    errorMessage = error.localizedDescription
-                                    showingErrorAlert = true
+                                    snackbarMessage = "\(result.duplicateTracks) tracks were already in \(playlist.name)"
+                                    showingSnackbar = true
                                 }
                             }
+                        } catch {
+                            print("     - ❌ Failed to add tracks: \(error)")
+                            await MainActor.run {
+                                errorMessage = error.localizedDescription
+                                showingErrorAlert = true
+                            }
                         }
-                        print("   - ✅ Finished adding all tracks")
                     }
                 }
                 handled = true
@@ -1189,6 +1209,9 @@ struct PlaylistItemView: View {
     let onDrop: ([NSItemProvider]) -> Bool
     let draggedOver: Bool
     
+    @State private var scale: CGFloat = 1.0
+    @State private var localDraggedOver: Bool = false
+    
     var body: some View {
         HStack(spacing: 8) {
             // Playlist icon
@@ -1222,21 +1245,29 @@ struct PlaylistItemView: View {
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            draggedOver ? Color.green.opacity(0.2) : Color.clear
+            localDraggedOver ? Color.green.opacity(0.2) : Color.clear
         )
         .overlay(
-            draggedOver ?
+            localDraggedOver ?
             RoundedRectangle(cornerRadius: 4)
                 .stroke(Color.green, lineWidth: 2)
-                .animation(.easeInOut(duration: 0.2), value: draggedOver)
+                .animation(.easeInOut(duration: 0.2), value: localDraggedOver)
             : nil
         )
         .contentShape(Rectangle())
         .onTapGesture {
             onSelect()
         }
-        .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
-            onDrop(providers)
+        .scaleEffect(scale)
+        .onDrop(of: [UTType.plainText], isTargeted: $localDraggedOver) { providers in
+            // Clear drag overlay immediately
+            localDraggedOver = false
+            
+            let result = onDrop(providers)
+            if result {
+                triggerBounceAnimation()
+            }
+            return result
         }
         .contextMenu {
             Button("Rename") {
@@ -1258,6 +1289,18 @@ struct PlaylistItemView: View {
             }
         }
         .offset(x:18)
+    }
+    
+    private func triggerBounceAnimation() {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.6, blendDuration: 0)) {
+            scale = 1.15
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0)) {
+                scale = 1.0
+            }
+        }
     }
 }
 

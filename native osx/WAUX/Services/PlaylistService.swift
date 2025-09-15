@@ -32,6 +32,7 @@ class PlaylistService: ObservableObject {
     @Published var folderExpandedStates: [String: Bool] = [:]
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var snackbarMessage: String?
     
     private var database: OpaquePointer?
     private var activeCollectionDefinition: CollectionDefinition?
@@ -420,7 +421,7 @@ class PlaylistService: ObservableObject {
         }
     }
     
-    func addTrackToPlaylist(playlistId: String, absoluteTrackPath: String) async throws {
+    func addTrackToPlaylist(playlistId: String, absoluteTrackPath: String) async throws -> Bool {
         guard let activeCollection = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
         }
@@ -462,7 +463,7 @@ class PlaylistService: ObservableObject {
                     let count = sqlite3_column_int(checkStatement, 0)
                     if count > 0 {
                         print("Track '\(pathToAdd)' already in playlist '\(playlistId)'")
-                        return ()
+                        return false // Track was already present (duplicate)
                     }
                 }
             }
@@ -517,8 +518,30 @@ class PlaylistService: ObservableObject {
             }
             
             print("Added track '\(pathToAdd)' to playlist '\(playlistId)'")
-            return ()
+            return true // Track was new
         }
+    }
+    
+    func addTracksToPlaylist(playlistId: String, trackPaths: [String]) async throws -> (newTracks: Int, duplicateTracks: Int) {
+        var newCount = 0
+        var duplicateCount = 0
+        
+        for trackPath in trackPaths {
+            do {
+                let wasNew = try await addTrackToPlaylist(playlistId: playlistId, absoluteTrackPath: trackPath)
+                if wasNew {
+                    newCount += 1
+                } else {
+                    duplicateCount += 1
+                }
+            } catch {
+                // Log error but continue with other tracks
+                print("Failed to add track '\(trackPath)': \(error)")
+                throw error
+            }
+        }
+        
+        return (newTracks: newCount, duplicateTracks: duplicateCount)
     }
     
     func removeTrackFromPlaylist(playlistId: String, absoluteTrackPath: String) async throws {
@@ -1630,6 +1653,19 @@ class PlaylistService: ObservableObject {
     /// Get a SelectableItem for a playlist
     func getSelectableItem(for playlist: Playlist) -> SelectableItem {
         return .playlist(playlist)
+    }
+    
+    // MARK: - Snackbar Methods
+    func showSnackbar(message: String) {
+        DispatchQueue.main.async {
+            self.snackbarMessage = message
+        }
+    }
+    
+    func dismissSnackbar() {
+        DispatchQueue.main.async {
+            self.snackbarMessage = nil
+        }
     }
 }
 

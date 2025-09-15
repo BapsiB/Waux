@@ -28,28 +28,43 @@ struct ContentView: View {
     @EnvironmentObject private var menuActionState: MenuActionState
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Main content
+        ZStack {
             VStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    // Sidebar
-                    PlaylistSidebar(
-                        playlistService: playlistService,
-                        selectedItem: $selectedItem
-                    )
+                // Main content
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        // Sidebar
+                        PlaylistSidebar(
+                            playlistService: playlistService,
+                            selectedItem: $selectedItem
+                        )
+                        
+                        // Main area
+                        MainContentArea(
+                            collectionService: collectionService,
+                            playlistService: playlistService,
+                            audioService: audioService,
+                            playlistTracks: playlistTracks,
+                            isLoadingPlaylistTracks: isLoadingPlaylistTracks,
+                            showingFolderPicker: $showingFolderPicker,
+                            selectedItem: $selectedItem,
+                            isImportingNewFolder: $isImportingNewFolder,
+                            initialLoadComplete: initialLoadComplete
+                        )
+                    }
+                }
+            }
+            
+            // Snackbar overlay
+            if let message = playlistService.snackbarMessage {
+                VStack {
+                    Spacer()
                     
-                    // Main area
-                    MainContentArea(
-                        collectionService: collectionService,
-                        playlistService: playlistService,
-                        audioService: audioService,
-                        playlistTracks: playlistTracks,
-                        isLoadingPlaylistTracks: isLoadingPlaylistTracks,
-                        showingFolderPicker: $showingFolderPicker,
-                        selectedItem: $selectedItem,
-                        isImportingNewFolder: $isImportingNewFolder,
-                        initialLoadComplete: initialLoadComplete
-                    )
+                    SnackbarView(message: message) {
+                        playlistService.dismissSnackbar()
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
                 }
             }
         }
