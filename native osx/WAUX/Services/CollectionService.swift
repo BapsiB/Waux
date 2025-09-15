@@ -9,12 +9,14 @@ import ID3TagEditor
 
 class CollectionService: ObservableObject {
     // MARK: - Constants
-    private let databaseVersion = 6
+    private let databaseVersion = 7
     private let tableMusic = "music"
     private let tablePlaylists = "playlists"
     private let tablePlaylistTracks = "playlist_tracks"
     private let tableLocalRoots = "local_root_folders"
     private let tableUiSettings = "ui_settings"
+    private let tableTrackGroups = "track_groups"
+    private let tableTrackGroupMembers = "track_group_members"
     
     // Column names for music table
     private let columnId = "id"
@@ -296,6 +298,78 @@ class CollectionService: ObservableObject {
                 }
             }
         }
+        
+        // Check if track groups tables exist and create them if needed
+        try migrateTrackGroupsTables()
+    }
+    
+    private func migrateTrackGroupsTables() throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        
+        // Check if track_groups table exists
+        let checkTrackGroupsTableSQL = "SELECT name FROM sqlite_master WHERE type='table' AND name='\(tableTrackGroups)'"
+        var statement: OpaquePointer?
+        
+        var trackGroupsTableExists = false
+        if sqlite3_prepare_v2(db, checkTrackGroupsTableSQL, -1, &statement, nil) == SQLITE_OK {
+            defer { sqlite3_finalize(statement) }
+            if sqlite3_step(statement) == SQLITE_ROW {
+                trackGroupsTableExists = true
+            }
+        }
+        
+        if !trackGroupsTableExists {
+            print("🔧 Creating track_groups table...")
+            let createTrackGroupsSQL = """
+            CREATE TABLE \(tableTrackGroups) (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                main_track_id INTEGER NOT NULL,
+                date_created TEXT NOT NULL,
+                is_expanded INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (main_track_id) REFERENCES \(tableMusic) (id) ON DELETE CASCADE
+            )
+            """
+            
+            if sqlite3_exec(db, createTrackGroupsSQL, nil, nil, nil) != SQLITE_OK {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw CollectionError.queryFailed(message: "Failed to create track_groups table: \(errorMessage)")
+            } else {
+                print("✅ Successfully created track_groups table")
+            }
+        }
+        
+        // Check if track_group_members table exists
+        let checkTrackGroupMembersTableSQL = "SELECT name FROM sqlite_master WHERE type='table' AND name='\(tableTrackGroupMembers)'"
+        var membersStatement: OpaquePointer?
+        
+        var trackGroupMembersTableExists = false
+        if sqlite3_prepare_v2(db, checkTrackGroupMembersTableSQL, -1, &membersStatement, nil) == SQLITE_OK {
+            defer { sqlite3_finalize(membersStatement) }
+            if sqlite3_step(membersStatement) == SQLITE_ROW {
+                trackGroupMembersTableExists = true
+            }
+        }
+        
+        if !trackGroupMembersTableExists {
+            print("🔧 Creating track_group_members table...")
+            let createTrackGroupMembersSQL = """
+            CREATE TABLE \(tableTrackGroupMembers) (
+                group_id TEXT NOT NULL,
+                track_id INTEGER NOT NULL,
+                PRIMARY KEY (group_id, track_id),
+                FOREIGN KEY (group_id) REFERENCES \(tableTrackGroups) (id) ON DELETE CASCADE,
+                FOREIGN KEY (track_id) REFERENCES \(tableMusic) (id) ON DELETE CASCADE
+            )
+            """
+            
+            if sqlite3_exec(db, createTrackGroupMembersSQL, nil, nil, nil) != SQLITE_OK {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw CollectionError.queryFailed(message: "Failed to create track_group_members table: \(errorMessage)")
+            } else {
+                print("✅ Successfully created track_group_members table")
+            }
+        }
     }
 
     // MARK: - Database Creation (for new local collections)
@@ -376,7 +450,28 @@ class CollectionService: ObservableObject {
         )
         """
 
-        let statements = [createMusicSQL, createPlaylistsSQL, createPlaylistTracksSQL, createLocalRootsSQL]
+        let createTrackGroupsSQL = """
+        CREATE TABLE IF NOT EXISTS \(tableTrackGroups) (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            main_track_id INTEGER NOT NULL,
+            date_created TEXT NOT NULL,
+            is_expanded INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (main_track_id) REFERENCES \(tableMusic) (id) ON DELETE CASCADE
+        )
+        """
+
+        let createTrackGroupMembersSQL = """
+        CREATE TABLE IF NOT EXISTS \(tableTrackGroupMembers) (
+            group_id TEXT NOT NULL,
+            track_id INTEGER NOT NULL,
+            PRIMARY KEY (group_id, track_id),
+            FOREIGN KEY (group_id) REFERENCES \(tableTrackGroups) (id) ON DELETE CASCADE,
+            FOREIGN KEY (track_id) REFERENCES \(tableMusic) (id) ON DELETE CASCADE
+        )
+        """
+
+        let statements = [createMusicSQL, createPlaylistsSQL, createPlaylistTracksSQL, createLocalRootsSQL, createTrackGroupsSQL, createTrackGroupMembersSQL]
         for sql in statements {
             print("[DBCreate] Executing SQL: \(sql.replacingOccurrences(of: "\n", with: " "))")
             if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
@@ -1023,6 +1118,10 @@ class CollectionService: ObservableObject {
     func deleteTrack(_ id: Int) throws {
         guard let db = database else { throw CollectionError.databaseNotOpen }
         if isReadOnlyMode { throw CollectionError.queryFailed(message: "Cannot delete in read-only mode.") }
+        
+        // Clean up track group relationships before deleting the track
+        try cleanupTrackGroupRelationships(trackId: id)
+        
         var stmt: OpaquePointer?
         let sql = "DELETE FROM \(tableMusic) WHERE \(columnId) = ?"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -3485,6 +3584,377 @@ class CollectionService: ObservableObject {
                 self.tracks[index] = updatedTrack
                 print("🔄 [CollectionService] Updated track in memory for ID \(trackId) with cleared waveform data")
             }
+        }
+    }
+    
+    // MARK: - Track Group Database Operations
+    
+    /// Load all track groups from the database
+    func loadTrackGroups() async throws -> [TrackGroup] {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else {
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    
+                    let query = """
+                    SELECT tg.id, tg.name, tg.main_track_id, tg.date_created, tg.is_expanded,
+                           GROUP_CONCAT(tgm.track_id) as track_ids
+                    FROM \(self.tableTrackGroups) tg
+                    LEFT JOIN \(self.tableTrackGroupMembers) tgm ON tg.id = tgm.group_id
+                    GROUP BY tg.id, tg.name, tg.main_track_id, tg.date_created, tg.is_expanded
+                    """
+                    
+                    var statement: OpaquePointer?
+                    let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+                    defer { sqlite3_finalize(statement) }
+                    
+                    if result != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    var groups: [TrackGroup] = []
+                    while sqlite3_step(statement) == SQLITE_ROW {
+                        let id = String(cString: sqlite3_column_text(statement, 0))
+                        let name = String(cString: sqlite3_column_text(statement, 1))
+                        let mainTrackId = Int(sqlite3_column_int(statement, 2))
+                        let dateCreatedString = String(cString: sqlite3_column_text(statement, 3))
+                        let isExpanded = sqlite3_column_int(statement, 4) != 0
+                        
+                        // Parse track IDs
+                        var trackIds: Set<Int> = []
+                        if sqlite3_column_type(statement, 5) != SQLITE_NULL {
+                            let trackIdsString = String(cString: sqlite3_column_text(statement, 5))
+                            trackIds = Set(trackIdsString.split(separator: ",").compactMap { Int($0) })
+                        }
+                        
+                        // Parse date
+                        let dateFormatter = ISO8601DateFormatter()
+                        let dateCreated = dateFormatter.date(from: dateCreatedString) ?? Date()
+                        
+                        let group = TrackGroup(
+                            id: id,
+                            name: name,
+                            mainTrackId: mainTrackId,
+                            trackIds: trackIds,
+                            dateCreated: dateCreated,
+                            isExpanded: isExpanded
+                        )
+                        groups.append(group)
+                    }
+                    
+                    continuation.resume(returning: groups)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /// Save a track group to the database
+    func saveTrackGroup(_ group: TrackGroup) async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else {
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    
+                    // Begin transaction
+                    if sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil) != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: "Failed to begin transaction: \(errorMessage)"))
+                        return
+                    }
+                    
+                    // Insert or replace track group
+                    let dateFormatter = ISO8601DateFormatter()
+                    let dateString = dateFormatter.string(from: group.dateCreated)
+                    
+                    let insertGroupSQL = """
+                    INSERT OR REPLACE INTO \(self.tableTrackGroups) 
+                    (id, name, main_track_id, date_created, is_expanded) 
+                    VALUES (?, ?, ?, ?, ?)
+                    """
+                    
+                    var groupStatement: OpaquePointer?
+                    if sqlite3_prepare_v2(db, insertGroupSQL, -1, &groupStatement, nil) != SQLITE_OK {
+                        sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    defer { sqlite3_finalize(groupStatement) }
+                    
+                    sqlite3_bind_text(groupStatement, 1, group.id, -1, self.SQLITE_TRANSIENT)
+                    sqlite3_bind_text(groupStatement, 2, group.name, -1, self.SQLITE_TRANSIENT)
+                    sqlite3_bind_int(groupStatement, 3, Int32(group.mainTrackId))
+                    sqlite3_bind_text(groupStatement, 4, dateString, -1, self.SQLITE_TRANSIENT)
+                    sqlite3_bind_int(groupStatement, 5, group.isExpanded ? 1 : 0)
+                    
+                    if sqlite3_step(groupStatement) != SQLITE_DONE {
+                        sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    // Delete existing members
+                    let deleteMembersSQL = "DELETE FROM \(self.tableTrackGroupMembers) WHERE group_id = ?"
+                    var deleteStatement: OpaquePointer?
+                    if sqlite3_prepare_v2(db, deleteMembersSQL, -1, &deleteStatement, nil) != SQLITE_OK {
+                        sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    defer { sqlite3_finalize(deleteStatement) }
+                    
+                    sqlite3_bind_text(deleteStatement, 1, group.id, -1, self.SQLITE_TRANSIENT)
+                    if sqlite3_step(deleteStatement) != SQLITE_DONE {
+                        sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    // Insert new members
+                    let insertMemberSQL = "INSERT INTO \(self.tableTrackGroupMembers) (group_id, track_id) VALUES (?, ?)"
+                    for trackId in group.trackIds {
+                        var memberStatement: OpaquePointer?
+                        if sqlite3_prepare_v2(db, insertMemberSQL, -1, &memberStatement, nil) != SQLITE_OK {
+                            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                            let errorMessage = String(cString: sqlite3_errmsg(db))
+                            continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                            return
+                        }
+                        defer { sqlite3_finalize(memberStatement) }
+                        
+                        sqlite3_bind_text(memberStatement, 1, group.id, -1, self.SQLITE_TRANSIENT)
+                        sqlite3_bind_int(memberStatement, 2, Int32(trackId))
+                        
+                        if sqlite3_step(memberStatement) != SQLITE_DONE {
+                            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                            let errorMessage = String(cString: sqlite3_errmsg(db))
+                            continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                            return
+                        }
+                    }
+                    
+                    // Commit transaction
+                    if sqlite3_exec(db, "COMMIT", nil, nil, nil) != SQLITE_OK {
+                        sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    sqlite3_exec(self.database, "ROLLBACK", nil, nil, nil)
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /// Delete a track group from the database
+    func deleteTrackGroup(id: String) async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else {
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    
+                    // Delete group (cascade will handle members)
+                    let deleteSQL = "DELETE FROM \(self.tableTrackGroups) WHERE id = ?"
+                    var statement: OpaquePointer?
+                    
+                    if sqlite3_prepare_v2(db, deleteSQL, -1, &statement, nil) != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    defer { sqlite3_finalize(statement) }
+                    
+                    sqlite3_bind_text(statement, 1, id, -1, self.SQLITE_TRANSIENT)
+                    
+                    if sqlite3_step(statement) != SQLITE_DONE {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /// Update the main track for a group
+    func updateTrackGroupMainTrack(groupId: String, mainTrackId: Int) async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            databaseQueue.async {
+                do {
+                    guard let db = self.database else {
+                        continuation.resume(throwing: CollectionError.databaseNotOpen)
+                        return
+                    }
+                    
+                    let updateSQL = "UPDATE \(self.tableTrackGroups) SET main_track_id = ? WHERE id = ?"
+                    var statement: OpaquePointer?
+                    
+                    if sqlite3_prepare_v2(db, updateSQL, -1, &statement, nil) != SQLITE_OK {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    defer { sqlite3_finalize(statement) }
+                    
+                    sqlite3_bind_int(statement, 1, Int32(mainTrackId))
+                    sqlite3_bind_text(statement, 2, groupId, -1, self.SQLITE_TRANSIENT)
+                    
+                    if sqlite3_step(statement) != SQLITE_DONE {
+                        let errorMessage = String(cString: sqlite3_errmsg(db))
+                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
+                        return
+                    }
+                    
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /// Cleans up track group relationships when a track is deleted
+    /// This method handles:
+    /// - Removing the track from group membership
+    /// - Dissolving groups that would have only 1 track remaining
+    /// - Reassigning main track if the deleted track was the main track
+    private func cleanupTrackGroupRelationships(trackId: Int) throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        
+        // Find groups that contain this track
+        let findGroupsSQL = """
+            SELECT tg.id, tg.main_track_id, COUNT(tgm.track_id) as member_count
+            FROM \(tableTrackGroups) tg
+            JOIN \(tableTrackGroupMembers) tgm ON tg.id = tgm.group_id
+            WHERE tg.id IN (
+                SELECT group_id FROM \(tableTrackGroupMembers) WHERE track_id = ?
+            )
+            GROUP BY tg.id, tg.main_track_id
+        """
+        
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, findGroupsSQL, -1, &statement, nil) == SQLITE_OK else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Failed to prepare group cleanup query: \(errorMessage)")
+        }
+        defer { sqlite3_finalize(statement) }
+        
+        sqlite3_bind_int(statement, 1, Int32(trackId))
+        
+        var groupsToProcess: [(id: String, mainTrackId: Int, memberCount: Int)] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let groupId = String(cString: sqlite3_column_text(statement, 0))
+            let mainTrackId = Int(sqlite3_column_int(statement, 1))
+            let memberCount = Int(sqlite3_column_int(statement, 2))
+            groupsToProcess.append((id: groupId, mainTrackId: mainTrackId, memberCount: memberCount))
+        }
+        
+        // Process each affected group
+        for group in groupsToProcess {
+            if group.memberCount <= 2 {
+                // Group will have 1 or fewer tracks after deletion, so dissolve it
+                try dissolveTrackGroup(groupId: group.id)
+                print("Dissolved group \(group.id) due to insufficient tracks after deletion of track \(trackId)")
+            } else if group.mainTrackId == trackId {
+                // Need to reassign main track
+                try reassignMainTrackForGroup(groupId: group.id, excludeTrackId: trackId)
+                print("Reassigned main track for group \(group.id) after deletion of main track \(trackId)")
+            }
+            // Note: The track will be automatically removed from group membership
+            // due to foreign key cascade constraints
+        }
+    }
+    
+    /// Dissolves a track group by deleting it from the database
+    private func dissolveTrackGroup(groupId: String) throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        
+        // Delete group (cascade constraints will handle member cleanup)
+        let deleteSQL = "DELETE FROM \(tableTrackGroups) WHERE id = ?"
+        var statement: OpaquePointer?
+        
+        guard sqlite3_prepare_v2(db, deleteSQL, -1, &statement, nil) == SQLITE_OK else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Failed to prepare group dissolution: \(errorMessage)")
+        }
+        defer { sqlite3_finalize(statement) }
+        
+        sqlite3_bind_text(statement, 1, groupId, -1, SQLITE_TRANSIENT)
+        
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Failed to dissolve group: \(errorMessage)")
+        }
+    }
+    
+    /// Reassigns the main track for a group when the current main track is being deleted
+    private func reassignMainTrackForGroup(groupId: String, excludeTrackId: Int) throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        
+        // Find the first available track in the group (excluding the one being deleted)
+        let findTrackSQL = """
+            SELECT track_id FROM \(tableTrackGroupMembers) 
+            WHERE group_id = ? AND track_id != ? 
+            LIMIT 1
+        """
+        
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, findTrackSQL, -1, &statement, nil) == SQLITE_OK else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Failed to prepare main track reassignment query: \(errorMessage)")
+        }
+        defer { sqlite3_finalize(statement) }
+        
+        sqlite3_bind_text(statement, 1, groupId, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(statement, 2, Int32(excludeTrackId))
+        
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            // No other tracks found, this shouldn't happen if we checked member count correctly
+            throw CollectionError.queryFailed(message: "No alternative main track found for group \(groupId)")
+        }
+        
+        let newMainTrackId = Int(sqlite3_column_int(statement, 0))
+        
+        // Update the group's main track
+        let updateSQL = "UPDATE \(tableTrackGroups) SET main_track_id = ? WHERE id = ?"
+        var updateStatement: OpaquePointer?
+        
+        guard sqlite3_prepare_v2(db, updateSQL, -1, &updateStatement, nil) == SQLITE_OK else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Failed to prepare main track update: \(errorMessage)")
+        }
+        defer { sqlite3_finalize(updateStatement) }
+        
+        sqlite3_bind_int(updateStatement, 1, Int32(newMainTrackId))
+        sqlite3_bind_text(updateStatement, 2, groupId, -1, SQLITE_TRANSIENT)
+        
+        guard sqlite3_step(updateStatement) == SQLITE_DONE else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Failed to update main track: \(errorMessage)")
         }
     }
 }

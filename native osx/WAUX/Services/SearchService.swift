@@ -77,6 +77,44 @@ class SearchService: ObservableObject {
         return tracks.filter { trackMatchesSearch($0) }
     }
     
+    // Function to filter display items based on search criteria
+    // This ensures that grouped tracks are handled properly during search
+    func filterDisplayItems(_ displayItems: [TrackDisplayItem]) -> [TrackDisplayItem] {
+        if searchText.isEmpty {
+            return displayItems
+        }
+        
+        var filteredItems: [TrackDisplayItem] = []
+        var processedGroupIds: Set<String> = []
+        
+        for item in displayItems {
+            switch item {
+            case .individual(let track):
+                // Individual tracks: include if they match search
+                if trackMatchesSearch(track) {
+                    filteredItems.append(item)
+                }
+                
+            case .container(let groupedTrack):
+                // Container tracks: include if any track in the group matches search
+                let groupMatches = groupedTrack.allTracks.contains { trackMatchesSearch($0) }
+                if groupMatches {
+                    filteredItems.append(item)
+                    processedGroupIds.insert(groupedTrack.group.id)
+                }
+                
+            case .groupMember(let track, let groupId):
+                // Group members: only include if their container wasn't already included
+                // and they match the search criteria
+                if !processedGroupIds.contains(groupId) && trackMatchesSearch(track) {
+                    filteredItems.append(item)
+                }
+            }
+        }
+        
+        return filteredItems
+    }
+    
     // Reset search
     func clearSearch() {
         searchText = ""
