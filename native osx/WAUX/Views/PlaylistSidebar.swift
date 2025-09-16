@@ -1142,7 +1142,7 @@ struct FolderItemView: View {
                 // Spacer for alignment when no children
                 Rectangle()
                     .fill(Color.clear)
-                    .frame(width: 16, height: 36) // Match the size of the button with padding
+                    .frame(width: 16, height: 20) // Match the size of the button with padding (16 + 2*2 = 20)
             }
             
             // Folder icon
