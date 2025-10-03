@@ -15,6 +15,7 @@ class MenuActionState: ObservableObject {
     @Published var shouldRegenerateWaveforms = false
     @Published var shouldShowAbout = false
     @Published var shouldGoToCurrentTrack = false
+    @Published var shouldOpenCueFileHelper = false
 }
 
 @main
@@ -23,7 +24,7 @@ struct WAUXApp: App {
     
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainWindowView()
                 .environmentObject(menuActionState)
         }
         .windowStyle(.hiddenTitleBar)
@@ -53,6 +54,13 @@ struct WAUXApp: App {
                     menuActionState.shouldGoToCurrentTrack = true
                 }
                 .keyboardShortcut("l", modifiers: .command)
+                
+                Divider()
+                
+                Button("Open Cue File Helper") {
+                    menuActionState.shouldOpenCueFileHelper = true
+                }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
 
             }
             
@@ -62,5 +70,27 @@ struct WAUXApp: App {
                 }
             }
         }
+        
+        // Separate window for Cue File Helper
+        WindowGroup(id: "cue-file-helper") {
+            CueFileHelperView()
+        }
+        .defaultSize(width: 900, height: 600)
+    }
+}
+
+// Wrapper view to handle window opening
+struct MainWindowView: View {
+    @EnvironmentObject var menuActionState: MenuActionState
+    @Environment(\.openWindow) private var openWindow
+    
+    var body: some View {
+        ContentView()
+            .onChange(of: menuActionState.shouldOpenCueFileHelper) { _, shouldOpen in
+                if shouldOpen {
+                    openWindow(id: "cue-file-helper")
+                    menuActionState.shouldOpenCueFileHelper = false
+                }
+            }
     }
 }

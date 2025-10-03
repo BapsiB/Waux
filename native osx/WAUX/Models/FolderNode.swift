@@ -66,7 +66,42 @@ class FolderHierarchyBuilder {
         }
         
         // Build nested folder structure
-        let allFolderPaths = Set(folderMap.keys)
+        // Start with folders that directly contain tracks, then add ancestor folders up to the rootPath
+        let trackFolderPaths = Set(folderMap.keys)
+        var allFolderPaths = trackFolderPaths
+
+        // Ensure ancestor folders (that might not directly contain tracks) are included in the tree
+        for folderPath in trackFolderPaths {
+            var currentURL = URL(fileURLWithPath: folderPath)
+            while true {
+                let parentURL = currentURL.deletingLastPathComponent()
+                let parentPath = parentURL.path
+
+                // Stop if we reached the filesystem root or no progress
+                if parentPath.isEmpty || parentPath == currentURL.path {
+                    break
+                }
+
+                // If a rootPath is provided, stop ascension once we include it
+                if let rootPath = rootPath {
+                    // Do not go above the configured root folder
+                    if !folderPath.hasPrefix(rootPath) {
+                        // Track is outside of the specified root; don't constrain by rootPath in this case
+                    } else if !parentPath.hasPrefix(rootPath) {
+                        // Parent would be above root; ensure root is included and stop
+                        allFolderPaths.insert(rootPath)
+                        break
+                    }
+                    allFolderPaths.insert(parentPath)
+                    if parentPath == rootPath { break }
+                } else {
+                    // No explicit root; include all ancestors until filesystem root
+                    allFolderPaths.insert(parentPath)
+                }
+
+                currentURL = parentURL
+            }
+        }
         var folderNodes: [String: FolderNode] = [:]
         
         // Create all folder nodes first
