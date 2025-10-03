@@ -16,6 +16,7 @@ struct CueFileHelperView: View {
     @State private var processingProgress: (current: Int, total: Int)?
     @State private var originalFileURL: URL?
     @State private var showingDirectoryPicker = false
+    @State private var selectedEventForInfo: CueEvent?
     
     private let parsingService = CueFileParsingService()
     private let composerService = ComposerFetchingService()
@@ -39,6 +40,9 @@ struct CueFileHelperView: View {
         .frame(minWidth: 900, minHeight: 600)
         .onDrop(of: [.fileURL], isTargeted: $isDragging) { providers in
             handleDrop(providers: providers)
+        }
+        .sheet(item: $selectedEventForInfo) { event in
+            CueEventDetailView(event: event)
         }
     }
     
@@ -78,6 +82,18 @@ struct CueFileHelperView: View {
     
     private var tableView: some View {
         Table(events) {
+            TableColumn("") { event in
+                Button(action: {
+                    selectedEventForInfo = event
+                }) {
+                    Image(systemName: "info.circle")
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.plain)
+                .help("Show detailed information")
+            }
+            .width(30)
+            
             TableColumn("Channel") { event in
                 Text("\(event.channel)")
             }
@@ -297,6 +313,105 @@ struct CueFileHelperView: View {
             isFileLoaded = false
             originalFileURL = nil
             processingProgress = nil
+        }
+    }
+}
+
+// MARK: - Detail View
+
+struct CueEventDetailView: View {
+    let event: CueEvent
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Cue Event Details")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                
+                Spacer()
+                
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding()
+            .background(Color(NSColor.controlBackgroundColor))
+            
+            Divider()
+            
+            // Content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Basic Information
+                    infoSection(title: "Basic Information") {
+                        infoRow(label: "Clip Name", value: event.clipName)
+                        infoRow(label: "Channel", value: "\(event.channel)")
+                        infoRow(label: "Event ID", value: "\(event.eventID)")
+                        infoRow(label: "State", value: event.state.isEmpty ? "-" : event.state)
+                    }
+                    
+                    // Timing Information
+                    infoSection(title: "Timing Information") {
+                        infoRow(label: "Start Time", value: event.startTime)
+                        infoRow(label: "End Time", value: event.endTime)
+                        infoRow(label: "Duration", value: event.duration)
+                    }
+                    
+                    // Composer
+                    infoSection(title: "Metadata") {
+                        infoRow(label: "Composer", value: event.composer.isEmpty ? "-" : event.composer)
+                    }
+                    
+                    // All Names (merged clips/fades)
+                    if !event.allNames.isEmpty {
+                        infoSection(title: "All Clips & Fades") {
+                            Text(event.allNames)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.primary)
+                                .textSelection(.enabled)
+                                .padding(.vertical, 4)
+                        }
+                    }
+                }
+                .padding()
+            }
+        }
+        .frame(width: 600, height: 500)
+    }
+    
+    @ViewBuilder
+    private func infoSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+                .foregroundColor(.secondary)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                content()
+            }
+            .padding()
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+        }
+    }
+    
+    private func infoRow(label: String, value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(label + ":")
+                .fontWeight(.medium)
+                .frame(width: 120, alignment: .leading)
+            
+            Text(value)
+                .foregroundColor(.primary)
+                .textSelection(.enabled)
+            
+            Spacer()
         }
     }
 }
