@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 enum ParsingLayer: Int, CaseIterable {
     case layer1 = 1
@@ -73,6 +74,9 @@ struct CueFileHelperView: View {
     @State private var sortField: SortField = .catalogID
     @State private var sortAscending: Bool = true
     @State private var sortOrder: [KeyPathComparator<CueEvent>] = []
+    @State private var selectedEventIDs: Set<UUID> = []
+    @State private var isPinned = false
+    @Environment(\.openWindow) private var openWindow
     
     private let parsingService = CueFileParsingService()
     private let composerService = ComposerFetchingService()
@@ -148,6 +152,16 @@ struct CueFileHelperView: View {
                     .frame(width: 200)
                 }
                 
+                Button(action: {
+                    togglePin()
+                }) {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .foregroundColor(isPinned ? .orange : .secondary)
+                        .font(.system(size: 16))
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "Window is pinned on top" : "Pin window on top")
+                
                 Button("Select Audio Directory") {
                     selectDirectory()
                 }
@@ -215,7 +229,7 @@ struct CueFileHelperView: View {
     // MARK: - Table View
     
     private var tableView: some View {
-        Table(currentEvents, sortOrder: $sortOrder) {
+        Table(currentEvents, selection: $selectedEventIDs, sortOrder: $sortOrder) {
             TableColumn("") { event in
                 Button(action: {
                     selectedEventForInfo = event
@@ -230,47 +244,56 @@ struct CueFileHelperView: View {
             
             TableColumn("Track", value: \.channel) { event in
                 Text("\(event.channel)")
+                    .background(isSelected(event) ? Color.orange.opacity(0.2) : Color.clear)
             }
             .width(60)
             
             TableColumn("Event", value: \.eventID) { event in
                 Text("\(event.eventID)")
+                    .background(isSelected(event) ? Color.orange.opacity(0.2) : Color.clear)
             }
             .width(60)
             
             TableColumn("Catalog ID", value: \.catalogID) { event in
                 Text(event.catalogID)
+                    .background(isSelected(event) ? Color.orange.opacity(0.2) : Color.clear)
             }
             .width(min: 150, ideal: 200)
             
             TableColumn("Title", value: \.title) { event in
                 Text(event.title)
+                    .background(isSelected(event) ? Color.orange.opacity(0.2) : Color.clear)
             }
             .width(min: 150, ideal: 250)
             
             TableColumn("Start Time", value: \.startTime) { event in
                 Text(event.startTime)
+                    .background(isSelected(event) ? Color.orange.opacity(0.2) : Color.clear)
             }
             .width(100)
             
             TableColumn("End Time", value: \.endTime) { event in
                 Text(event.endTime)
+                    .background(isSelected(event) ? Color.orange.opacity(0.2) : Color.clear)
             }
             .width(100)
             
             TableColumn("Duration", value: \.duration) { event in
                 Text(event.duration)
+                    .background(isSelected(event) ? Color.orange.opacity(0.2) : Color.clear)
             }
             .width(80)
             
             TableColumn("State", value: \.state) { event in
                 Text(event.state)
+                    .background(isSelected(event) ? Color.orange.opacity(0.2) : Color.clear)
             }
             .width(80)
             
             TableColumn("Composer", value: \.composer) { event in
                 Text(event.composer.isEmpty ? "-" : event.composer)
                     .foregroundColor(event.composer.isEmpty ? .secondary : .primary)
+                    .background(isSelected(event) ? Color.orange.opacity(0.2) : Color.clear)
             }
             .width(min: 150, ideal: 200)
         }
@@ -302,6 +325,12 @@ struct CueFileHelperView: View {
                 sortAscending = newSort.order == .forward
             }
         }
+    }
+    
+    // MARK: - Selection Helper
+    
+    private func isSelected(_ event: CueEvent) -> Bool {
+        selectedEventIDs.contains(event.id)
     }
     
     // MARK: - Bottom Controls
@@ -340,6 +369,12 @@ struct CueFileHelperView: View {
                 Text("in \(selectedLayer.title)")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                
+                if !selectedEventIDs.isEmpty {
+                    Text("• \(selectedEventIDs.count) selected")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
             }
             
             Spacer()
@@ -423,6 +458,7 @@ struct CueFileHelperView: View {
                 parsingResult = result
                 selectedLayer = .layer4  // Start with final layer
                 isFileLoaded = true
+                selectedEventIDs = [] // Clear selection when loading new file
             }
         } catch {
             print("Error reading file: \(error)")
@@ -521,6 +557,34 @@ struct CueFileHelperView: View {
     }
     
     
+    private func togglePin() {
+        isPinned.toggle()
+        
+        // Get the current window and set its level
+        DispatchQueue.main.async {
+            // Find the window that contains this view by looking for the key window
+            if let window = NSApplication.shared.keyWindow {
+                if isPinned {
+                    window.level = .floating
+                } else {
+                    window.level = .normal
+                }
+            } else {
+                // Fallback: find any window that might contain this view
+                for window in NSApplication.shared.windows {
+                    if window.isVisible && window.contentView != nil {
+                        if isPinned {
+                            window.level = .floating
+                        } else {
+                            window.level = .normal
+                        }
+                        break
+                    }
+                }
+            }
+        }
+    }
+    
     private func clearData() {
         withAnimation {
             parsingResult = nil
@@ -532,6 +596,7 @@ struct CueFileHelperView: View {
             sortField = .catalogID
             sortAscending = true
             sortOrder = []
+            selectedEventIDs = []
         }
     }
 }

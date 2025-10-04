@@ -276,6 +276,7 @@ class CueFileParsingService {
                 }
                 
                 var mergedEvent = event
+                var nextIndex = i + 1
                 
                 // Look backwards for fade in or cross fade from different catalog
                 if i > 0 {
@@ -298,38 +299,44 @@ class CueFileParsingService {
                     }
                 }
                 
-                // Look forwards for fade out or handle cross fades
-                var skipNext = false
-                if i < channelEvents.count - 1 {
-                    let nextEvent = channelEvents[i + 1]
+                // Look forwards and keep merging as long as we find cross fades with same catalog
+                while nextIndex < channelEvents.count {
+                    let nextEvent = channelEvents[nextIndex]
                     
                     if nextEvent.catalogID == "FADE_OUT" {
                         print("      ➡️ Merging FADE_OUT with \(event.catalogID)")
                         mergedEvent.endTime = nextEvent.endTime
-                        skipNext = true
+                        nextIndex += 1
+                        break // Fade out ends the chain
                     } else if nextEvent.catalogID == "CROSS_FADE" {
                         // Cross fade - check what comes after
-                        if i < channelEvents.count - 2 {
-                            let afterCrossFade = channelEvents[i + 2]
+                        if nextIndex < channelEvents.count - 1 {
+                            let afterCrossFade = channelEvents[nextIndex + 1]
                             
                             if afterCrossFade.catalogID == event.catalogID {
-                                // Same catalog ID - merge all together (cross fade counted once)
+                                // Same catalog ID - merge and continue looking
                                 print("      🔗 Merging CROSS_FADE (same catalog) with \(event.catalogID)")
                                 mergedEvent.endTime = afterCrossFade.endTime
                                 mergedEvent.uniqueTitles.insert(afterCrossFade.title)
-                                i += 2 // Skip cross fade and next event
+                                nextIndex += 2 // Skip cross fade and the clip
+                                // Continue the loop to check if there's another cross fade
                             } else {
                                 // Different catalog ID - cross fade belongs to both events (counted twice)
                                 // Add to current event, but DON'T skip so next event can include it too
                                 print("      ➡️ CROSS_FADE (different catalog) with \(event.catalogID) - will also apply to next")
                                 mergedEvent.endTime = nextEvent.endTime
-                                // Don't set skipNext - the next event will pick up the cross fade in its backward look
+                                nextIndex += 1
+                                break // Don't skip the next clip, it's different
                             }
                         } else {
                             // Cross fade at end - add to current
                             mergedEvent.endTime = nextEvent.endTime
-                            skipNext = true
+                            nextIndex += 1
+                            break
                         }
+                    } else {
+                        // Regular clip (not a fade) - stop merging
+                        break
                     }
                 }
                 
@@ -339,10 +346,8 @@ class CueFileParsingService {
                 
                 aggregated.append(mergedEvent)
                 
-                i += 1
-                if skipNext {
-                    i += 1
-                }
+                // Move to the next unprocessed event
+                i = nextIndex
             }
         }
         
@@ -377,6 +382,8 @@ class CueFileParsingService {
                 var mergedEvent = sortedEvents[i]
                 var minStart = parseTimecode(mergedEvent.startTime)
                 var maxEnd = parseTimecode(mergedEvent.endTime)
+                var minStartTimecode = mergedEvent.startTime  // Preserve original timecode with frames
+                var maxEndTimecode = mergedEvent.endTime      // Preserve original timecode with frames
                 processedIndices.insert(i)
                 
                 // Find all overlapping events
@@ -390,8 +397,19 @@ class CueFileParsingService {
                     // Check for overlap
                     if otherStart <= maxEnd {
                         print("      🔗 Merging overlapping events from channels \(mergedEvent.channel) and \(otherEvent.channel)")
-                        minStart = min(minStart, otherStart)
-                        maxEnd = max(maxEnd, otherEnd)
+                        
+                        // Update min start time and preserve the original timecode string
+                        if otherStart < minStart {
+                            minStart = otherStart
+                            minStartTimecode = otherEvent.startTime
+                        }
+                        
+                        // Update max end time and preserve the original timecode string
+                        if otherEnd > maxEnd {
+                            maxEnd = otherEnd
+                            maxEndTimecode = otherEvent.endTime
+                        }
+                        
                         mergedEvent.uniqueTitles.formUnion(otherEvent.uniqueTitles)
                         processedIndices.insert(j)
                     }
@@ -401,17 +419,9 @@ class CueFileParsingService {
                 let durationSeconds = maxEnd - minStart
                 mergedEvent.duration = formatDuration(durationSeconds)
                 
-                // Convert seconds back to timecode format for start and end times
-                // Note: This is a simplified conversion - you may need to adjust based on your timecode format
-                let hours = minStart / 3600
-                let minutes = (minStart % 3600) / 60
-                let seconds = minStart % 60
-                mergedEvent.startTime = String(format: "%02d:%02d:%02d:00", hours, minutes, seconds)
-                
-                let endHours = maxEnd / 3600
-                let endMinutes = (maxEnd % 3600) / 60
-                let endSeconds = maxEnd % 60
-                mergedEvent.endTime = String(format: "%02d:%02d:%02d:00", endHours, endMinutes, endSeconds)
+                // Use the preserved original timecodes (with frame precision intact)
+                mergedEvent.startTime = minStartTimecode
+                mergedEvent.endTime = maxEndTimecode
                 
                 merged.append(mergedEvent)
             }
