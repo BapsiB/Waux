@@ -166,7 +166,8 @@ class ComposerFetchingService {
         var updatedEvents = events
         
         for (index, var event) in updatedEvents.enumerated() {
-            event.composer = getComposer(for: event.allNames, in: directory)
+            // Search using catalog ID (the simplified name without suffixes)
+            event.composer = getComposer(for: event.catalogID, in: directory)
             updatedEvents[index] = event
             progressHandler(index + 1, updatedEvents.count)
         }

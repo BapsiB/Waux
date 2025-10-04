@@ -8,8 +8,60 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum ParsingLayer: Int, CaseIterable {
+    case layer1 = 1
+    case layer2 = 2
+    case layer3 = 3
+    case layer4 = 4
+    
+    var title: String {
+        switch self {
+        case .layer1: return "Layer 1: Raw Parse"
+        case .layer2: return "Layer 2: Fades Merged"
+        case .layer3: return "Layer 3: Channels Merged"
+        case .layer4: return "Layer 4: Final"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .layer1: return "Each line parsed into CueEvent"
+        case .layer2: return "Fades aggregated with clips"
+        case .layer3: return "Events merged across channels"
+        case .layer4: return "Final aggregation by catalog ID"
+        }
+    }
+}
+
+enum SortField: String, CaseIterable {
+    case track = "track"
+    case eventID = "eventID"
+    case catalogID = "catalogID"
+    case title = "title"
+    case startTime = "startTime"
+    case endTime = "endTime"
+    case duration = "duration"
+    case state = "state"
+    case composer = "composer"
+    
+    var displayName: String {
+        switch self {
+        case .track: return "Track"
+        case .eventID: return "Event"
+        case .catalogID: return "Catalog ID"
+        case .title: return "Title"
+        case .startTime: return "Start Time"
+        case .endTime: return "End Time"
+        case .duration: return "Duration"
+        case .state: return "State"
+        case .composer: return "Composer"
+        }
+    }
+}
+
 struct CueFileHelperView: View {
-    @State private var events: [CueEvent] = []
+    @State private var parsingResult: CueParsingResult?
+    @State private var selectedLayer: ParsingLayer = .layer4
     @State private var isFileLoaded = false
     @State private var isDragging = false
     @State private var searchDirectory: URL?
@@ -17,9 +69,60 @@ struct CueFileHelperView: View {
     @State private var originalFileURL: URL?
     @State private var showingDirectoryPicker = false
     @State private var selectedEventForInfo: CueEvent?
+    @State private var filterText: String = ""
+    @State private var sortField: SortField = .catalogID
+    @State private var sortAscending: Bool = true
     
     private let parsingService = CueFileParsingService()
     private let composerService = ComposerFetchingService()
+    
+    private var currentEvents: [CueEvent] {
+        guard let result = parsingResult else { return [] }
+        let events: [CueEvent]
+        switch selectedLayer {
+        case .layer1: events = result.layer1
+        case .layer2: events = result.layer2
+        case .layer3: events = result.layer3
+        case .layer4: events = result.layer4
+        }
+        
+        // Apply filter if present
+        let filteredEvents = filterText.isEmpty ? events : events.filter { event in
+            let searchText = filterText.lowercased()
+            return event.catalogID.lowercased().contains(searchText) ||
+                   event.title.lowercased().contains(searchText)
+        }
+        
+        // Apply sorting
+        return filteredEvents.sorted { first, second in
+            let comparison: ComparisonResult
+            
+            switch sortField {
+            case .track:
+                comparison = first.channel < second.channel ? .orderedAscending : 
+                           (first.channel > second.channel ? .orderedDescending : .orderedSame)
+            case .eventID:
+                comparison = first.eventID < second.eventID ? .orderedAscending : 
+                           (first.eventID > second.eventID ? .orderedDescending : .orderedSame)
+            case .catalogID:
+                comparison = first.catalogID.compare(second.catalogID)
+            case .title:
+                comparison = first.title.compare(second.title)
+            case .startTime:
+                comparison = first.startTime.compare(second.startTime)
+            case .endTime:
+                comparison = first.endTime.compare(second.endTime)
+            case .duration:
+                comparison = first.duration.compare(second.duration)
+            case .state:
+                comparison = first.state.compare(second.state)
+            case .composer:
+                comparison = first.composer.compare(second.composer)
+            }
+            
+            return sortAscending ? comparison == .orderedAscending : comparison == .orderedDescending
+        }
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -49,39 +152,104 @@ struct CueFileHelperView: View {
     // MARK: - Header View
     
     private var headerView: some View {
-        HStack {
-            Text("Cue File Helper")
-                .font(.headline)
-            
-            Spacer()
-            
-            if let progress = processingProgress {
-                ProgressView(value: Double(progress.current), total: Double(progress.total)) {
-                    Text("Fetching composers: \(progress.current) / \(progress.total)")
-                        .font(.caption)
+        VStack(spacing: 0) {
+            HStack {
+                Text("Cue File Helper")
+                    .font(.headline)
+                
+                Spacer()
+                
+                if let progress = processingProgress {
+                    ProgressView(value: Double(progress.current), total: Double(progress.total)) {
+                        Text("Fetching composers: \(progress.current) / \(progress.total)")
+                            .font(.caption)
+                    }
+                    .frame(width: 200)
                 }
-                .frame(width: 200)
+                
+                Button("Select Audio Directory") {
+                    selectDirectory()
+                }
+                .buttonStyle(.bordered)
+                
+                if searchDirectory != nil {
+                    Text("✓")
+                        .foregroundColor(.green)
+                        .help("Audio directory selected")
+                }
             }
+            .padding()
             
-            Button("Select Audio Directory") {
-                selectDirectory()
-            }
-            .buttonStyle(.bordered)
+            Divider()
             
-            if searchDirectory != nil {
-                Text("✓")
-                    .foregroundColor(.green)
-                    .help("Audio directory selected")
+            // Layer selector and filter
+            VStack(spacing: 8) {
+                HStack(spacing: 12) {
+                    Text("Debug View:")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    
+                    Picker("", selection: $selectedLayer) {
+                        ForEach(ParsingLayer.allCases, id: \.self) { layer in
+                            Text(layer.title).tag(layer)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 500)
+                    
+                    Text(selectedLayer.description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                }
+                
+                // Filter controls
+                HStack(spacing: 12) {
+                    // Filter field
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.secondary)
+                        
+                        TextField("Filter by catalog ID or title...", text: $filterText)
+                            .textFieldStyle(.plain)
+                        
+                        if !filterText.isEmpty {
+                            Button(action: {
+                                filterText = ""
+                            }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Clear filter")
+                        }
+                    }
+                    .padding(6)
+                    .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                    .cornerRadius(6)
+                    
+                    Spacer()
+                    
+                    // Sort hint
+                    Text("Click column headers to sort")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(6)
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                        .cornerRadius(6)
+                }
             }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
         }
-        .padding()
         .background(Color(NSColor.controlBackgroundColor))
     }
     
     // MARK: - Table View
     
     private var tableView: some View {
-        Table(events) {
+        Table(currentEvents) {
             TableColumn("") { event in
                 Button(action: {
                     selectedEventForInfo = event
@@ -94,42 +262,155 @@ struct CueFileHelperView: View {
             }
             .width(30)
             
-            TableColumn("Channel") { event in
+            TableColumn(headerView: {
+                HStack {
+                    Text("Track")
+                    if sortField == .track {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .foregroundColor(.accentColor)
+                            .font(.caption)
+                    }
+                }
+                .onTapGesture {
+                    sortBy(.track)
+                }
+            }) { event in
                 Text("\(event.channel)")
             }
             .width(60)
             
-            TableColumn("Event") { event in
+            TableColumn(headerView: {
+                HStack {
+                    Text("Event")
+                    if sortField == .eventID {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .foregroundColor(.accentColor)
+                            .font(.caption)
+                    }
+                }
+                .onTapGesture {
+                    sortBy(.eventID)
+                }
+            }) { event in
                 Text("\(event.eventID)")
             }
             .width(60)
             
-            TableColumn("Clip Name") { event in
-                Text(event.clipName)
+            TableColumn(headerView: {
+                HStack {
+                    Text("Catalog ID")
+                    if sortField == .catalogID {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .foregroundColor(.accentColor)
+                            .font(.caption)
+                    }
+                }
+                .onTapGesture {
+                    sortBy(.catalogID)
+                }
+            }) { event in
+                Text(event.catalogID)
             }
-            .width(min: 200, ideal: 300)
+            .width(min: 150, ideal: 200)
             
-            TableColumn("Start Time") { event in
+            TableColumn(headerView: {
+                HStack {
+                    Text("Title")
+                    if sortField == .title {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .foregroundColor(.accentColor)
+                            .font(.caption)
+                    }
+                }
+                .onTapGesture {
+                    sortBy(.title)
+                }
+            }) { event in
+                Text(event.title)
+            }
+            .width(min: 150, ideal: 250)
+            
+            TableColumn(headerView: {
+                HStack {
+                    Text("Start Time")
+                    if sortField == .startTime {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .foregroundColor(.accentColor)
+                            .font(.caption)
+                    }
+                }
+                .onTapGesture {
+                    sortBy(.startTime)
+                }
+            }) { event in
                 Text(event.startTime)
             }
             .width(100)
             
-            TableColumn("End Time") { event in
+            TableColumn(headerView: {
+                HStack {
+                    Text("End Time")
+                    if sortField == .endTime {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .foregroundColor(.accentColor)
+                            .font(.caption)
+                    }
+                }
+                .onTapGesture {
+                    sortBy(.endTime)
+                }
+            }) { event in
                 Text(event.endTime)
             }
             .width(100)
             
-            TableColumn("Duration") { event in
+            TableColumn(headerView: {
+                HStack {
+                    Text("Duration")
+                    if sortField == .duration {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .foregroundColor(.accentColor)
+                            .font(.caption)
+                    }
+                }
+                .onTapGesture {
+                    sortBy(.duration)
+                }
+            }) { event in
                 Text(event.duration)
             }
             .width(80)
             
-            TableColumn("State") { event in
+            TableColumn(headerView: {
+                HStack {
+                    Text("State")
+                    if sortField == .state {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .foregroundColor(.accentColor)
+                            .font(.caption)
+                    }
+                }
+                .onTapGesture {
+                    sortBy(.state)
+                }
+            }) { event in
                 Text(event.state)
             }
             .width(80)
             
-            TableColumn("Composer") { event in
+            TableColumn(headerView: {
+                HStack {
+                    Text("Composer")
+                    if sortField == .composer {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .foregroundColor(.accentColor)
+                            .font(.caption)
+                    }
+                }
+                .onTapGesture {
+                    sortBy(.composer)
+                }
+            }) { event in
                 Text(event.composer.isEmpty ? "-" : event.composer)
                     .foregroundColor(event.composer.isEmpty ? .secondary : .primary)
             }
@@ -139,11 +420,41 @@ struct CueFileHelperView: View {
     
     // MARK: - Bottom Controls
     
+    private var totalEventsCount: Int {
+        guard let result = parsingResult else { return 0 }
+        switch selectedLayer {
+        case .layer1: return result.layer1.count
+        case .layer2: return result.layer2.count
+        case .layer3: return result.layer3.count
+        case .layer4: return result.layer4.count
+        }
+    }
+    
     private var bottomControlsView: some View {
         HStack {
-            Text("\(events.count) clips")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            HStack(spacing: 4) {
+                Text("\(currentEvents.count)")
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                
+                if !filterText.isEmpty {
+                    Text("/ \(totalEventsCount)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Text("filtered")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("events")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Text("in \(selectedLayer.title)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
             
             Spacer()
             
@@ -151,13 +462,14 @@ struct CueFileHelperView: View {
                 fetchComposers()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(searchDirectory == nil || processingProgress != nil)
+            .disabled(searchDirectory == nil || processingProgress != nil || selectedLayer != .layer4)
+            .help(selectedLayer != .layer4 ? "Composer fetching only works on Layer 4" : "Fetch composer metadata from audio files")
             
             Button("Export to CSV") {
                 exportToCSV()
             }
             .buttonStyle(.bordered)
-            .disabled(events.isEmpty)
+            .disabled(currentEvents.isEmpty)
             
             Button("Clear") {
                 clearData()
@@ -219,10 +531,11 @@ struct CueFileHelperView: View {
             let content = try String(contentsOf: url, encoding: .utf8)
             let lines = content.components(separatedBy: .newlines)
             
-            let parsedEvents = parsingService.aggregateEvents(from: lines)
+            let result = parsingService.parseWithAllLayers(from: lines)
             
             withAnimation {
-                events = parsedEvents
+                parsingResult = result
+                selectedLayer = .layer4  // Start with final layer
                 isFileLoaded = true
             }
         } catch {
@@ -249,19 +562,25 @@ struct CueFileHelperView: View {
     }
     
     private func fetchComposers() {
-        guard let directory = searchDirectory else { return }
+        guard let directory = searchDirectory, var result = parsingResult else { return }
         
-        processingProgress = (0, events.count)
+        processingProgress = (0, result.layer4.count)
         
         DispatchQueue.global(qos: .userInitiated).async {
-            let updatedEvents = composerService.fetchComposers(for: events, in: directory) { current, total in
+            let updatedEvents = composerService.fetchComposers(for: result.layer4, in: directory) { current, total in
                 DispatchQueue.main.async {
                     processingProgress = (current, total)
                 }
             }
             
             DispatchQueue.main.async {
-                events = updatedEvents
+                // Update layer 4 with composer information
+                parsingResult = CueParsingResult(
+                    layer1: result.layer1,
+                    layer2: result.layer2,
+                    layer3: result.layer3,
+                    layer4: updatedEvents
+                )
                 processingProgress = nil
             }
         }
@@ -271,17 +590,25 @@ struct CueFileHelperView: View {
         guard let originalURL = originalFileURL else { return }
         
         let fileName = originalURL.deletingPathExtension().lastPathComponent
-        let exportURL = originalURL.deletingLastPathComponent().appendingPathComponent("\(fileName).csv")
+        let layerSuffix = selectedLayer == .layer4 ? "" : "_\(selectedLayer.title.replacingOccurrences(of: " ", with: "_").replacingOccurrences(of: ":", with: ""))"
+        let exportURL = originalURL.deletingLastPathComponent().appendingPathComponent("\(fileName)\(layerSuffix).csv")
         
         // Build CSV content
-        var csvContent = "Clip Name,Duration,Composer\n"
+        var csvContent = "Track,Event,Catalog ID,Title,Unique Titles,Start Time,End Time,Duration,State,Composer\n"
         
-        for event in events {
-            let clipName = escapeCSVValue(event.clipName)
+        for event in currentEvents {
+            let channel = "\(event.channel)"
+            let eventID = "\(event.eventID)"
+            let catalogID = escapeCSVValue(event.catalogID)
+            let title = escapeCSVValue(event.title)
+            let uniqueTitles = escapeCSVValue(event.uniqueTitles.sorted().joined(separator: "; "))
+            let startTime = escapeCSVValue(event.startTime)
+            let endTime = escapeCSVValue(event.endTime)
             let duration = escapeCSVValue(event.duration)
+            let state = escapeCSVValue(event.state)
             let composer = escapeCSVValue(event.composer)
             
-            csvContent += "\(clipName),\(duration),\(composer)\n"
+            csvContent += "\(channel),\(eventID),\(catalogID),\(title),\(uniqueTitles),\(startTime),\(endTime),\(duration),\(state),\(composer)\n"
         }
         
         do {
@@ -307,12 +634,27 @@ struct CueFileHelperView: View {
         return escaped
     }
     
+    private func sortBy(_ field: SortField) {
+        if sortField == field {
+            // Toggle direction if same field
+            sortAscending.toggle()
+        } else {
+            // Set new field and default to ascending
+            sortField = field
+            sortAscending = true
+        }
+    }
+    
     private func clearData() {
         withAnimation {
-            events = []
+            parsingResult = nil
             isFileLoaded = false
             originalFileURL = nil
             processingProgress = nil
+            selectedLayer = .layer4
+            filterText = ""
+            sortField = .catalogID
+            sortAscending = true
         }
     }
 }
@@ -350,8 +692,10 @@ struct CueEventDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     // Basic Information
                     infoSection(title: "Basic Information") {
-                        infoRow(label: "Clip Name", value: event.clipName)
-                        infoRow(label: "Channel", value: "\(event.channel)")
+                        infoRow(label: "Catalog ID", value: event.catalogID)
+                        infoRow(label: "Title", value: event.title.isEmpty ? "-" : event.title)
+                        infoRow(label: "Original Name", value: event.originalClipName)
+                        infoRow(label: "Track", value: "\(event.channel)")
                         infoRow(label: "Event ID", value: "\(event.eventID)")
                         infoRow(label: "State", value: event.state.isEmpty ? "-" : event.state)
                     }
@@ -368,14 +712,18 @@ struct CueEventDetailView: View {
                         infoRow(label: "Composer", value: event.composer.isEmpty ? "-" : event.composer)
                     }
                     
-                    // All Names (merged clips/fades)
-                    if !event.allNames.isEmpty {
-                        infoSection(title: "All Clips & Fades") {
-                            Text(event.allNames)
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.primary)
-                                .textSelection(.enabled)
-                                .padding(.vertical, 4)
+                    // Unique Titles (merged clips)
+                    if !event.uniqueTitles.isEmpty {
+                        infoSection(title: "Unique Titles (Merged Clips)") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(event.uniqueTitles).sorted(), id: \.self) { title in
+                                    Text("• \(title)")
+                                        .font(.system(.body, design: .monospaced))
+                                        .foregroundColor(.primary)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .padding(.vertical, 4)
                         }
                     }
                 }

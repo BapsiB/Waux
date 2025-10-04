@@ -7,108 +7,47 @@
 
 import Foundation
 
+// Parsed name structure
+struct ParsedName {
+    let catalogID: String      // e.g., "UPM_MAT103_7" or "MISS_25FPS_MX_DCP_STEREO_WIP_250721"
+    let title: String          // e.g., "Champions_Instrumental_Martin_8168"
+    let fullName: String       // Original full name
+    
+    var isFadeIn: Bool { fullName.lowercased().contains("(fade in)") }
+    var isFadeOut: Bool { fullName.lowercased().contains("(fade out)") }
+    var isCrossFade: Bool { fullName.lowercased().contains("(cross fade)") }
+    var isFade: Bool { isFadeIn || isFadeOut || isCrossFade }
+}
+
+// Container for all parsing layers results
+struct CueParsingResult {
+    let layer1: [CueEvent]  // Raw parsed events
+    let layer2: [CueEvent]  // Fades aggregated with clips
+    let layer3: [CueEvent]  // Merged across channels
+    let layer4: [CueEvent]  // Final aggregation
+}
+
+// CueEvent structure - used throughout the parsing layers
 struct CueEvent: Identifiable {
     let id = UUID()
     var channel: Int
     var eventID: Int
-    var clipName: String
+    var catalogID: String          // The catalog/ID prefix
+    var title: String              // The descriptive title
+    var originalClipName: String   // Full original clip name
     var startTime: String
     var endTime: String
     var duration: String
     var state: String
-    var allNames: String
+    var uniqueTitles: Set<String>  // Track unique titles when merging
     var composer: String
 }
 
 class CueFileParsingService {
     
-    // Simplified name processing - extracts catalog/ID prefix from clip names
-    func getSimplifiedName(_ clipName: String) -> String {
-        var trimmedName = clipName
-        
-        // Step 1: Remove common suffixes (.L, .R, .A1, track numbers, etc.)
-        // First remove channel suffixes like -03.L, .L, .R, .A1
-        if let suffixMatch = trimmedName.range(of: "[-.]\\w+\\.(L|R|A\\d+)$", options: .regularExpression) {
-            trimmedName = String(trimmedName[..<suffixMatch.lowerBound])
-        } else if let suffixMatch = trimmedName.range(of: "\\.(L|R|A\\d+)$", options: .regularExpression) {
-            trimmedName = String(trimmedName[..<suffixMatch.lowerBound])
-        }
-        
-        // Remove remaining track/take numbers like .1, .2, etc.
-        if let suffixMatch = trimmedName.range(of: "\\.\\d+$", options: .regularExpression) {
-            trimmedName = String(trimmedName[..<suffixMatch.lowerBound])
-        }
-        
-        // Step 2: Try to extract the catalog/ID prefix
-        // Pattern: Letters/symbols followed by numbers, before the descriptive title
-        // Example: "UPM_LQC71_15_Mogadishu..." -> "UPM_LQC71_15"
-        // Example: "_UPRIGHT_GMPM_197_041_Storyteller..." -> "_UPRIGHT_GMPM_197_041"
-        
-        // Find sequences of digits in the string
-        let digitPattern = "\\d+"
-        let regex = try? NSRegularExpression(pattern: digitPattern, options: [])
-        let nsString = trimmedName as NSString
-        let matches = regex?.matches(in: trimmedName, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
-        
-        // If we found digit sequences, look for the pattern
-        if !matches.isEmpty {
-            // Find the last digit sequence that's followed by an underscore and a letter (likely the title start)
-            for (index, match) in matches.enumerated() {
-                let matchEnd = match.range.location + match.range.length
-                
-                // Check if there's more content after this number
-                if matchEnd < trimmedName.count {
-                    let afterNumberIndex = trimmedName.index(trimmedName.startIndex, offsetBy: matchEnd)
-                    let remainingString = String(trimmedName[afterNumberIndex...])
-                    
-                    // Check if the remaining part starts with underscore/separator followed by a letter (title part)
-                    // Also check if this isn't the last number sequence (to avoid cutting off version numbers)
-                    if remainingString.range(of: "^[_-][A-Za-z]", options: .regularExpression) != nil {
-                        // This looks like the boundary between catalog and title
-                        // Check if there are more digit sequences after this one
-                        let hasMoreDigits = index < matches.count - 1
-                        
-                        if !hasMoreDigits {
-                            // This is the last digit sequence before the title
-                            trimmedName = String(trimmedName[..<afterNumberIndex])
-                            break
-                        }
-                    }
-                }
-            }
-        }
-        
-        return trimmedName
-    }
+    // MARK: - Utility Functions
     
-    // Test helper function
-    func testSimplification() {
-        let testCases = [
-            ("UPM_LQC71_15_Mogadishu_Drone_Instrumental_Huntley_McNeil-Poly.L", "UPM_LQC71_15"),
-            ("_UPRIGHT_GMPM_197_041_Storyteller_(Strings_Only)-13.A1", "_UPRIGHT_GMPM_197_041"),
-            ("Baptiste Bohelay - Don't Look Back 2-01.L", "Baptiste Bohelay - Don't Look Back 2"),
-            ("TEST_ABC123_456_Some_Title.R", "TEST_ABC123_456"),
-            ("Simple Name.L", "Simple Name"),
-            ("No_Numbers_Here.A1", "No_Numbers_Here"),
-            ("ICON_74_2_Follower_Butler_Drones.1-03.L", "ICON_74_2"),
-            ("ICON_74_2_Follower_Butler_Drones-22.L", "ICON_74_2")
-        ]
-        
-        print("\n🧪 Testing getSimplifiedName:")
-        for (input, expected) in testCases {
-            let result = getSimplifiedName(input)
-            let passed = result == expected
-            let icon = passed ? "✅" : "❌"
-            print("\(icon) Input: '\(input)'")
-            print("   Expected: '\(expected)'")
-            print("   Got:      '\(result)'")
-            if !passed {
-                print("   ⚠️ MISMATCH!")
-            }
-        }
-    }
-    
-    // Parse timecode format (HH:MM:SS:FF) to total seconds
+    /// Parse timecode format (HH:MM:SS:FF) to total seconds
     private func parseTimecode(_ timecode: String) -> Int {
         let withoutFrames = String(timecode.dropLast(3))
         let parts = withoutFrames.components(separatedBy: ":")
@@ -122,20 +61,15 @@ class CueFileParsingService {
         return hours * 3600 + minutes * 60 + seconds
     }
     
-    // Calculate duration between two timecodes
+    /// Calculate duration between two timecodes
     private func calculateDuration(from startTime: String, to endTime: String) -> Int {
         let startSeconds = parseTimecode(startTime)
         let endSeconds = parseTimecode(endTime)
         return endSeconds - startSeconds
     }
     
-    // Parse old duration format (HH:MM:SS:FF) - kept for compatibility
-    private func parseOldDuration(_ durationStr: String) -> Int {
-        return parseTimecode(durationStr)
-    }
-    
-    // Parse new duration format (MM:SS or HH:MM:SS)
-    private func parseNewDuration(_ durationStr: String) -> Int {
+    /// Parse duration format (MM:SS or HH:MM:SS) to seconds
+    private func parseDuration(_ durationStr: String) -> Int {
         let parts = durationStr.components(separatedBy: ":")
         
         guard parts.count >= 2 else { return 0 }
@@ -156,155 +90,411 @@ class CueFileParsingService {
         return hours * 3600 + minutes * 60 + seconds
     }
     
-    // Format duration as MM:SS
+    /// Format duration as MM:SS
     private func formatDuration(_ totalSeconds: Int) -> String {
         let minutes = (totalSeconds % 3600) / 60
         let seconds = totalSeconds % 60
         return String(format: "%02d:%02d", minutes, seconds)
     }
     
-    // Check if a clip name is a fade event
-    private func isFadeEvent(_ clipName: String) -> Bool {
-        let trimmed = clipName.trimmingCharacters(in: .whitespaces).lowercased()
-        return trimmed.contains("(fade in)") || 
-               trimmed.contains("(fade out)") || 
-               trimmed.contains("(cross fade)")
+    // MARK: - Name Parsing
+    
+    /// Parse a clip name into catalog ID and title
+    /// Example: "UPM_MAT103_7_Champions_Instrumental_Martin_8168-04.L" -> 
+    ///          catalogID: "UPM_MAT103_7", title: "Champions_Instrumental_Martin_8168"
+    func parseName(_ clipName: String) -> ParsedName {
+        var trimmedName = clipName
+        
+        // Check if it's a fade event
+        let lowerName = clipName.lowercased()
+        if lowerName.contains("(fade in)") {
+            return ParsedName(catalogID: "FADE_IN", title: "", fullName: clipName)
+        } else if lowerName.contains("(fade out)") {
+            return ParsedName(catalogID: "FADE_OUT", title: "", fullName: clipName)
+        } else if lowerName.contains("(cross fade)") {
+            return ParsedName(catalogID: "CROSS_FADE", title: "", fullName: clipName)
+        }
+        
+        // Step 1: Remove common suffixes (.L, .R, .A1, track numbers, etc.)
+        // First remove channel suffixes like -03.L, .L, .R, .A1
+        if let suffixMatch = trimmedName.range(of: "[-.]\\w+\\.(L|R|A\\d+)$", options: .regularExpression) {
+            trimmedName = String(trimmedName[..<suffixMatch.lowerBound])
+        } else if let suffixMatch = trimmedName.range(of: "\\.(L|R|A\\d+)$", options: .regularExpression) {
+            trimmedName = String(trimmedName[..<suffixMatch.lowerBound])
+        }
+        
+        // Remove remaining track/take numbers like .1, .2, etc.
+        if let suffixMatch = trimmedName.range(of: "\\.\\d+$", options: .regularExpression) {
+            trimmedName = String(trimmedName[..<suffixMatch.lowerBound])
+        }
+        
+        // Step 2: Try to extract the catalog/ID prefix
+        // Pattern: Letters/symbols followed by numbers, before the descriptive title
+        // Example: "UPM_LQC71_15_Mogadishu..." -> catalogID: "UPM_LQC71_15", title: "Mogadishu..."
+        
+        // Find sequences of digits in the string
+        let digitPattern = "\\d+"
+        let regex = try? NSRegularExpression(pattern: digitPattern, options: [])
+        let nsString = trimmedName as NSString
+        let matches = regex?.matches(in: trimmedName, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
+        
+        var catalogID = trimmedName
+        var title = ""
+        
+        // If we found digit sequences, look for the pattern
+        if !matches.isEmpty {
+            // Find the last digit sequence that's followed by an underscore and a letter (likely the title start)
+            for (index, match) in matches.enumerated() {
+                let matchEnd = match.range.location + match.range.length
+                
+                // Check if there's more content after this number
+                if matchEnd < trimmedName.count {
+                    let afterNumberIndex = trimmedName.index(trimmedName.startIndex, offsetBy: matchEnd)
+                    let remainingString = String(trimmedName[afterNumberIndex...])
+                    
+                    // Check if the remaining part starts with underscore/separator followed by a letter (title part)
+                    if remainingString.range(of: "^[_-][A-Za-z]", options: .regularExpression) != nil {
+                        // This looks like the boundary between catalog and title
+                        // Check if there are more digit sequences after this one
+                        let hasMoreDigits = index < matches.count - 1
+                        
+                        if !hasMoreDigits {
+                            // This is the last digit sequence before the title
+                            catalogID = String(trimmedName[..<afterNumberIndex])
+                            title = String(remainingString.dropFirst()) // Remove the separator
+                            break
+                        }
+                    }
+                }
+            }
+        }
+        
+        return ParsedName(catalogID: catalogID, title: title, fullName: clipName)
     }
     
-    // Aggregate events from parsed lines
-    func aggregateEvents(from lines: [String]) -> [CueEvent] {
-        var aggregatedEvents: [String: CueEvent] = [:]
+    // MARK: - Layer 1: Parse Raw File
+    
+    /// Layer 1: Parse each line into a CueEvent with parsed names
+    func parseRawFile(lines: [String]) -> [CueEvent] {
+        var events: [CueEvent] = []
+        var currentTrack = 1  // Track/channel counter (increments when eventID is 1)
         
-        // First pass: parse all events into a temporary array
-        var parsedEvents: [(clipName: String, simplifiedName: String, startTime: String, endTime: String, duration: Int, state: String, channel: Int, eventID: Int)] = []
+        print("\n📄 LAYER 1: Parsing raw file...")
         
-        for line in lines {
+        for (index, line) in lines.enumerated() {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
             
-            // Only process lines starting with "1"
-            guard trimmedLine.hasPrefix("1") else { continue }
+            // Debug first few lines
+            if index < 3 {
+                print("   🔍 [Debug] Line \(index): '\(trimmedLine)'")
+            }
             
-            let fields = trimmedLine.components(separatedBy: "\t")
+            // Skip empty lines and header
+            guard !trimmedLine.isEmpty,
+                  trimmedLine.first?.isNumber ?? false,
+                  !trimmedLine.lowercased().contains("channel"),
+                  !trimmedLine.lowercased().contains("event"),
+                  !trimmedLine.lowercased().contains("clip name") else { continue }
+            
+            // Handle both tab and space-separated data
+            let fields: [String]
+            if trimmedLine.contains("\t") {
+                fields = trimmedLine.components(separatedBy: "\t")
+            } else {
+                // For space-separated data, split by whitespace and filter empty strings
+                fields = trimmedLine.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            }
             
             guard fields.count >= 6 else { continue }
             
-            let clipName = fields[2].trimmingCharacters(in: .whitespaces)
-            let simplifiedName = getSimplifiedName(clipName)
-            let durationSeconds = parseOldDuration(fields[5])
-            let state = fields.count > 6 ? fields[6].trimmingCharacters(in: .whitespaces) : ""
+            let stereoChannel = Int(fields[0].trimmingCharacters(in: .whitespaces)) ?? 0
+            let eventID = Int(fields[1].trimmingCharacters(in: .whitespaces)) ?? 0
             
-            // Debug logging
-            if !isFadeEvent(clipName) {
-                print("📋 [Parse] Original: '\(clipName)'")
-                print("   Simplified: '\(simplifiedName)'")
+            // Increment track when eventID is 1 (new track starts)
+            if eventID == 1 {
+                currentTrack += 1
+            }
+            
+            let clipName = fields[2].trimmingCharacters(in: .whitespaces)
+            let startTime = fields[3].trimmingCharacters(in: .whitespaces)
+            let endTime = fields[4].trimmingCharacters(in: .whitespaces)
+            let durationStr = fields[5].trimmingCharacters(in: .whitespaces)
+            let state = fields.count > 6 ? fields[6].trimmingCharacters(in: .whitespaces) : "Unmuted"
+            
+            // Debug logging for first few events
+            if events.count < 5 {
+                print("   🔍 [Debug] Fields: \(fields)")
+                print("   📋 [Debug] Track: \(currentTrack), StereoCh: \(stereoChannel), EventID: \(eventID), Clip: '\(clipName)'")
             }
             
             // Skip muted events
             guard state != "Muted" else { continue }
             
-            parsedEvents.append((
-                clipName: clipName,
-                simplifiedName: simplifiedName,
-                startTime: fields[3],
-                endTime: fields[4],
-                duration: durationSeconds,
+            // Parse the name
+            let parsed = parseName(clipName)
+            
+            let event = CueEvent(
+                channel: currentTrack,  // Use track number instead of stereo channel
+                eventID: eventID,
+                catalogID: parsed.catalogID,
+                title: parsed.title,
+                originalClipName: clipName,
+                startTime: startTime,
+                endTime: endTime,
+                duration: durationStr,
                 state: state,
-                channel: Int(fields[0]) ?? 0,
-                eventID: Int(fields[1]) ?? 0
-            ))
+                uniqueTitles: [parsed.title],
+                composer: ""
+            )
+            
+            events.append(event)
+            
+            print("   T\(currentTrack) S\(stereoChannel) E\(eventID): \(parsed.catalogID) | \(parsed.title.isEmpty ? "(fade)" : parsed.title)")
         }
         
-        // Second pass: merge fade events with adjacent clips
-        var i = 0
-        while i < parsedEvents.count {
-            let event = parsedEvents[i]
+        print("   ✅ Parsed \(events.count) events")
+        return events
+    }
+    
+    // MARK: - Layer 2: Aggregate Fades with Clips
+    
+    /// Layer 2: Merge fades with adjacent clips according to rules
+    func aggregateFadesWithClips(events: [CueEvent]) -> [CueEvent] {
+        var aggregated: [CueEvent] = []
+        
+        print("\n🔀 LAYER 2: Aggregating fades with clips...")
+        
+        // Group by channel first
+        let eventsByChannel = Dictionary(grouping: events) { $0.channel }
+        
+        for channel in eventsByChannel.keys.sorted() {
+            guard let channelEvents = eventsByChannel[channel] else { continue }
             
-            // Skip fade events (they'll be handled by adjacent clips)
-            if isFadeEvent(event.clipName) {
+            print("   Processing channel \(channel)...")
+            
+            var i = 0
+            while i < channelEvents.count {
+                let event = channelEvents[i]
+                
+                // Skip if it's a standalone fade (shouldn't happen but handle gracefully)
+                if event.catalogID == "FADE_IN" || event.catalogID == "FADE_OUT" || event.catalogID == "CROSS_FADE" {
+                    i += 1
+                    continue
+                }
+                
+                var mergedEvent = event
+                
+                // Look backwards for fade in or cross fade from different catalog
+                if i > 0 {
+                    let prevEvent = channelEvents[i - 1]
+                    if prevEvent.catalogID == "FADE_IN" {
+                        print("      ⬅️ Merging FADE_IN with \(event.catalogID)")
+                        mergedEvent.startTime = prevEvent.startTime
+                    } else if prevEvent.catalogID == "CROSS_FADE" {
+                        // Check if there's an event before the cross fade
+                        if i > 1 {
+                            let beforeCrossFade = channelEvents[i - 2]
+                            // Only include if previous event has different catalog (cross fade counted twice)
+                            // If same catalog, it would have been merged already
+                            if beforeCrossFade.catalogID != event.catalogID && beforeCrossFade.catalogID != "FADE_IN" && beforeCrossFade.catalogID != "FADE_OUT" && beforeCrossFade.catalogID != "CROSS_FADE" {
+                                // Different catalog ID - cross fade belongs to both
+                                print("      ⬅️ Including CROSS_FADE (different catalog) in \(event.catalogID)")
+                                mergedEvent.startTime = prevEvent.startTime
+                            }
+                        }
+                    }
+                }
+                
+                // Look forwards for fade out or handle cross fades
+                var skipNext = false
+                if i < channelEvents.count - 1 {
+                    let nextEvent = channelEvents[i + 1]
+                    
+                    if nextEvent.catalogID == "FADE_OUT" {
+                        print("      ➡️ Merging FADE_OUT with \(event.catalogID)")
+                        mergedEvent.endTime = nextEvent.endTime
+                        skipNext = true
+                    } else if nextEvent.catalogID == "CROSS_FADE" {
+                        // Cross fade - check what comes after
+                        if i < channelEvents.count - 2 {
+                            let afterCrossFade = channelEvents[i + 2]
+                            
+                            if afterCrossFade.catalogID == event.catalogID {
+                                // Same catalog ID - merge all together (cross fade counted once)
+                                print("      🔗 Merging CROSS_FADE (same catalog) with \(event.catalogID)")
+                                mergedEvent.endTime = afterCrossFade.endTime
+                                mergedEvent.uniqueTitles.insert(afterCrossFade.title)
+                                i += 2 // Skip cross fade and next event
+                            } else {
+                                // Different catalog ID - cross fade belongs to both events (counted twice)
+                                // Add to current event, but DON'T skip so next event can include it too
+                                print("      ➡️ CROSS_FADE (different catalog) with \(event.catalogID) - will also apply to next")
+                                mergedEvent.endTime = nextEvent.endTime
+                                // Don't set skipNext - the next event will pick up the cross fade in its backward look
+                            }
+                        } else {
+                            // Cross fade at end - add to current
+                            mergedEvent.endTime = nextEvent.endTime
+                            skipNext = true
+                        }
+                    }
+                }
+                
+                // Recalculate duration
+                let durationSeconds = calculateDuration(from: mergedEvent.startTime, to: mergedEvent.endTime)
+                mergedEvent.duration = formatDuration(durationSeconds)
+                
+                aggregated.append(mergedEvent)
+                
                 i += 1
-                continue
-            }
-            
-            print("🔍 [Process] Event \(event.eventID): '\(event.simplifiedName)'")
-            
-            // Start with the current event's data
-            var startTime = event.startTime
-            var endTime = event.endTime
-            var allNames = event.clipName + "\n"
-            
-            // Look backwards for fade in or cross fade
-            if i > 0 {
-                let prevEvent = parsedEvents[i - 1]
-                if isFadeEvent(prevEvent.clipName) {
-                    if prevEvent.clipName.lowercased().contains("fade in") {
-                        print("   ⬅️ Found fade in before")
-                        // Include fade in - use its start time
-                        startTime = prevEvent.startTime
-                        allNames = prevEvent.clipName + ", " + allNames
-                    } else if prevEvent.clipName.lowercased().contains("cross fade") {
-                        print("   ⬅️ Found cross fade before")
-                        // Include cross fade - use its start time (this clip fades in during the cross fade)
-                        startTime = prevEvent.startTime
-                        allNames = prevEvent.clipName + ", " + allNames
-                    }
+                if skipNext {
+                    i += 1
                 }
             }
-            
-            // Look forwards for fade out or cross fade
-            if i < parsedEvents.count - 1 {
-                let nextEvent = parsedEvents[i + 1]
-                if isFadeEvent(nextEvent.clipName) {
-                    if nextEvent.clipName.lowercased().contains("fade out") || nextEvent.clipName.lowercased().contains("cross fade") {
-                        print("   ➡️ Found \(nextEvent.clipName) after")
-                        // Include fade out/cross fade - use its end time
-                        endTime = nextEvent.endTime
-                        allNames += ", " + nextEvent.clipName + "\n"
-                    }
-                }
-            }
-            
-            // Calculate duration from the final start and end times
-            let totalDuration = calculateDuration(from: startTime, to: endTime)
-            
-            print("   📊 Start: \(startTime), End: \(endTime), Duration: \(formatDuration(totalDuration))")
-            
-            // Check if we already have this clip (by simplified name)
-            if var existingEvent = aggregatedEvents[event.simplifiedName] {
-                // Add to existing event
-                print("   ♻️ Merging with existing entry for '\(event.simplifiedName)'")
-                let currentDuration = parseNewDuration(existingEvent.duration)
-                let newTotalDuration = currentDuration + totalDuration
-                existingEvent.duration = formatDuration(newTotalDuration)
-                existingEvent.allNames += allNames
-                aggregatedEvents[event.simplifiedName] = existingEvent
-                print("   ✅ New total duration: \(existingEvent.duration)")
-            } else {
-                // Create new event
-                print("   ✨ Creating new entry for '\(event.simplifiedName)'")
-                let cueEvent = CueEvent(
-                    channel: event.channel,
-                    eventID: event.eventID,
-                    clipName: event.simplifiedName,
-                    startTime: startTime,
-                    endTime: endTime,
-                    duration: formatDuration(totalDuration),
-                    state: event.state,
-                    allNames: allNames,
-                    composer: ""
-                )
-                aggregatedEvents[event.simplifiedName] = cueEvent
-            }
-            
-            i += 1
         }
         
-        let results = Array(aggregatedEvents.values).sorted { $0.clipName < $1.clipName }
+        print("   ✅ Aggregated to \(aggregated.count) events")
+        return aggregated
+    }
+    
+    // MARK: - Layer 3: Merge Across Channels
+    
+    /// Layer 3: Merge events from different channels that overlap in time and have same catalog ID
+    func mergeAcrossChannels(events: [CueEvent]) -> [CueEvent] {
+        var merged: [CueEvent] = []
         
-        print("\n📦 Final aggregated events: \(results.count) unique clips")
+        print("\n📡 LAYER 3: Merging across channels...")
+        
+        // Group by catalog ID
+        let eventsByCatalog = Dictionary(grouping: events) { $0.catalogID }
+        
+        for catalogID in eventsByCatalog.keys.sorted() {
+            guard let catalogEvents = eventsByCatalog[catalogID] else { continue }
+            
+            // Sort by start time
+            let sortedEvents = catalogEvents.sorted { 
+                parseTimecode($0.startTime) < parseTimecode($1.startTime) 
+            }
+            
+            var processedIndices = Set<Int>()
+            
+            for i in 0..<sortedEvents.count {
+                guard !processedIndices.contains(i) else { continue }
+                
+                var mergedEvent = sortedEvents[i]
+                var minStart = parseTimecode(mergedEvent.startTime)
+                var maxEnd = parseTimecode(mergedEvent.endTime)
+                processedIndices.insert(i)
+                
+                // Find all overlapping events
+                for j in (i+1)..<sortedEvents.count {
+                    guard !processedIndices.contains(j) else { continue }
+                    
+                    let otherEvent = sortedEvents[j]
+                    let otherStart = parseTimecode(otherEvent.startTime)
+                    let otherEnd = parseTimecode(otherEvent.endTime)
+                    
+                    // Check for overlap
+                    if otherStart <= maxEnd {
+                        print("      🔗 Merging overlapping events from channels \(mergedEvent.channel) and \(otherEvent.channel)")
+                        minStart = min(minStart, otherStart)
+                        maxEnd = max(maxEnd, otherEnd)
+                        mergedEvent.uniqueTitles.formUnion(otherEvent.uniqueTitles)
+                        processedIndices.insert(j)
+                    }
+                }
+                
+                // Update times and duration based on merged range
+                let durationSeconds = maxEnd - minStart
+                mergedEvent.duration = formatDuration(durationSeconds)
+                
+                // Convert seconds back to timecode format for start and end times
+                // Note: This is a simplified conversion - you may need to adjust based on your timecode format
+                let hours = minStart / 3600
+                let minutes = (minStart % 3600) / 60
+                let seconds = minStart % 60
+                mergedEvent.startTime = String(format: "%02d:%02d:%02d:00", hours, minutes, seconds)
+                
+                let endHours = maxEnd / 3600
+                let endMinutes = (maxEnd % 3600) / 60
+                let endSeconds = maxEnd % 60
+                mergedEvent.endTime = String(format: "%02d:%02d:%02d:00", endHours, endMinutes, endSeconds)
+                
+                merged.append(mergedEvent)
+            }
+        }
+        
+        print("   ✅ Merged to \(merged.count) events")
+        return merged
+    }
+    
+    // MARK: - Layer 4: Final Aggregation
+    
+    /// Layer 4: Merge by catalog ID, summing up all durations and tracking unique titles
+    func finalAggregation(events: [CueEvent]) -> [CueEvent] {
+        var aggregated: [String: (event: CueEvent, totalDurationSeconds: Int)] = [:]
+        
+        print("\n📊 LAYER 4: Final aggregation by catalog ID...")
+        
+        for event in events {
+            let startSeconds = parseTimecode(event.startTime)
+            let endSeconds = parseTimecode(event.endTime)
+            let eventDuration = endSeconds - startSeconds
+            
+            if var existing = aggregated[event.catalogID] {
+                // Add this event's duration to the total
+                let newTotalDuration = existing.totalDurationSeconds + eventDuration
+                
+                // Merge unique titles
+                existing.event.uniqueTitles.formUnion(event.uniqueTitles)
+                
+                // Update total duration
+                existing.totalDurationSeconds = newTotalDuration
+                existing.event.duration = formatDuration(newTotalDuration)
+                
+                aggregated[event.catalogID] = existing
+                print("      ♻️ Added to \(event.catalogID): +\(formatDuration(eventDuration)) → total \(existing.event.duration)")
+            } else {
+                // First occurrence
+                var newEvent = event
+                newEvent.duration = formatDuration(eventDuration)
+                aggregated[event.catalogID] = (newEvent, eventDuration)
+                print("      ✨ New entry: \(event.catalogID) - \(newEvent.duration)")
+            }
+        }
+        
+        let results = Array(aggregated.values.map { $0.event }).sorted { $0.catalogID < $1.catalogID }
+        
+        print("\n✅ FINAL: \(results.count) unique catalog IDs")
         for event in results {
-            print("   - '\(event.clipName)' → \(event.duration)")
+            print("   - \(event.catalogID): \(event.duration) (\(event.uniqueTitles.count) unique titles)")
         }
         
         return results
+    }
+    
+    // MARK: - Main Entry Point
+    
+    /// Process cue file through all 4 layers and return all results
+    func parseWithAllLayers(from lines: [String]) -> CueParsingResult {
+        print("\n" + String(repeating: "=", count: 60))
+        print("🎬 STARTING CUE FILE PROCESSING")
+        print(String(repeating: "=", count: 60))
+        
+        let layer1 = parseRawFile(lines: lines)
+        let layer2 = aggregateFadesWithClips(events: layer1)
+        let layer3 = mergeAcrossChannels(events: layer2)
+        let layer4 = finalAggregation(events: layer3)
+        
+        print("\n" + String(repeating: "=", count: 60))
+        print("✅ PROCESSING COMPLETE")
+        print(String(repeating: "=", count: 60) + "\n")
+        
+        return CueParsingResult(layer1: layer1, layer2: layer2, layer3: layer3, layer4: layer4)
+    }
+    
+    /// Process cue file through all 4 layers (convenience method, returns final result)
+    func aggregateEvents(from lines: [String]) -> [CueEvent] {
+        return parseWithAllLayers(from: lines).layer4
     }
 }
