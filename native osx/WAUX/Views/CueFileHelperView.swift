@@ -177,12 +177,6 @@ struct CueFileHelperView: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 500)
-                    
-                    Text(selectedLayer.description)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Spacer()
                 }
                 
                 // Filter controls

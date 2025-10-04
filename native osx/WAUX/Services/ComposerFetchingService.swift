@@ -51,22 +51,25 @@ class ComposerFetchingService {
         return nil
     }
     
-    // Find audio files matching the clip name in a directory
-    private func findMatchingFiles(in directory: URL, matching clipName: String) -> [URL] {
+    // Find audio files matching both catalog ID and title in a directory
+    private func findMatchingFiles(in directory: URL, catalogID: String, title: String) -> [URL] {
         let fileManager = FileManager.default
         var matchingFiles: [URL] = []
         
-        // Prepare clip name for comparison
-        var searchName = clipName
+        // Prepare catalog ID and title for comparison
+        let cleanCatalogID = catalogID
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\n", with: "")
             .trimmingCharacters(in: .whitespaces)
         
-        // Remove .L or .R suffix if present
-        if searchName.hasSuffix(".L") || searchName.hasSuffix(".R") {
-            if let lastDashIndex = searchName.lastIndex(of: "-") {
-                searchName = String(searchName[..<lastDashIndex])
-            }
+        let cleanTitle = title
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        
+        // Skip if both are empty
+        guard !cleanCatalogID.isEmpty || !cleanTitle.isEmpty else {
+            return []
         }
         
         // Get all files in directory and subdirectories
@@ -91,15 +94,32 @@ class ComposerFetchingService {
             
             let fileName = fileURL.deletingPathExtension().lastPathComponent
             
-            // Check if filename contains the search name (case insensitive)
-            if searchName.range(of: fileName, options: .caseInsensitive) != nil {
+            // Check if filename contains both catalog ID and title (case insensitive)
+            var matchesCatalogID = cleanCatalogID.isEmpty
+            var matchesTitle = cleanTitle.isEmpty
+            
+            if !cleanCatalogID.isEmpty {
+                matchesCatalogID = fileName.range(of: cleanCatalogID, options: .caseInsensitive) != nil
+            }
+            
+            if !cleanTitle.isEmpty {
+                matchesTitle = fileName.range(of: cleanTitle, options: .caseInsensitive) != nil
+            }
+            
+            if matchesCatalogID && matchesTitle {
                 matchingFiles.append(fileURL)
             }
         }
         
-        // If no matches with underscore, try replacing underscores with spaces
+        // If no matches, try replacing underscores with spaces and hyphens with spaces
         if matchingFiles.isEmpty {
-            let searchNameWithSpaces = searchName.replacingOccurrences(of: "_", with: " ")
+            let catalogIDWithSpaces = cleanCatalogID
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: "-", with: " ")
+            
+            let titleWithSpaces = cleanTitle
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: "-", with: " ")
             
             guard let enumerator = fileManager.enumerator(
                 at: directory,
@@ -120,7 +140,18 @@ class ComposerFetchingService {
                 
                 let fileName = fileURL.deletingPathExtension().lastPathComponent
                 
-                if searchNameWithSpaces.range(of: fileName, options: .caseInsensitive) != nil {
+                var matchesCatalogID = catalogIDWithSpaces.isEmpty
+                var matchesTitle = titleWithSpaces.isEmpty
+                
+                if !catalogIDWithSpaces.isEmpty {
+                    matchesCatalogID = fileName.range(of: catalogIDWithSpaces, options: .caseInsensitive) != nil
+                }
+                
+                if !titleWithSpaces.isEmpty {
+                    matchesTitle = fileName.range(of: titleWithSpaces, options: .caseInsensitive) != nil
+                }
+                
+                if matchesCatalogID && matchesTitle {
                     matchingFiles.append(fileURL)
                 }
             }
@@ -129,8 +160,8 @@ class ComposerFetchingService {
         return matchingFiles
     }
     
-    // Get composer for a clip name from a directory
-    func getComposer(for clipName: String, in directory: URL?) -> String {
+    // Get composer for a catalog ID and title from a directory
+    func getComposer(for catalogID: String, title: String, in directory: URL?) -> String {
         var searchDirectory = directory ?? lastSearchDirectory
         
         // If no directory is set, prompt user
@@ -145,11 +176,8 @@ class ComposerFetchingService {
         lastSearchDirectory = searchDirectory
         saveLastDirectory(searchDirectory)
         
-        // Extract just the first name if there are multiple
-        let nameToFind = clipName.components(separatedBy: ",").first ?? clipName
-        
-        // Find matching files
-        let matchingFiles = findMatchingFiles(in: searchDirectory, matching: nameToFind)
+        // Find matching files using both catalog ID and title
+        let matchingFiles = findMatchingFiles(in: searchDirectory, catalogID: catalogID, title: title)
         
         // Try to extract composer from the first matching file
         for file in matchingFiles {
@@ -166,8 +194,8 @@ class ComposerFetchingService {
         var updatedEvents = events
         
         for (index, var event) in updatedEvents.enumerated() {
-            // Search using catalog ID (the simplified name without suffixes)
-            event.composer = getComposer(for: event.catalogID, in: directory)
+            // Search using both catalog ID and title
+            event.composer = getComposer(for: event.catalogID, title: event.title, in: directory)
             updatedEvents[index] = event
             progressHandler(index + 1, updatedEvents.count)
         }
