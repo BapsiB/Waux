@@ -128,48 +128,41 @@ class CueFileParsingService {
             trimmedName = String(trimmedName[..<suffixMatch.lowerBound])
         }
         
-        // Step 2: Try to extract the catalog/ID prefix
-        // Pattern: Letters/symbols followed by numbers, before the descriptive title
-        // Example: "UPM_LQC71_15_Mogadishu..." -> catalogID: "UPM_LQC71_15", title: "Mogadishu..."
-        
-        // Find sequences of digits in the string
-        let digitPattern = "\\d+"
-        let regex = try? NSRegularExpression(pattern: digitPattern, options: [])
-        let nsString = trimmedName as NSString
-        let matches = regex?.matches(in: trimmedName, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
+        // Step 2: Extract catalog ID and title based on the pattern
+        // Pattern: Find the first digit, then find the first letter after it - that's where the title starts
+        // Example: "UPM_NTP504_3_Take_My_Hand..." -> catalogID: "UPM_NTP504_3", title: "Take_My_Hand..."
         
         var catalogID = trimmedName
         var title = ""
         
-        // If we found digit sequences, look for the pattern
-        if !matches.isEmpty {
-            // Find the last digit sequence that's followed by an underscore and a letter (likely the title start)
-            for (index, match) in matches.enumerated() {
-                let matchEnd = match.range.location + match.range.length
+        // Find the first digit in the string
+        if let firstDigitRange = trimmedName.range(of: "\\d", options: .regularExpression) {
+            let firstDigitIndex = firstDigitRange.lowerBound
+            
+            // Look for the first letter after this digit (skipping any non-letter characters)
+            let afterDigitString = String(trimmedName[firstDigitIndex...])
+            if let firstLetterAfterDigitRange = afterDigitString.range(of: "[A-Za-z]", options: .regularExpression) {
+                let letterIndex = trimmedName.index(firstDigitIndex, offsetBy: afterDigitString.distance(from: afterDigitString.startIndex, to: firstLetterAfterDigitRange.lowerBound))
                 
-                // Check if there's more content after this number
-                if matchEnd < trimmedName.count {
-                    let afterNumberIndex = trimmedName.index(trimmedName.startIndex, offsetBy: matchEnd)
-                    let remainingString = String(trimmedName[afterNumberIndex...])
-                    
-                    // Check if the remaining part starts with underscore/separator followed by a letter (title part)
-                    if remainingString.range(of: "^[_-][A-Za-z]", options: .regularExpression) != nil {
-                        // This looks like the boundary between catalog and title
-                        // Check if there are more digit sequences after this one
-                        let hasMoreDigits = index < matches.count - 1
-                        
-                        if !hasMoreDigits {
-                            // This is the last digit sequence before the title
-                            catalogID = String(trimmedName[..<afterNumberIndex])
-                            title = String(remainingString.dropFirst()) // Remove the separator
-                            break
-                        }
-                    }
+                // Everything before this letter is the catalog ID
+                // Only trim trailing separators, preserve leading ones
+                let catalogPart = String(trimmedName[..<letterIndex])
+                catalogID = catalogPart.trimmingCharacters(in: CharacterSet(charactersIn: "_-"))
+                
+                // If the original string started with underscore, preserve it
+                if trimmedName.hasPrefix("_") && !catalogID.hasPrefix("_") {
+                    catalogID = "_" + catalogID
                 }
+                title = String(trimmedName[letterIndex...])
             }
         }
         
         return ParsedName(catalogID: catalogID, title: title, fullName: clipName)
+    }
+    
+    /// Get simplified name (catalog ID only) - convenience method for testing
+    func getSimplifiedName(_ clipName: String) -> String {
+        return parseName(clipName).catalogID
     }
     
     // MARK: - Layer 1: Parse Raw File

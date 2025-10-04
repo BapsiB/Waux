@@ -15,7 +15,8 @@ struct TestRunner {
             ("Simple Name.L", "Simple Name"),
             ("No_Numbers_Here.A1", "No_Numbers_Here"),
             ("ICON_74_2_Follower_Butler_Drones.1-03.L", "ICON_74_2"),
-            ("ICON_74_2_Follower_Butler_Drones-22.L", "ICON_74_2")
+            ("ICON_74_2_Follower_Butler_Drones-22.L", "ICON_74_2"),
+            ("UPM_NTP504_3_Take_My_Hand_Vocal_Lead_Gregory_Wilde_2127302-22.L", "UPM_NTP504_3")
         ]
         
         print("\n🧪 Testing getSimplifiedName:")
