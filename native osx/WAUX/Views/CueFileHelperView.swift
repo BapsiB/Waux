@@ -72,6 +72,7 @@ struct CueFileHelperView: View {
     @State private var filterText: String = ""
     @State private var sortField: SortField = .catalogID
     @State private var sortAscending: Bool = true
+    @State private var sortOrder: [KeyPathComparator<CueEvent>] = []
     
     private let parsingService = CueFileParsingService()
     private let composerService = ComposerFetchingService()
@@ -93,34 +94,14 @@ struct CueFileHelperView: View {
                    event.title.lowercased().contains(searchText)
         }
         
-        // Apply sorting
-        return filteredEvents.sorted { first, second in
-            let comparison: ComparisonResult
-            
-            switch sortField {
-            case .track:
-                comparison = first.channel < second.channel ? .orderedAscending : 
-                           (first.channel > second.channel ? .orderedDescending : .orderedSame)
-            case .eventID:
-                comparison = first.eventID < second.eventID ? .orderedAscending : 
-                           (first.eventID > second.eventID ? .orderedDescending : .orderedSame)
-            case .catalogID:
-                comparison = first.catalogID.compare(second.catalogID)
-            case .title:
-                comparison = first.title.compare(second.title)
-            case .startTime:
-                comparison = first.startTime.compare(second.startTime)
-            case .endTime:
-                comparison = first.endTime.compare(second.endTime)
-            case .duration:
-                comparison = first.duration.compare(second.duration)
-            case .state:
-                comparison = first.state.compare(second.state)
-            case .composer:
-                comparison = first.composer.compare(second.composer)
+        // Apply sorting using sortOrder if available, otherwise use default sorting
+        if !sortOrder.isEmpty {
+            return filteredEvents.sorted(using: sortOrder)
+        } else {
+            // Default sorting by catalogID
+            return filteredEvents.sorted { first, second in
+                first.catalogID.compare(second.catalogID) == .orderedAscending
             }
-            
-            return sortAscending ? comparison == .orderedAscending : comparison == .orderedDescending
         }
     }
     
@@ -229,15 +210,6 @@ struct CueFileHelperView: View {
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
                     .cornerRadius(6)
                     
-                    Spacer()
-                    
-                    // Sort hint
-                    Text("Click column headers to sort")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(6)
-                        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-                        .cornerRadius(6)
                 }
             }
             .padding(.horizontal)
@@ -249,7 +221,7 @@ struct CueFileHelperView: View {
     // MARK: - Table View
     
     private var tableView: some View {
-        Table(currentEvents) {
+        Table(currentEvents, sortOrder: $sortOrder) {
             TableColumn("") { event in
                 Button(action: {
                     selectedEventForInfo = event
@@ -262,159 +234,79 @@ struct CueFileHelperView: View {
             }
             .width(30)
             
-            TableColumn(headerView: {
-                HStack {
-                    Text("Track")
-                    if sortField == .track {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                            .foregroundColor(.accentColor)
-                            .font(.caption)
-                    }
-                }
-                .onTapGesture {
-                    sortBy(.track)
-                }
-            }) { event in
+            TableColumn("Track", value: \.channel) { event in
                 Text("\(event.channel)")
             }
             .width(60)
             
-            TableColumn(headerView: {
-                HStack {
-                    Text("Event")
-                    if sortField == .eventID {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                            .foregroundColor(.accentColor)
-                            .font(.caption)
-                    }
-                }
-                .onTapGesture {
-                    sortBy(.eventID)
-                }
-            }) { event in
+            TableColumn("Event", value: \.eventID) { event in
                 Text("\(event.eventID)")
             }
             .width(60)
             
-            TableColumn(headerView: {
-                HStack {
-                    Text("Catalog ID")
-                    if sortField == .catalogID {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                            .foregroundColor(.accentColor)
-                            .font(.caption)
-                    }
-                }
-                .onTapGesture {
-                    sortBy(.catalogID)
-                }
-            }) { event in
+            TableColumn("Catalog ID", value: \.catalogID) { event in
                 Text(event.catalogID)
             }
             .width(min: 150, ideal: 200)
             
-            TableColumn(headerView: {
-                HStack {
-                    Text("Title")
-                    if sortField == .title {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                            .foregroundColor(.accentColor)
-                            .font(.caption)
-                    }
-                }
-                .onTapGesture {
-                    sortBy(.title)
-                }
-            }) { event in
+            TableColumn("Title", value: \.title) { event in
                 Text(event.title)
             }
             .width(min: 150, ideal: 250)
             
-            TableColumn(headerView: {
-                HStack {
-                    Text("Start Time")
-                    if sortField == .startTime {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                            .foregroundColor(.accentColor)
-                            .font(.caption)
-                    }
-                }
-                .onTapGesture {
-                    sortBy(.startTime)
-                }
-            }) { event in
+            TableColumn("Start Time", value: \.startTime) { event in
                 Text(event.startTime)
             }
             .width(100)
             
-            TableColumn(headerView: {
-                HStack {
-                    Text("End Time")
-                    if sortField == .endTime {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                            .foregroundColor(.accentColor)
-                            .font(.caption)
-                    }
-                }
-                .onTapGesture {
-                    sortBy(.endTime)
-                }
-            }) { event in
+            TableColumn("End Time", value: \.endTime) { event in
                 Text(event.endTime)
             }
             .width(100)
             
-            TableColumn(headerView: {
-                HStack {
-                    Text("Duration")
-                    if sortField == .duration {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                            .foregroundColor(.accentColor)
-                            .font(.caption)
-                    }
-                }
-                .onTapGesture {
-                    sortBy(.duration)
-                }
-            }) { event in
+            TableColumn("Duration", value: \.duration) { event in
                 Text(event.duration)
             }
             .width(80)
             
-            TableColumn(headerView: {
-                HStack {
-                    Text("State")
-                    if sortField == .state {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                            .foregroundColor(.accentColor)
-                            .font(.caption)
-                    }
-                }
-                .onTapGesture {
-                    sortBy(.state)
-                }
-            }) { event in
+            TableColumn("State", value: \.state) { event in
                 Text(event.state)
             }
             .width(80)
             
-            TableColumn(headerView: {
-                HStack {
-                    Text("Composer")
-                    if sortField == .composer {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                            .foregroundColor(.accentColor)
-                            .font(.caption)
-                    }
-                }
-                .onTapGesture {
-                    sortBy(.composer)
-                }
-            }) { event in
+            TableColumn("Composer", value: \.composer) { event in
                 Text(event.composer.isEmpty ? "-" : event.composer)
                     .foregroundColor(event.composer.isEmpty ? .secondary : .primary)
             }
             .width(min: 150, ideal: 200)
+        }
+        .onChange(of: sortOrder) { newSortOrder in
+            if let newSort = newSortOrder.first {
+                // Map KeyPathComparator to our SortField
+                switch newSort.keyPath {
+                case \.channel:
+                    sortField = .track
+                case \.eventID:
+                    sortField = .eventID
+                case \.catalogID:
+                    sortField = .catalogID
+                case \.title:
+                    sortField = .title
+                case \.startTime:
+                    sortField = .startTime
+                case \.endTime:
+                    sortField = .endTime
+                case \.duration:
+                    sortField = .duration
+                case \.state:
+                    sortField = .state
+                case \.composer:
+                    sortField = .composer
+                default:
+                    break
+                }
+                sortAscending = newSort.order == .forward
+            }
         }
     }
     
@@ -634,16 +526,6 @@ struct CueFileHelperView: View {
         return escaped
     }
     
-    private func sortBy(_ field: SortField) {
-        if sortField == field {
-            // Toggle direction if same field
-            sortAscending.toggle()
-        } else {
-            // Set new field and default to ascending
-            sortField = field
-            sortAscending = true
-        }
-    }
     
     private func clearData() {
         withAnimation {
@@ -655,6 +537,7 @@ struct CueFileHelperView: View {
             filterText = ""
             sortField = .catalogID
             sortAscending = true
+            sortOrder = []
         }
     }
 }
