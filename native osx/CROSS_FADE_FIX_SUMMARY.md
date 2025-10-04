@@ -93,3 +93,37 @@ swiftc WAUX/Services/CueFileParsingService.swift test_fade_aggregation.swift -o 
 
 All tests now pass successfully! ✅
 
+## Update: Muted Clip Handling
+
+### Additional Problem
+
+When a muted clip sits between two unmuted clips with cross fades on either side:
+- The muted clip gets filtered out in Layer 1
+- The cross fades remain, creating potential for incorrect merging
+- If both clips have the same catalog ID, they could be incorrectly merged across large time gaps
+
+### Solution
+
+Added logic in Layer 1 to handle muted clips:
+
+1. **Convert adjacent cross fades**: When a muted clip is detected:
+   - Cross fade BEFORE muted clip → convert to FADE_OUT
+   - Cross fade AFTER muted clip → convert to FADE_IN
+
+2. **Temporal adjacency checking**: In Layer 2, added checks to ensure fades are only merged with clips if they're temporally adjacent:
+   - FADE_IN: Only merge if `fade.endTime == clip.startTime`
+   - FADE_OUT: Only merge if `clip.endTime == fade.startTime`
+   - Non-adjacent fades are skipped with a warning message
+
+### Additional Tests
+
+**Test 4**: Muted clip with different catalog IDs
+- Verifies cross fades are properly converted and handled
+
+**Test 5**: Muted clip with same catalog on both sides (CRITICAL)
+- Tests the most problematic case where same-catalog clips could be incorrectly merged
+- Ensures temporal gaps prevent incorrect merging
+- Result: 2 separate events with correct durations (36 seconds total, not 5+ minutes)
+
+All 5 tests pass! ✅
+

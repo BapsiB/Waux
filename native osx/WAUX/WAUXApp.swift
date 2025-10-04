@@ -86,7 +86,7 @@ struct MainWindowView: View {
     
     var body: some View {
         ContentView()
-            .onChange(of: menuActionState.shouldOpenCueFileHelper) { _, shouldOpen in
+            .onChange(of: menuActionState.shouldOpenCueFileHelper) { shouldOpen in
                 if shouldOpen {
                     openWindow(id: "cue-file-helper")
                     menuActionState.shouldOpenCueFileHelper = false

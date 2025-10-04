@@ -25,6 +25,7 @@ struct ContentView: View {
     @State private var hasRunInitialScan = false
     @State private var showFileChangesSheet = false
     @State private var fileChangesData: FileChangesData? = nil
+    @State private var previousTracks: [Track] = []
     @EnvironmentObject private var menuActionState: MenuActionState
     
     var body: some View {
@@ -94,28 +95,28 @@ struct ContentView: View {
         } message: {
             Text(errorMessage)
         }
-        .onChange(of: selectedItem) { _, newItem in
+        .onChange(of: selectedItem) { newItem in
             handleSelectedItemChange(newItem)
         }
-        .onChange(of: menuActionState.shouldOpenFolder) { _, shouldOpen in
+        .onChange(of: menuActionState.shouldOpenFolder) { shouldOpen in
             if shouldOpen {
                 showingFolderPicker = true
                 menuActionState.shouldOpenFolder = false
             }
         }
-        .onChange(of: menuActionState.shouldImportAudio) { _, shouldImport in
+        .onChange(of: menuActionState.shouldImportAudio) { shouldImport in
             if shouldImport {
                 // TODO: Implement file import
                 menuActionState.shouldImportAudio = false
             }
         }
-        .onChange(of: menuActionState.shouldClearSavedFolder) { _, shouldClear in
+        .onChange(of: menuActionState.shouldClearSavedFolder) { shouldClear in
             if shouldClear {
                 preferenceService.clearLastFolder()
                 menuActionState.shouldClearSavedFolder = false
             }
         }
-        .onChange(of: menuActionState.shouldRegenerateWaveforms) { _, shouldRegenerate in
+        .onChange(of: menuActionState.shouldRegenerateWaveforms) { shouldRegenerate in
             if shouldRegenerate {
                 Task {
                     await regenerateAllWaveforms()
@@ -123,18 +124,18 @@ struct ContentView: View {
                 menuActionState.shouldRegenerateWaveforms = false
             }
         }
-        .onChange(of: menuActionState.shouldGoToCurrentTrack) { _, shouldGoTo in
+        .onChange(of: menuActionState.shouldGoToCurrentTrack) { shouldGoTo in
             if shouldGoTo {
                 NotificationCenter.default.post(name: NSNotification.Name("GoToCurrentTrack"), object: nil)
                 menuActionState.shouldGoToCurrentTrack = false
             }
         }
-        .onChange(of: collectionService.tracks) { oldTracks, newTracks in
+        .onChange(of: collectionService.tracks) { newTracks in
             print("[ContentView] tracks changed, count=\(newTracks.count)")
             
             // Only reload playlist tracks if the track structure changed (added/removed tracks)
             // Don't reload for metadata changes (tags, ratings, etc.)
-            let oldTrackIds = Set(oldTracks.compactMap(\.id))
+            let oldTrackIds = Set(previousTracks.compactMap(\.id))
             let newTrackIds = Set(newTracks.compactMap(\.id))
             let tracksAddedOrRemoved = oldTrackIds != newTrackIds
             
@@ -155,6 +156,9 @@ struct ContentView: View {
                     }
                 }
             }
+            
+            // Update previous tracks for next comparison
+            previousTracks = newTracks
         }
         .onAppear {
             if !hasAttemptedAutoLoad {

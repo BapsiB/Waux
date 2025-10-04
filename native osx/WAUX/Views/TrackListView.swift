@@ -100,88 +100,69 @@ struct TrackTable: View {
             }
             .width(min: 150, ideal: columnWidths[.title] ?? 250)
             
-            if visibleColumns.contains(.artist) {
-                TableColumn("Artist", value: \.track.artist) { displayItem in
-                    Text(displayItem.track.artist)
-                        .padding(.vertical, 2)
-                        .background(backgroundForDisplayItem(displayItem))
-                        .cornerRadius(4)
-                }
-                .width(min: 100, ideal: columnWidths[.artist] ?? 150)
+            // Note: Conditional columns removed for macOS 13 compatibility
+            // All columns are now always visible
+            TableColumn("Artist", value: \.track.artist) { displayItem in
+                Text(displayItem.track.artist)
+                    .padding(.vertical, 2)
+                    .background(backgroundForDisplayItem(displayItem))
+                    .cornerRadius(4)
             }
+            .width(min: 100, ideal: columnWidths[.artist] ?? 150)
             
-            if visibleColumns.contains(.album) {
-                TableColumn("Album", value: \.track.album) { displayItem in
-                    Text(displayItem.track.album)
-                        .padding(.vertical, 2)
-                        .background(backgroundForDisplayItem(displayItem))
-                        .cornerRadius(4)
-                }
-                .width(min: 100, ideal: columnWidths[.album] ?? 120)
+            TableColumn("Album", value: \.track.album) { displayItem in
+                Text(displayItem.track.album)
+                    .padding(.vertical, 2)
+                    .background(backgroundForDisplayItem(displayItem))
+                    .cornerRadius(4)
             }
+            .width(min: 100, ideal: columnWidths[.album] ?? 120)
             
-            if visibleColumns.contains(.duration) {
-                TableColumn("Duration", value: \.track.formattedDuration) { displayItem in
-                    Text(displayItem.track.formattedDuration)
-                        .padding(.vertical, 2)
-                        .background(backgroundForDisplayItem(displayItem))
-                        .cornerRadius(4)
-                }
-                .width(min: 5, ideal: 10, max:80)
+            TableColumn("Duration", value: \.track.formattedDuration) { displayItem in
+                Text(displayItem.track.formattedDuration)
+                    .padding(.vertical, 2)
+                    .background(backgroundForDisplayItem(displayItem))
+                    .cornerRadius(4)
             }
+            .width(min: 5, ideal: 10, max:80)
             
-            if visibleColumns.contains(.rating) {
-                TableColumn("Rating", value: \.track.rating) { displayItem in
-                    ratingCell(for: displayItem)
-                        .padding(.vertical, 2)
-                        .background(backgroundForDisplayItem(displayItem))
-                        .cornerRadius(4)
-                }
-                .width(min: 60, ideal: columnWidths[.rating] ?? 70, max: 100)
+            TableColumn("Rating", value: \.track.rating) { displayItem in
+                ratingCell(for: displayItem)
+                    .padding(.vertical, 2)
+                    .background(backgroundForDisplayItem(displayItem))
+                    .cornerRadius(4)
             }
+            .width(min: 60, ideal: columnWidths[.rating] ?? 70, max: 100)
             
-//            if visibleColumns.contains(.type) {
-//                TableColumn("Type", value: \.sourceType.rawValue) { track in
-//                    typeCell(for: track)
-//                }
-//                .width(min: 60, ideal: columnWidths[.type] ?? 80)
-//            }
-            
-            if visibleColumns.contains(.dateAdded) {
-                TableColumn("Date Added", value: \.track.dateAddedSortValue) { displayItem in
-                    Text(displayItem.track.formattedDateAdded)
-                        .padding(.vertical, 2)
-                        .background(backgroundForDisplayItem(displayItem))
-                        .cornerRadius(4)
-                }
-                .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
+            TableColumn("Date Added", value: \.track.dateAddedSortValue) { displayItem in
+                Text(displayItem.track.formattedDateAdded)
+                    .padding(.vertical, 2)
+                    .background(backgroundForDisplayItem(displayItem))
+                    .cornerRadius(4)
             }
+            .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
             
-            if visibleColumns.contains(.composer) {
-                TableColumn("Composer", value: \.track.composerText) { displayItem in
-                    Text(displayItem.track.composerText)
-                        .padding(.vertical, 2)
-                        .background(backgroundForDisplayItem(displayItem))
-                        .cornerRadius(4)
-                }
-                .width(min: 100, ideal: columnWidths[.composer] ?? 150)
+            TableColumn("Composer", value: \.track.composerText) { displayItem in
+                Text(displayItem.track.composerText)
+                    .padding(.vertical, 2)
+                    .background(backgroundForDisplayItem(displayItem))
+                    .cornerRadius(4)
             }
+            .width(min: 100, ideal: columnWidths[.composer] ?? 150)
             
-            if visibleColumns.contains(.generalTags) {
-                TableColumn("Tags", value: \.track.generalTags.count) { displayItem in
-                    if let trackId = displayItem.track.id {
-                        InteractiveTagsView_New(
-                            trackId: trackId,
-                            metadataManager: metadataManager,
-                            isTextFieldFocused: $isTextFieldFocused
-                        )
-                        .padding(.vertical, 2)
-                        .background(backgroundForDisplayItem(displayItem))
-                        .cornerRadius(4)
-                    }
+            TableColumn("Tags", value: \.track.generalTags.count) { displayItem in
+                if let trackId = displayItem.track.id {
+                    InteractiveTagsView_New(
+                        trackId: trackId,
+                        metadataManager: metadataManager,
+                        isTextFieldFocused: $isTextFieldFocused
+                    )
+                    .padding(.vertical, 2)
+                    .background(backgroundForDisplayItem(displayItem))
+                    .cornerRadius(4)
                 }
-                .width(min: 120, ideal: columnWidths[.generalTags] ?? 200, max:600)
             }
+            .width(min: 120, ideal: columnWidths[.generalTags] ?? 200, max:600)
         }
         .tableStyle(.bordered)
         .focusable()
@@ -193,31 +174,19 @@ struct TrackTable: View {
                 onDoubleClick(displayItem.track)
             }
         }
-        .onKeyPress("a", phases: .down) { press in
-            if press.modifiers.contains(.command) {
-                onKeyPressA()
-                return .handled
-            }
-            return .ignored
-        }
-        .onKeyPress(.space, phases: .down) { press in
-            if !isTextFieldFocused && isTableFocused {
-                onKeyPressSpace()
-                return .handled
-            }
-            return .ignored
-        }
+        .background(KeyboardEventHandler(
+            isTextFieldFocused: isTextFieldFocused,
+            isTableFocused: isTableFocused,
+            hasSelection: !selectedTracks.isEmpty,
+            onCommandA: onKeyPressA,
+            onSpace: onKeyPressSpace,
+            onBackspace: onKeyPressBackspace,
+            onCommandL: onGoToCurrentTrack
+        ))
         .onDeleteCommand {
             if !isTextFieldFocused && isTableFocused && !selectedTracks.isEmpty {
                 onKeyPressBackspace()
             }
-        }
-        .onKeyPress("l", phases: .down) { press in
-            if press.modifiers.contains(.command) {
-                onGoToCurrentTrack()
-                return .handled
-            }
-            return .ignored
         }
         .onAppear {
             // Set focus to the table when it appears to ensure it can receive keyboard events
@@ -986,10 +955,10 @@ struct TrackListView: View {
             }
         }
         .onAppear(perform: loadPreferences)
-        .onChange(of: visibleColumns) { _, _ in
+        .onChange(of: visibleColumns) { _ in
             saveVisibleColumns()
         }
-        .onChange(of: filteredTracks) { oldTracks, newTracks in
+        .onChange(of: filteredTracks) { _ in
             // Update display items when tracks change
             updateDisplayItems()
             
@@ -1000,14 +969,14 @@ struct TrackListView: View {
             }
             selectedDisplayItems = validSelections
         }
-        .onChange(of: searchService.searchText) { _, _ in
+        .onChange(of: searchService.searchText) { _ in
             // Update display items when search changes
             updateDisplayItems()
             
             // Clear selection when search changes to avoid confusion
             selectedDisplayItems.removeAll()
         }
-        .onChange(of: sortOrder) { _, _ in
+        .onChange(of: sortOrder) { _ in
             // Update display items when sort order changes
             updateDisplayItems()
         }
@@ -1889,5 +1858,89 @@ class TableSelectionView: NSView {
             }
         }
         return nil
+    }
+}
+
+// macOS 13-compatible keyboard event handler
+struct KeyboardEventHandler: NSViewRepresentable {
+    let isTextFieldFocused: Bool
+    let isTableFocused: Bool
+    let hasSelection: Bool
+    let onCommandA: () -> Void
+    let onSpace: () -> Void
+    let onBackspace: () -> Void
+    let onCommandL: () -> Void
+    
+    func makeNSView(context: Context) -> NSView {
+        let view = KeyEventView()
+        view.coordinator = context.coordinator
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let keyView = nsView as? KeyEventView {
+            keyView.coordinator = context.coordinator
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            isTextFieldFocused: isTextFieldFocused,
+            isTableFocused: isTableFocused,
+            hasSelection: hasSelection,
+            onCommandA: onCommandA,
+            onSpace: onSpace,
+            onBackspace: onBackspace,
+            onCommandL: onCommandL
+        )
+    }
+    
+    class KeyEventView: NSView {
+        var coordinator: Coordinator?
+        
+        override var acceptsFirstResponder: Bool { true }
+        
+        override func keyDown(with event: NSEvent) {
+            guard let coordinator = coordinator else {
+                super.keyDown(with: event)
+                return
+            }
+            
+            let modifiers = event.modifierFlags
+            let key = event.charactersIgnoringModifiers ?? ""
+            
+            if modifiers.contains(.command) && key == "a" {
+                coordinator.onCommandA()
+            } else if key == " " && !coordinator.isTextFieldFocused && coordinator.isTableFocused {
+                coordinator.onSpace()
+            } else if event.keyCode == 51 && !coordinator.isTextFieldFocused && coordinator.isTableFocused && coordinator.hasSelection {
+                // 51 is backspace/delete
+                coordinator.onBackspace()
+            } else if modifiers.contains(.command) && key == "l" {
+                coordinator.onCommandL()
+            } else {
+                super.keyDown(with: event)
+            }
+        }
+    }
+    
+    class Coordinator {
+        let isTextFieldFocused: Bool
+        let isTableFocused: Bool
+        let hasSelection: Bool
+        let onCommandA: () -> Void
+        let onSpace: () -> Void
+        let onBackspace: () -> Void
+        let onCommandL: () -> Void
+        
+        init(isTextFieldFocused: Bool, isTableFocused: Bool, hasSelection: Bool, onCommandA: @escaping () -> Void, onSpace: @escaping () -> Void, onBackspace: @escaping () -> Void, onCommandL: @escaping () -> Void) {
+            self.isTextFieldFocused = isTextFieldFocused
+            self.isTableFocused = isTableFocused
+            self.hasSelection = hasSelection
+            self.onCommandA = onCommandA
+            self.onSpace = onSpace
+            self.onBackspace = onBackspace
+            self.onCommandL = onCommandL
+        }
     }
 }

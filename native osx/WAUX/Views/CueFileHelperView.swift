@@ -162,16 +162,6 @@ struct CueFileHelperView: View {
                 .buttonStyle(.plain)
                 .help(isPinned ? "Window is pinned on top" : "Pin window on top")
                 
-                Button("Select Audio Directory") {
-                    selectDirectory()
-                }
-                .buttonStyle(.bordered)
-                
-                if searchDirectory != nil {
-                    Text("✓")
-                        .foregroundColor(.green)
-                        .help("Audio directory selected")
-                }
             }
             .padding()
             
@@ -180,9 +170,6 @@ struct CueFileHelperView: View {
             // Layer selector and filter
             VStack(spacing: 8) {
                 HStack(spacing: 12) {
-                    Text("Debug View:")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
                     
                     Picker("", selection: $selectedLayer) {
                         ForEach(ParsingLayer.allCases, id: \.self) { layer in
@@ -379,12 +366,12 @@ struct CueFileHelperView: View {
             
             Spacer()
             
-            Button("Fetch Composers") {
-                fetchComposers()
+            Button("Fetch Composers from Files...") {
+                selectDirectoryAndFetch()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(searchDirectory == nil || processingProgress != nil || selectedLayer != .layer4)
-            .help(selectedLayer != .layer4 ? "Composer fetching only works on Layer 4" : "Fetch composer metadata from audio files")
+            .disabled(processingProgress != nil || selectedLayer != .layer4)
+            .help(selectedLayer != .layer4 ? "Composer fetching only works on Layer 4" : "Select audio directory and fetch composer metadata")
             
             Button("Export to CSV") {
                 exportToCSV()
@@ -479,6 +466,26 @@ struct CueFileHelperView: View {
         panel.begin { response in
             if response == .OK, let url = panel.url {
                 searchDirectory = url
+            }
+        }
+    }
+    
+    private func selectDirectoryAndFetch() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Select directory containing audio files"
+        
+        if let lastDirectory = searchDirectory {
+            panel.directoryURL = lastDirectory
+        }
+        
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                searchDirectory = url
+                // Trigger composer fetching after directory selection
+                fetchComposers()
             }
         }
     }

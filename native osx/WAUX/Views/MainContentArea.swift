@@ -123,13 +123,13 @@ struct MainContentArea: View {
         .onAppear {
             print("[UI] Rendering main area - isLoading: \(collectionService.isLoading), activeCollection: \(activeCollection != nil), tracksCount: \(tracksCount)")
         }
-        .onChange(of: collectionService.isLoading) { _, _ in
+        .onChange(of: collectionService.isLoading) { _ in
             print("[UI] Collection loading state changed - isLoading: \(collectionService.isLoading), activeCollection: \(activeCollection != nil), tracksCount: \(tracksCount)")
         }
-        .onChange(of: tracksCount) { _, _ in
+        .onChange(of: tracksCount) { _ in
             print("[UI] Tracks count changed - isLoading: \(collectionService.isLoading), activeCollection: \(activeCollection != nil), tracksCount: \(tracksCount)")
         }
-        .onChange(of: collectionService.tracks) { _, newTracks in
+        .onChange(of: collectionService.tracks) { newTracks in
             // Auto-load first track when collection is loaded and no track is currently playing
             if !collectionService.isLoading && 
                !newTracks.isEmpty && 
@@ -146,7 +146,7 @@ struct MainContentArea: View {
                 }
             }
         }
-        .onChange(of: activeCollection?.id) { _, newCollectionId in
+        .onChange(of: activeCollection?.id) { newCollectionId in
             // Reset auto-load flag when collection changes
             if newCollectionId != currentCollectionId {
                 currentCollectionId = newCollectionId

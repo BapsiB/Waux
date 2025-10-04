@@ -58,7 +58,7 @@ struct FolderHierarchyView: View {
             let rootPath = collectionService.getRootFolders().first
             folderManager.buildHierarchy(from: collectionService.tracks, rootPath: rootPath)
         }
-        .onChange(of: collectionService.tracks) { _, _ in
+        .onChange(of: collectionService.tracks) { _ in
             // Rebuild hierarchy when tracks change
             let rootPath = collectionService.getRootFolders().first
             folderManager.buildHierarchy(from: collectionService.tracks, rootPath: rootPath)

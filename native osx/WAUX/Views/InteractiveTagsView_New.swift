@@ -115,7 +115,7 @@ struct InteractiveTagsView_New: View {
                 )
                 .frame(width: 80)
                 .focused($focused)
-                .onChange(of: focused) { _, newValue in
+                .onChange(of: focused) { newValue in
                     isTextFieldFocused = newValue
                 }
                 

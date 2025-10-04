@@ -32,7 +32,7 @@ struct CueEvent: Identifiable {
     let id = UUID()
     var channel: Int
     var eventID: Int
-    var catalogID: String          // The catalog/ID prefix
+    var catalogID: String          // The catalog/ID prefix (mutable for cross fade conversions)
     var title: String              // The descriptive title
     var originalClipName: String   // Full original clip name
     var startTime: String
@@ -169,11 +169,12 @@ class CueFileParsingService {
     
     /// Layer 1: Parse each line into a CueEvent with parsed names
     func parseRawFile(lines: [String]) -> [CueEvent] {
-        var events: [CueEvent] = []
+        var allEvents: [CueEvent] = []
         var currentTrack = 1  // Track/channel counter (increments when eventID is 1)
         
         print("\n📄 LAYER 1: Parsing raw file...")
         
+        // First pass: Parse all events including muted ones
         for (index, line) in lines.enumerated() {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
             
@@ -215,13 +216,10 @@ class CueFileParsingService {
             let state = fields.count > 6 ? fields[6].trimmingCharacters(in: .whitespaces) : "Unmuted"
             
             // Debug logging for first few events
-            if events.count < 5 {
+            if allEvents.count < 5 {
                 print("   🔍 [Debug] Fields: \(fields)")
                 print("   📋 [Debug] Track: \(currentTrack), StereoCh: \(stereoChannel), EventID: \(eventID), Clip: '\(clipName)'")
             }
-            
-            // Skip muted events
-            guard state != "Muted" else { continue }
             
             // Parse the name
             let parsed = parseName(clipName)
@@ -240,12 +238,40 @@ class CueFileParsingService {
                 composer: ""
             )
             
-            events.append(event)
+            allEvents.append(event)
             
-            print("   T\(currentTrack) S\(stereoChannel) E\(eventID): \(parsed.catalogID) | \(parsed.title.isEmpty ? "(fade)" : parsed.title)")
+            print("   T\(currentTrack) S\(stereoChannel) E\(eventID): \(parsed.catalogID) | \(parsed.title.isEmpty ? "(fade)" : parsed.title) \(state == "Muted" ? "[MUTED]" : "")")
         }
         
-        print("   ✅ Parsed \(events.count) events")
+        // Second pass: Convert cross fades adjacent to muted clips
+        print("   🔧 Converting cross fades adjacent to muted clips...")
+        var convertedCount = 0
+        for i in 0..<allEvents.count {
+            if allEvents[i].state == "Muted" {
+                // Check previous event - if it's a cross fade, convert to fade out
+                if i > 0 && allEvents[i - 1].catalogID == "CROSS_FADE" {
+                    print("      ⬇️ Converting CROSS_FADE (before muted clip) to FADE_OUT")
+                    allEvents[i - 1].catalogID = "FADE_OUT"
+                    convertedCount += 1
+                }
+                
+                // Check next event - if it's a cross fade, convert to fade in
+                if i < allEvents.count - 1 && allEvents[i + 1].catalogID == "CROSS_FADE" {
+                    print("      ⬆️ Converting CROSS_FADE (after muted clip) to FADE_IN")
+                    allEvents[i + 1].catalogID = "FADE_IN"
+                    convertedCount += 1
+                }
+            }
+        }
+        
+        if convertedCount > 0 {
+            print("   ✅ Converted \(convertedCount) cross fade(s) due to muted clips")
+        }
+        
+        // Third pass: Filter out muted events
+        let events = allEvents.filter { $0.state != "Muted" }
+        
+        print("   ✅ Parsed \(events.count) events (filtered out \(allEvents.count - events.count) muted)")
         return events
     }
     
@@ -282,8 +308,13 @@ class CueFileParsingService {
                 if i > 0 {
                     let prevEvent = channelEvents[i - 1]
                     if prevEvent.catalogID == "FADE_IN" {
-                        print("      ⬅️ Merging FADE_IN with \(event.catalogID)")
-                        mergedEvent.startTime = prevEvent.startTime
+                        // Only merge if temporally adjacent (fade ends where event starts)
+                        if prevEvent.endTime == event.startTime {
+                            print("      ⬅️ Merging FADE_IN with \(event.catalogID)")
+                            mergedEvent.startTime = prevEvent.startTime
+                        } else {
+                            print("      ⏭️ Skipping non-adjacent FADE_IN (gap: \(prevEvent.endTime) to \(event.startTime))")
+                        }
                     } else if prevEvent.catalogID == "CROSS_FADE" {
                         // Check if there's an event before the cross fade
                         if i > 1 {
@@ -304,9 +335,15 @@ class CueFileParsingService {
                     let nextEvent = channelEvents[nextIndex]
                     
                     if nextEvent.catalogID == "FADE_OUT" {
-                        print("      ➡️ Merging FADE_OUT with \(event.catalogID)")
-                        mergedEvent.endTime = nextEvent.endTime
-                        nextIndex += 1
+                        // Only merge if temporally adjacent (event ends where fade starts)
+                        if mergedEvent.endTime == nextEvent.startTime {
+                            print("      ➡️ Merging FADE_OUT with \(event.catalogID)")
+                            mergedEvent.endTime = nextEvent.endTime
+                            nextIndex += 1
+                        } else {
+                            print("      ⏭️ Skipping non-adjacent FADE_OUT (gap: \(mergedEvent.endTime) to \(nextEvent.startTime))")
+                            nextIndex += 1
+                        }
                         break // Fade out ends the chain
                     } else if nextEvent.catalogID == "CROSS_FADE" {
                         // Cross fade - check what comes after
@@ -352,6 +389,12 @@ class CueFileParsingService {
         }
         
         print("   ✅ Aggregated to \(aggregated.count) events")
+        
+        // Debug: Print all events with their time ranges
+        for (i, event) in aggregated.enumerated() {
+            print("      Event \(i + 1): \(event.catalogID) from \(event.startTime) to \(event.endTime)")
+        }
+        
         return aggregated
     }
     
