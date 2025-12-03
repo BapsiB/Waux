@@ -1864,6 +1864,80 @@ class TableSelectionView: NSView {
         self.wantsLayer = true
     }
     
+    private var monitor: Any?
+    
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        
+        if let monitor = monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+        
+        if window != nil {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+                return self?.handleMouseDown(event) ?? event
+            }
+        }
+    }
+    
+    deinit {
+        if let monitor = monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
+    
+    private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
+        guard let window = self.window, window == event.window else { return event }
+        
+        // Check if we are in an editing state (text field/view is first responder)
+        // This handles the case where user is editing a tag and clicks another row
+        let firstResponder = window.firstResponder
+        let isEditing = firstResponder is NSTextView || firstResponder is NSTextField
+        
+        if isEditing {
+            if let tableView = findTableView(in: window.contentView) {
+                // Convert point to table view coordinates
+                let locationInTable = tableView.convert(event.locationInWindow, from: nil)
+                
+                // Check if the click is within the table view
+                if tableView.bounds.contains(locationInTable) {
+                    // Get the row at the clicked location
+                    let row = tableView.row(at: locationInTable)
+                    
+                    if row >= 0 && row < displayItems.count {
+                        // If we clicked a row while editing, we want to:
+                        // 1. Make table first responder (ends editing)
+                        // 2. Select the row immediately
+                        
+                        window.makeFirstResponder(tableView)
+                        
+                        // Only handle simple clicks (no modifiers) manually to ensure immediate selection
+                        // Let the table handle complex selections (shift/cmd click) naturally
+                        let modifierFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                        if modifierFlags.isEmpty {
+                            let displayItem = displayItems[row]
+                            
+                            // Update SwiftUI binding
+                            DispatchQueue.main.async {
+                                self.selectedDisplayItems.wrappedValue = [displayItem.id]
+                            }
+                            
+                            // Update visual selection
+                            let indexSet = IndexSet(integer: row)
+                            tableView.selectRowIndexes(indexSet, byExtendingSelection: false)
+                            
+                            // Consume the event since we handled it
+                            return nil
+                        }
+                    }
+                }
+            }
+        }
+        
+        return event
+    }
+    
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
