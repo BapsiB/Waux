@@ -124,17 +124,14 @@ struct InteractiveTagsView_New: View {
                 
                 // "+" button shown when there are existing tags and no current input
                 if !tags.isEmpty && input.isEmpty && !focused {
-                    HStack {
-                        Spacer()
-                        Text("+")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.trailing, 5) // 5px from the right edge
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        focused = true
-                    }
+                    Text("+")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 20, height: 20, alignment: .center)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            focused = true
+                        }
                 }
                 
                 // Overlay showing the completion suggestion
