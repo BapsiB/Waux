@@ -23,67 +23,73 @@ struct SubtleSlider: View {
     }
     
     var body: some View {
-        ZStack(alignment: .leading) {
-            Rectangle()
-                .fill(Color.gray.opacity(0.3))
-                .frame(height: 2)
-            
-            Rectangle()
-                .fill(Color.gray)
-                .frame(width: max(0, value * 300), height: 2)
-            
-            // Small line thumb
-            Rectangle()
-                .fill(Color.gray)
-                .frame(width: 2, height: 12)
-                .offset(x: value * 300 - 1)
-        }
-        .frame(width: 300, height: 20)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { gestureValue in
-                    let ratio = max(0, min(1, gestureValue.location.x / 300))
-                    value = ratio
-                    onChanged(ratio)
-                }
-        )
-        .onHover { hovering in
-            isHovering = hovering
-        }
-        .overlay(
-            // Hover tooltip
-            Group {
-                if isHovering {
-                    VStack(spacing: 0) {
-                        HStack {
-                            Text(formatTime(currentTime))
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .offset(x: -8)
-                            
-                            Text(formatTime(totalDuration))
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                                .offset(x: 8)
-                        }
-                        .frame(width: 300)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        
-                        // Small triangle pointing up
-                        Triangle()
-                            .fill(Color(NSColor.windowBackgroundColor))
-                            .frame(width: 8, height: 4)
-                            .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: -1)
-                            .rotationEffect(.degrees(180))
-                    }
-                    .offset(y: 15)
-                }
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                // Background track
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(height: 2)
+                
+                // Filled track
+                Rectangle()
+                    .fill(Color.gray)
+                    .frame(width: max(0, value * geometry.size.width), height: 2)
+                
+                // Small line thumb
+                Rectangle()
+                    .fill(Color.gray)
+                    .frame(width: 2, height: 12)
+                    .offset(x: value * geometry.size.width - 1)
             }
-        )
+            .frame(height: 20) // Height for hit area
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gestureValue in
+                        let ratio = max(0, min(1, gestureValue.location.x / geometry.size.width))
+                        value = ratio
+                        onChanged(ratio)
+                    }
+            )
+            .onHover { hovering in
+                isHovering = hovering
+            }
+            .overlay(
+                // Hover tooltip
+                Group {
+                    if isHovering {
+                        VStack(spacing: 0) {
+                            HStack {
+                                Text(formatTime(currentTime))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                
+                                Text(formatTime(totalDuration))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                            }
+                            .frame(width: geometry.size.width)
+                            .padding(.horizontal, 0) // Removed fixed padding that might overflow
+                            .padding(.vertical, 4)
+                            
+                            // Small triangle pointing up
+                            Triangle()
+                                .fill(Color(NSColor.windowBackgroundColor))
+                                .frame(width: 8, height: 4)
+                                .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: -1)
+                                .rotationEffect(.degrees(180))
+                        }
+                        .offset(y: 15)
+                    }
+                }
+            )
+            // Center vertically in the available space if needed, though GeometryReader fills.
+            // To align the track vertically center:
+            .frame(maxHeight: .infinity, alignment: .center)
+        }
+        .frame(height: 20) // Fixed height for the component
     }
 }
 
@@ -102,10 +108,10 @@ struct Triangle: Shape {
 #Preview {
     VStack(spacing: 20) {
         SubtleSlider(value: .constant(0.3), onChanged: { _ in }, currentTime: 90, totalDuration: 300)
-            .frame(height: 20)
+            .frame(width: 300, height: 20)
         
         SubtleSlider(value: .constant(0.7), onChanged: { _ in }, currentTime: 210, totalDuration: 300)
-            .frame(height: 20)
+            .frame(width: 150, height: 20) // Test smaller width
     }
     .padding()
 }

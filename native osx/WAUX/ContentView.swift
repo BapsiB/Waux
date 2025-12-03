@@ -350,12 +350,12 @@ struct ContentView: View {
             if !rootContents.isEmpty {
                 print("[OpenFolder] First 5 items: \(rootContents.prefix(5).map{ $0.lastPathComponent })")
             }
-            let preferredDBURL = url.appendingPathComponent("waux.db")
-            let dbAtRoot = rootContents.first { $0.pathExtension.lowercased() == "db" }
+            let preferredDBURL = url.appendingPathComponent("collection.vaux")
+            let dbAtRoot = rootContents.first { $0.pathExtension.lowercased() == "vaux" }
             var dbURL: URL
             if FileManager.default.fileExists(atPath: preferredDBURL.path) {
                 dbURL = preferredDBURL
-                print("[OpenFolder] Found WAUX database at root: \(dbURL.path)")
+                print("[OpenFolder] Found VAUX database at root: \(dbURL.path)")
             } else if let existing = dbAtRoot {
                 dbURL = existing
                 print("[OpenFolder] Found database at root: \(dbURL.path)")

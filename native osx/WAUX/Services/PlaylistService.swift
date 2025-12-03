@@ -172,32 +172,25 @@ class PlaylistService: ObservableObject {
             throw PlaylistError.noActiveCollection
         }
         
-        print("🔍 withDatabaseQueue called on thread: \(Thread.current), queue: \(queue)")
-        
-        // Use a semaphore to ensure true serialization
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<T, Error>?
-        
-        queue.async {
-            print("🔍 Database queue async block executing on thread: \(Thread.current)")
-            Task {
-                do {
-                    let operationResult = try await operation()
-                    result = .success(operationResult)
-                } catch {
-                    result = .failure(error)
+        // bridge the callback-based queue.async to async/await
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                // Block the serial queue while the async operation runs
+                // This ensures true serialization of database access
+                let semaphore = DispatchSemaphore(value: 0)
+                
+                Task {
+                    do {
+                        let result = try await operation()
+                        continuation.resume(returning: result)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                    semaphore.signal()
                 }
-                semaphore.signal()
+                
+                semaphore.wait()
             }
-        }
-        
-        semaphore.wait()
-        
-        switch result! {
-        case .success(let value):
-            return value
-        case .failure(let error):
-            throw error
         }
     }
     
@@ -1533,34 +1526,8 @@ class PlaylistService: ObservableObject {
     
     /// Get all track paths from all playlists within a folder (recursively)
     func getFolderTrackPaths(folderId: String) async throws -> [String] {
-        print("🔍 getFolderTrackPaths called for folder: \(folderId) on thread: \(Thread.current)")
-        
-        guard let queue = databaseQueue else {
-            throw PlaylistError.noActiveCollection
-        }
-        
-        // Use a semaphore to ensure true serialization
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<[String], Error>?
-        
-        queue.async {
-            print("🔍 Database queue async block executing on thread: \(Thread.current)")
-            do {
-                let trackPaths = try self.getFolderTrackPathsSync(folderId: folderId)
-                result = .success(trackPaths)
-            } catch {
-                result = .failure(error)
-            }
-            semaphore.signal()
-        }
-        
-        semaphore.wait()
-        
-        switch result! {
-        case .success(let value):
-            return value
-        case .failure(let error):
-            throw error
+        return try await withDatabaseQueue {
+            try self.getFolderTrackPathsSync(folderId: folderId)
         }
     }
     
