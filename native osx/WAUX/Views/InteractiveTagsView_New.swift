@@ -75,6 +75,7 @@ struct InteractiveTagsView_New: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1) // Prefer giving width to tags
             } else {
                 // Two-line layout for more than 3 tags
                 VStack(alignment: .leading, spacing: 2) {
@@ -99,13 +100,15 @@ struct InteractiveTagsView_New: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1) // Prefer giving width to tags
             }
             
             ZStack(alignment: .leading) {
-                // Custom NSTextField that can intercept Tab key
+                // Underlying text field (always left-aligned, fixed width)
                 CustomTagTextField(
                     text: $input,
-                    placeholder: "+ tag",
+                    placeholder: tags.isEmpty ? "+ tag" : "",
+                    alignment: .left,
                     onTab: {
                         if let suggestion = suggestion {
                             input = suggestion
@@ -113,10 +116,25 @@ struct InteractiveTagsView_New: View {
                     },
                     onSubmit: addCurrentInput
                 )
-                .frame(width: 80)
+                .frame(width: (tags.isEmpty || focused || !input.isEmpty) ? 80 : 0)
                 .focused($focused)
                 .onChange(of: focused) { newValue in
                     isTextFieldFocused = newValue
+                }
+                
+                // "+" button shown when there are existing tags and no current input
+                if !tags.isEmpty && input.isEmpty && !focused {
+                    HStack {
+                        Spacer()
+                        Text("+")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.trailing, 5) // 5px from the right edge
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        focused = true
+                    }
                 }
                 
                 // Overlay showing the completion suggestion
@@ -139,6 +157,8 @@ struct InteractiveTagsView_New: View {
             }
         }
     }
+        
+    
     
     private func addCurrentInput() {
         let name = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -202,6 +222,7 @@ struct TagView: View {
 struct CustomTagTextField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
+    var alignment: NSTextAlignment = .left
     let onTab: () -> Void
     let onSubmit: () -> Void
     
@@ -212,12 +233,15 @@ struct CustomTagTextField: NSViewRepresentable {
         textField.isBordered = false
         textField.backgroundColor = NSColor.clear
         textField.focusRingType = .none
+        textField.alignment = alignment
         textField.delegate = context.coordinator
         return textField
     }
     
     func updateNSView(_ nsView: NSTextField, context: Context) {
         nsView.stringValue = text
+        nsView.placeholderString = placeholder
+        nsView.alignment = alignment
     }
     
     func makeCoordinator() -> Coordinator {
