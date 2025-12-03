@@ -1883,6 +1883,13 @@ class TableSelectionView: NSView {
                 let displayItem = displayItems[row]
                 let displayItemId = displayItem.id
                 
+                // If the clicked row is already part of the selection, preserve the selection
+                // and just show the context menu for the current selection
+                if selectedDisplayItems.wrappedValue.contains(displayItemId) {
+                    self.nextResponder?.rightMouseDown(with: event)
+                    return
+                }
+                
                 // Select the clicked row immediately and synchronously
                 selectedDisplayItems.wrappedValue = [displayItemId]
                 
