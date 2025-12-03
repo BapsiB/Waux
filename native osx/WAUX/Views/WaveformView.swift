@@ -108,9 +108,12 @@ struct WaveformView: View {
 
             }
             .contentShape(Rectangle()) // Make the entire area tappable
-            .onTapGesture { location in
-                handleTap(at: location, in: geo.size)
-            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onEnded { gesture in
+                        handleTap(at: gesture.location, in: geo.size)
+                    }
+            )
         }
     }
 

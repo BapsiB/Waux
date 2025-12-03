@@ -40,11 +40,6 @@ struct SubtleSlider: View {
         }
         .frame(width: 300, height: 20)
         .contentShape(Rectangle())
-        .onTapGesture { location in
-            let ratio = max(0, min(1, location.x / 300))
-            value = ratio
-            onChanged(ratio)
-        }
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { gestureValue in

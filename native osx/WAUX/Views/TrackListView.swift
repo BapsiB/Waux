@@ -431,6 +431,7 @@ struct TrackTable: View {
 
     // MARK: - Drag support (Transferable + preview on macOS 13+)
 
+    @available(macOS 13.0, *)
     struct DraggedTracks: Transferable {
         let paths: [String]
         static var transferRepresentation: some TransferRepresentation {
@@ -538,6 +539,7 @@ struct TrackTable: View {
         return trackGroupService.groups.first { $0.id == groupId }
     }
 
+    @available(macOS 13.0, *)
     private func dragPayload(for track: Track) -> DraggedTracks {
         let tracks = tracksForDrag(from: track)
         let paths = tracks.map { $0.path }
@@ -557,6 +559,7 @@ struct TrackTable: View {
         return DraggedTracks(paths: paths)
     }
 
+    @available(macOS 13.0, *)
     @ViewBuilder
     private func dragPreview(for track: Track) -> some View {
         let tracks = tracksForDrag(from: track)

@@ -1,6 +1,7 @@
 import Foundation
 import CoreTransferable
 
+@available(macOS 13.0, *)
 struct SidebarDragPayload: Transferable {
     enum Kind: String {
         case playlist

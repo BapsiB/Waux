@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreTransferable
 
+@available(macOS 13.0, *)
 struct DraggableSidebarItemModifier: ViewModifier {
     let kind: SidebarDragPayload.Kind
     let id: String
@@ -11,6 +12,7 @@ struct DraggableSidebarItemModifier: ViewModifier {
     }
 }
 
+@available(macOS 13.0, *)
 private struct DragPreview: View {
     let kind: SidebarDragPayload.Kind
     
@@ -28,6 +30,7 @@ private struct DragPreview: View {
     }
 }
 
+@available(macOS 13.0, *)
 extension View {
     func draggableSidebarItem(kind: SidebarDragPayload.Kind, id: String) -> some View {
         self.modifier(DraggableSidebarItemModifier(kind: kind, id: id))

@@ -210,7 +210,7 @@ struct CustomVolumeSlider: View {
             }
             .contentShape(Rectangle())
             .gesture(
-                DragGesture()
+                DragGesture(minimumDistance: 0)
                     .onChanged { gesture in
                         isDragging = true
                         let newValue = max(0, min(1, gesture.location.x / geometry.size.width))
@@ -220,10 +220,6 @@ struct CustomVolumeSlider: View {
                         isDragging = false
                     }
             )
-            .onTapGesture { location in
-                let newValue = max(0, min(1, location.x / geometry.size.width))
-                value = Double(newValue)
-            }
         }
     }
 }

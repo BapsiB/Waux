@@ -28,59 +28,78 @@ struct WAUXApp: App {
                 .environmentObject(menuActionState)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("Open Folder...") {
-                    menuActionState.shouldOpenFolder = true
-                }
-                .keyboardShortcut("o", modifiers: .command)
-                
-                Button("Import Audio...") {
-                    menuActionState.shouldImportAudio = true
-                }
-                .keyboardShortcut("i", modifiers: .command)
-                
-                Divider()
-                
-                Button("Clear Saved Folder") {
-                    menuActionState.shouldClearSavedFolder = true
-                }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
-                
-                Divider()
-                
-                Button("Go to Current Track") {
-                    menuActionState.shouldGoToCurrentTrack = true
-                }
-                .keyboardShortcut("l", modifiers: .command)
-                
-                Divider()
-                
-                Button("Open Cue File Helper") {
-                    menuActionState.shouldOpenCueFileHelper = true
-                }
-                .keyboardShortcut("h", modifiers: [.command, .shift])
-
-            }
-            
-            CommandGroup(replacing: .appInfo) {
-                Button("About WAUX") {
-                    menuActionState.shouldShowAbout = true
-                }
-            }
+            commandGroups
         }
         
-        // Separate window for Cue File Helper
-        WindowGroup(id: "cue-file-helper") {
-            CueFileHelperView()
+        if #available(macOS 13.0, *) {
+            WindowGroup(id: "cue-file-helper") {
+                CueFileHelperView()
+            }
+            .defaultSize(width: 900, height: 600)
         }
-        .defaultSize(width: 900, height: 600)
+    }
+    
+    @CommandsBuilder
+    private var commandGroups: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Open Folder...") {
+                menuActionState.shouldOpenFolder = true
+            }
+            .keyboardShortcut("o", modifiers: .command)
+            
+            Button("Import Audio...") {
+                menuActionState.shouldImportAudio = true
+            }
+            .keyboardShortcut("i", modifiers: .command)
+            
+            Divider()
+            
+            Button("Clear Saved Folder") {
+                menuActionState.shouldClearSavedFolder = true
+            }
+            .keyboardShortcut("k", modifiers: [.command, .shift])
+            
+            Divider()
+            
+            Button("Go to Current Track") {
+                menuActionState.shouldGoToCurrentTrack = true
+            }
+            .keyboardShortcut("l", modifiers: .command)
+            
+            Divider()
+            
+            Button("Open Cue File Helper") {
+                menuActionState.shouldOpenCueFileHelper = true
+            }
+            .keyboardShortcut("h", modifiers: [.command, .shift])
+        }
+        
+        CommandGroup(replacing: .appInfo) {
+            Button("About WAUX") {
+                menuActionState.shouldShowAbout = true
+            }
+        }
     }
 }
 
 // Wrapper view to handle window opening
 struct MainWindowView: View {
+    @EnvironmentObject var menuActionState: MenuActionState
+    
+    var body: some View {
+        if #available(macOS 13.0, *) {
+            MainWindowView13()
+                .environmentObject(menuActionState)
+        } else {
+            MainWindowView12()
+                .environmentObject(menuActionState)
+        }
+    }
+}
+
+@available(macOS 13.0, *)
+struct MainWindowView13: View {
     @EnvironmentObject var menuActionState: MenuActionState
     @Environment(\.openWindow) private var openWindow
     
@@ -89,6 +108,22 @@ struct MainWindowView: View {
             .onChange(of: menuActionState.shouldOpenCueFileHelper) { shouldOpen in
                 if shouldOpen {
                     openWindow(id: "cue-file-helper")
+                    menuActionState.shouldOpenCueFileHelper = false
+                }
+            }
+    }
+}
+
+struct MainWindowView12: View {
+    @EnvironmentObject var menuActionState: MenuActionState
+    
+    var body: some View {
+        ContentView()
+            .onChange(of: menuActionState.shouldOpenCueFileHelper) { shouldOpen in
+                if shouldOpen {
+                    // On macOS 12.4, we can't open separate windows programmatically with WindowGroup(id:)
+                    // The Cue File Helper menu item will do nothing on older macOS versions
+                    print("⚠️ Cue File Helper requires macOS 13.0 or later")
                     menuActionState.shouldOpenCueFileHelper = false
                 }
             }

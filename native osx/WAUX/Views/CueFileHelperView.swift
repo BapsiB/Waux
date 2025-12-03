@@ -76,7 +76,6 @@ struct CueFileHelperView: View {
     @State private var sortOrder: [KeyPathComparator<CueEvent>] = []
     @State private var selectedEventIDs: Set<UUID> = []
     @State private var isPinned = false
-    @Environment(\.openWindow) private var openWindow
     
     private let parsingService = CueFileParsingService()
     private let composerService = ComposerFetchingService()
