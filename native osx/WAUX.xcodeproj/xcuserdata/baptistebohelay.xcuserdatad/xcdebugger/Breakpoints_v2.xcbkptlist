@@ -794,7 +794,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "651"
             endingLineNumber = "651"
-            landmarkName = "dragItem(for:)"
+            landmarkName = "dragPreview(for:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -810,7 +810,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "655"
             endingLineNumber = "655"
-            landmarkName = "dragItem(for:)"
+            landmarkName = "dragPreview(for:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -826,7 +826,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "652"
             endingLineNumber = "652"
-            landmarkName = "dragItem(for:)"
+            landmarkName = "dragPreview(for:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -842,7 +842,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "417"
             endingLineNumber = "417"
-            landmarkName = "iconName(for:)"
+            landmarkName = "dragHandle(for:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -858,8 +858,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "675"
             endingLineNumber = "675"
-            landmarkName = "TrackListView"
-            landmarkType = "14">
+            landmarkName = "getDragPreviewInfo(for:tracks:)"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -874,8 +874,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "676"
             endingLineNumber = "676"
-            landmarkName = "TrackListView"
-            landmarkType = "14">
+            landmarkName = "getDragPreviewInfo(for:tracks:)"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -890,7 +890,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "653"
             endingLineNumber = "653"
-            landmarkName = "dragItem(for:)"
+            landmarkName = "dragPreview(for:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -938,7 +938,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "422"
             endingLineNumber = "422"
-            landmarkName = "color(for:)"
+            landmarkName = "dragHandle(for:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -970,8 +970,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "688"
             endingLineNumber = "688"
-            landmarkName = "TrackListView"
-            landmarkType = "14">
+            landmarkName = "getDragPreviewInfo(for:tracks:)"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -986,8 +986,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "666"
             endingLineNumber = "666"
-            landmarkName = "TrackListView"
-            landmarkType = "14">
+            landmarkName = "getDragPreviewInfo(for:tracks:)"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -1274,8 +1274,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "868"
             endingLineNumber = "868"
-            landmarkName = "body"
-            landmarkType = "24">
+            landmarkName = "sortGroupAware(_:using:)"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -1290,8 +1290,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "851"
             endingLineNumber = "851"
-            landmarkName = "body"
-            landmarkType = "24">
+            landmarkName = "sortGroupAware(_:using:)"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -1354,8 +1354,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "859"
             endingLineNumber = "859"
-            landmarkName = "body"
-            landmarkType = "24">
+            landmarkName = "sortGroupAware(_:using:)"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -1386,7 +1386,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "840"
             endingLineNumber = "840"
-            landmarkName = "scrollToCurrentTrack()"
+            landmarkName = "sortGroupAware(_:using:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>

@@ -76,7 +76,8 @@ struct TrackTable: View {
     var body: some View {
         Table(displayItems, selection: $selectedTracks, sortOrder: $sortOrder) {
             // Drag handle column - always visible and first
-            TableColumn("") { (displayItem: TrackDisplayItem) in
+            // Use a small settings icon in the header to represent the columns menu
+            TableColumn("⚙︎") { (displayItem: TrackDisplayItem) in
                 dragHandle(for: displayItem)
             }
             .width(24)
@@ -361,6 +362,37 @@ struct TrackTable: View {
                         }
                     }
                 }
+                .contextMenu {
+                    // Column visibility controls when right-clicking the drag handle
+                    ForEach(TrackColumn.allCases, id: \.self) { column in
+                        Button {
+                            if visibleColumns.contains(column) {
+                                // Always keep title and waveform columns visible
+                                if column != .title && column != .waveformData && visibleColumns.count > 2 {
+                                    visibleColumns.remove(column)
+                                }
+                            } else {
+                                visibleColumns.insert(column)
+                            }
+                        } label: {
+                            HStack {
+                                Text(column.displayName)
+                                Spacer()
+                                if visibleColumns.contains(column) {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        .disabled(column == .title || column == .waveformData)
+                    }
+                    Divider()
+                    Button("Show All Columns") {
+                        visibleColumns = Set(TrackColumn.allCases)
+                    }
+                    Button("Show Default Columns") {
+                        visibleColumns = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
+                    }
+                }
         } else {
             Image(systemName: dragIconForDisplayItem(displayItem))
                 .foregroundColor(.secondary)
@@ -374,6 +406,37 @@ struct TrackTable: View {
                         Task { @MainActor in
                             DragStateManager.shared.beginTrackDrag()
                         }
+                    }
+                }
+                .contextMenu {
+                    // Column visibility controls when right-clicking the drag handle
+                    ForEach(TrackColumn.allCases, id: \.self) { column in
+                        Button {
+                            if visibleColumns.contains(column) {
+                                // Always keep title and waveform columns visible
+                                if column != .title && column != .waveformData && visibleColumns.count > 2 {
+                                    visibleColumns.remove(column)
+                                }
+                            } else {
+                                visibleColumns.insert(column)
+                            }
+                        } label: {
+                            HStack {
+                                Text(column.displayName)
+                                Spacer()
+                                if visibleColumns.contains(column) {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        .disabled(column == .title || column == .waveformData)
+                    }
+                    Divider()
+                    Button("Show All Columns") {
+                        visibleColumns = Set(TrackColumn.allCases)
+                    }
+                    Button("Show Default Columns") {
+                        visibleColumns = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
                     }
                 }
         }
