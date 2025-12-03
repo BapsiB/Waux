@@ -65,7 +65,7 @@ struct FolderHierarchyView: View {
         }
         .sheet(isPresented: $showTagEditor) {
             let selectedTrackIds = selectedTracks.compactMap { $0 }
-            TagEditorView_New(
+            TagEditorView(
                 metadataManager: metadataManager,
                 collectionService: collectionService,
                 trackIds: selectedTrackIds

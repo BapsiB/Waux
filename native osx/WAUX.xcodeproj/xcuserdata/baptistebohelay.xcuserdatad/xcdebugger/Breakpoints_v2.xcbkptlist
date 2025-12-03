@@ -187,6 +187,20 @@
                   startingLineNumber = "363"
                   endingLineNumber = "363">
                </Location>
+               <Location
+                  uuid = "56B07332-85B2-4FE5-8401-09E9076A5B7F - 995c0eb5a058d991"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "closure #2 @Sendable (SwiftUI.ViewDimensions) -&gt; CoreGraphics.CGFloat in closure #1 () -&gt; &lt;&lt;opaque return type of SwiftUI.View.alignmentGuide(_: SwiftUI.VerticalAlignment, computeValue: (SwiftUI.ViewDimensions) -&gt; CoreGraphics.CGFloat) -&gt; some&gt;&gt;.0 in WAUX.FlowLayout.generateContent(in: SwiftUI.GeometryProxy) -&gt; some"
+                  moduleName = "WAUX"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TagEditorView.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "363"
+                  endingLineNumber = "363">
+               </Location>
             </Locations>
          </BreakpointContent>
       </BreakpointProxy>

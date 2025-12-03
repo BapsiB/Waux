@@ -981,7 +981,7 @@ struct TrackListView: View {
         .sheet(isPresented: $showTagEditor) {
             let selectedTrackIds = getSelectedTrackIdsForMetadataEditing()
             
-            TagEditorView_New(
+            TagEditorView(
                 metadataManager: metadataManager,
                 collectionService: collectionService,
                 trackIds: selectedTrackIds

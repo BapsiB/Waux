@@ -1,17 +1,14 @@
 import SwiftUI
 
 struct TagEditorView: View {
+    @ObservedObject var metadataManager: TrackMetadataManager
     @ObservedObject var collectionService: CollectionService
-    @State private var tracks: [Track]
+    private let trackIds: [Int]
     
     @Environment(\.dismiss) private var dismiss
     
     @State private var searchText: String = ""
     @FocusState private var searchFocused: Bool
-    
-    @State private var pendingTagsByTrack: [Int: Set<String>] = [:]
-    @State private var commonTags: Set<String> = []
-    @State private var partialTags: Set<String> = []
     
     @State private var suggestionSuffix: String? = nil
     @State private var suggestedFullTag: String? = nil
@@ -21,13 +18,34 @@ struct TagEditorView: View {
     
     @State private var errorMessage: String? = nil
     
-    private var trackIds: [Int] {
-        tracks.compactMap { $0.id }
+    // Computed properties for current tag state
+    private var tracks: [Track] {
+        metadataManager.getTracks(ids: trackIds)
     }
     
-    init(collectionService: CollectionService, tracks: [Track]) {
+    private var commonTags: Set<String> {
+        guard !tracks.isEmpty else { return [] }
+        let tagSets = tracks.map { Set($0.generalTags) }
+        return tagSets.reduce(tagSets.first ?? []) { $0.intersection($1) }
+    }
+    
+    private var partialTags: Set<String> {
+        guard tracks.count > 1 else { return [] }
+        let allTags = Set(tracks.flatMap { $0.generalTags })
+        return allTags.subtracting(commonTags).filter { tag in
+            tracks.contains { $0.generalTags.contains(tag) }
+        }
+    }
+    
+    private var singleTrackTags: Set<String> {
+        guard tracks.count == 1, let track = tracks.first else { return [] }
+        return Set(track.generalTags)
+    }
+    
+    init(metadataManager: TrackMetadataManager, collectionService: CollectionService, trackIds: [Int]) {
+        self.metadataManager = metadataManager
         self.collectionService = collectionService
-        self._tracks = State(initialValue: tracks)
+        self.trackIds = trackIds
     }
     
     var body: some View {
@@ -52,6 +70,15 @@ struct TagEditorView: View {
             availableTagsList
             
             HStack {
+                if metadataManager.isUpdating {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Saving...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -59,19 +86,11 @@ struct TagEditorView: View {
         }
         .padding(16)
         .frame(width: 520, height: 560)
-        .onAppear { updateTracksFromService() }
+        .onAppear { 
+            searchFocused = true 
+            updateSuggestion()
+        }
         .onChange(of: searchText) { _ in updateSuggestion() }
-        // DISABLED: These competing listeners cause race conditions
-        // .onChange(of: collectionService.tracks) { _, _ in
-        //     print("[TagEditor] tracks changed, updating from service")
-        //     updateTracksFromService()
-        // }
-        // .onReceive(collectionService.$tracks) { _ in
-        //     print("[TagEditor] tracks published changed, updating from service")
-        //     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-        //         updateTracksFromService()
-        //     }
-        // }
         .sheet(item: $colorPickerTag) { tag in
             VStack(alignment: .leading, spacing: 12) {
                 Text("Select Color for \(tag.name)")
@@ -152,8 +171,7 @@ struct TagEditorView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Assigned Tags:")
                 .font(.headline)
-            let singleTags = pendingTagsByTrack[trackIds.first ?? -1] ?? []
-            tagContainer(for: singleTags)
+            tagContainer(for: singleTrackTags)
                 .frame(maxHeight: 110)
         }
     }
@@ -208,8 +226,7 @@ struct TagEditorView: View {
             if tracks.count > 1 {
                 return commonTags.contains(tag.name)
             } else {
-                guard let id = trackIds.first else { return false }
-                return pendingTagsByTrack[id]?.contains(tag.name) ?? false
+                return singleTrackTags.contains(tag.name)
             }
         }()
         let bg = (tag.color ?? Color.gray.opacity(0.6)).opacity(isSelected ? 1.0 : 0.8)
@@ -255,43 +272,6 @@ struct TagEditorView: View {
         })
     }
     
-    private func initializeState() {
-        print("[TagEditor] initializeState: tracks=\(tracks.count)")
-        var initial: [Int: Set<String>] = [:]
-        
-        for track in tracks {
-            if let id = track.id { 
-                initial[id] = Set(track.generalTags)
-                print("[TagEditor] track id=\(id) tags=\(track.generalTags)")
-            }
-        }
-        pendingTagsByTrack = initial
-        print("[TagEditor] pendingTagsByTrack=\(pendingTagsByTrack)")
-        recalcSets()
-        updateSuggestion()
-        searchFocused = true
-    }
-    
-    private func updateTracksFromService() {
-        print("[TagEditor] updateTracksFromService")
-        let currentTracks = collectionService.tracks.filter { track in
-            trackIds.contains(track.id ?? -1)
-        }
-        print("[TagEditor] updating tracks from service: \(currentTracks.map { "id=\($0.id ?? -1) tags=\($0.generalTags)" })")
-        tracks = currentTracks
-        initializeState()
-    }
-    
-    private func recalcSets() {
-        print("[TagEditor] recalcSets: pendingTagsByTrack=\(pendingTagsByTrack)")
-        let all = Set(pendingTagsByTrack.values.flatMap { $0 })
-        let common = all.filter { tag in pendingTagsByTrack.values.allSatisfy { $0.contains(tag) } }
-        commonTags = Set(common)
-        let partial = all.filter { tag in pendingTagsByTrack.values.contains { $0.contains(tag) } && !commonTags.contains(tag) }
-        partialTags = Set(partial)
-        print("[TagEditor] recalcSets result: all=\(all), common=\(commonTags), partial=\(partialTags)")
-    }
-    
     private func updateSuggestion() {
         let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         suggestionSuffix = nil
@@ -307,75 +287,37 @@ struct TagEditorView: View {
     private func createOrToggleTag() {
         let name = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
-        print("[TagEditor] createOrToggleTag: name=\(name), trackIds=\(trackIds)")
+        
         let existing = collectionService.globalTags.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })
-        Task {
-            do {
-                if let existingName = existing?.name {
-                    print("[TagEditor] existing tag found: \(existingName)")
-                    let isInAll = pendingTagsByTrack.values.allSatisfy { $0.contains(existingName) }
-                    print("[TagEditor] isInAll=\(isInAll)")
-                    if isInAll {
-                        print("[TagEditor] removing tag from all tracks")
-                        try await collectionService.removeTagFromTracks(trackIds: trackIds, tag: existingName)
-                        for id in trackIds { pendingTagsByTrack[id]?.remove(existingName) }
-                    } else {
-                        print("[TagEditor] adding tag to all tracks")
-                        try await collectionService.addTagToTracks(trackIds: trackIds, tag: existingName)
-                        for id in trackIds { pendingTagsByTrack[id, default: []].insert(existingName) }
-                    }
+        
+        do {
+            if let existingName = existing?.name {
+                let isInAll = tracks.count > 1 ? commonTags.contains(existingName) : singleTrackTags.contains(existingName)
+                if isInAll {
+                    metadataManager.removeTag(from: trackIds, tag: existingName)
                 } else {
-                    print("[TagEditor] creating new tag")
-                    try collectionService.addGlobalTag(name)
-                    try await collectionService.addTagToTracks(trackIds: trackIds, tag: name)
-                    for id in trackIds { pendingTagsByTrack[id, default: []].insert(name) }
+                    metadataManager.addTag(to: trackIds, tag: existingName)
                 }
-                recalcSets()
-                print("[TagEditor] recalcSets done, commonTags=\(commonTags), partialTags=\(partialTags)")
-                await MainActor.run {
-                    searchText = ""
-                    suggestedFullTag = nil
-                    suggestionSuffix = nil
-                    searchFocused = true
-                    // DISABLED: This refresh causes race conditions
-                    // print("[TagEditor] forcing refresh from collection service")
-                    // DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    //     updateTracksFromService()
-                    // }
-                }
-            } catch {
-                print("[TagEditor] error: \(error)")
-                await MainActor.run { errorMessage = error.localizedDescription }
+            } else {
+                try collectionService.addGlobalTag(name)
+                metadataManager.addTag(to: trackIds, tag: name)
             }
+            
+            searchText = ""
+            suggestedFullTag = nil
+            suggestionSuffix = nil
+            searchFocused = true
+            
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
     
     private func toggleAssignment(for tagName: String, currentlySelected: Bool) {
-        print("[TagEditor] toggleAssignment: tag=\(tagName), currentlySelected=\(currentlySelected), trackIds=\(trackIds)")
-        Task {
-            do {
-                if currentlySelected {
-                    print("[TagEditor] removing tag from tracks")
-                    try await collectionService.removeTagFromTracks(trackIds: trackIds, tag: tagName)
-                    for id in trackIds { pendingTagsByTrack[id]?.remove(tagName) }
-                } else {
-                    print("[TagEditor] adding tag to tracks")
-                    try await collectionService.addTagToTracks(trackIds: trackIds, tag: tagName)
-                    for id in trackIds { pendingTagsByTrack[id, default: []].insert(tagName) }
-                }
-                recalcSets()
-                print("[TagEditor] toggleAssignment recalcSets done, commonTags=\(commonTags), partialTags=\(partialTags)")
-                await MainActor.run {
-                    // DISABLED: This refresh causes race conditions
-                    // print("[TagEditor] toggleAssignment forcing refresh from collection service")
-                    // DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    //     updateTracksFromService()
-                    // }
-                }
-            } catch {
-                print("[TagEditor] toggleAssignment error: \(error)")
-                await MainActor.run { errorMessage = error.localizedDescription }
-            }
+        if currentlySelected {
+            metadataManager.removeTag(from: trackIds, tag: tagName)
+        } else {
+            metadataManager.addTag(to: trackIds, tag: tagName)
         }
     }
 }
@@ -425,7 +367,4 @@ struct FlowLayout<Content: View>: View {
         }
     }
 }
-
-
-
 
