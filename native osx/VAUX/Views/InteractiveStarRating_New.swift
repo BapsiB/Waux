@@ -18,29 +18,12 @@ struct InteractiveStarRating_New: View {
     var body: some View {
         HStack(spacing: 2) {
             ForEach(1...5, id: \.self) { star in
-                Image(systemName: starName(for: star))
-                    .foregroundColor(starColor(for: star))
-                    .font(.caption)
-                    .onHover { hovering in
-                        if hovering {
-                            hoveredStar = star
-                            isHovering = true
-                        } else {
-                            if hoveredStar == star {
-                                isHovering = false
-                                hoveredStar = 0
-                            }
-                        }
-                    }
-                    .onTapGesture {
-                        metadataManager.updateRating(for: trackId, rating: star)
-                    }
-                    .scaleEffect(isHovering && hoveredStar >= star ? 1.1 : 1.0)
-                    .animation(.easeInOut(duration: 0.1), value: isHovering)
+                starButton(for: star)
             }
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 4)
                 .fill(Color.clear)
@@ -51,6 +34,34 @@ struct InteractiveStarRating_New: View {
                     }
                 }
         )
+    }
+    
+    @ViewBuilder
+    private func starButton(for star: Int) -> some View {
+        // Use Button instead of Image + onTapGesture for better click handling
+        Button(action: {
+            metadataManager.updateRating(for: trackId, rating: star)
+        }) {
+            Image(systemName: starName(for: star))
+                .foregroundColor(starColor(for: star))
+                .font(.caption)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 14, height: 14)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering {
+                hoveredStar = star
+                isHovering = true
+            } else {
+                if hoveredStar == star {
+                    isHovering = false
+                    hoveredStar = 0
+                }
+            }
+        }
+        .scaleEffect(isHovering && hoveredStar >= star ? 1.1 : 1.0)
+        .animation(.easeInOut(duration: 0.1), value: isHovering)
     }
     
     private func starName(for star: Int) -> String {
