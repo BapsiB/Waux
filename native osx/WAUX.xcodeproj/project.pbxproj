@@ -426,7 +426,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.4;
-				MARKETING_VERSION = 0.3;
+				MARKETING_VERSION = 0.4;
 				MODULE_CACHE_DIR = "$(PROJECT_TEMP_DIR)/ModuleCache";
 				PRODUCT_BUNDLE_IDENTIFIER = com.waux.audio.WAUX;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -460,7 +460,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.4;
-				MARKETING_VERSION = 0.3;
+				MARKETING_VERSION = 0.4;
 				MODULE_CACHE_DIR = "$(PROJECT_TEMP_DIR)/ModuleCache";
 				PRODUCT_BUNDLE_IDENTIFIER = com.waux.audio.WAUX;
 				PRODUCT_NAME = "$(TARGET_NAME)";
