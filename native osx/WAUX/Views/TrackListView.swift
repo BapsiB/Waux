@@ -109,7 +109,8 @@ struct TrackTable: View {
                     track: displayItem.track,
                     property: "artist",
                     isSelected: selectedTracks.contains(displayItem.id),
-                    metadataManager: metadataManager
+                    metadataManager: metadataManager,
+                    onDoubleClick: onDoubleClick
                 )
                     .padding(.vertical, 2)
                     .background(backgroundForDisplayItem(displayItem))
@@ -123,7 +124,8 @@ struct TrackTable: View {
                     track: displayItem.track,
                     property: "album",
                     isSelected: selectedTracks.contains(displayItem.id),
-                    metadataManager: metadataManager
+                    metadataManager: metadataManager,
+                    onDoubleClick: onDoubleClick
                 )
                     .padding(.vertical, 2)
                     .background(backgroundForDisplayItem(displayItem))
@@ -161,7 +163,8 @@ struct TrackTable: View {
                     track: displayItem.track,
                     property: "composer",
                     isSelected: selectedTracks.contains(displayItem.id),
-                    metadataManager: metadataManager
+                    metadataManager: metadataManager,
+                    onDoubleClick: onDoubleClick
                 )
                     .padding(.vertical, 2)
                     .background(backgroundForDisplayItem(displayItem))
@@ -187,12 +190,6 @@ struct TrackTable: View {
         .focusable()
         .focused($isTableFocused)
         .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: onColumnWidthChange))
-        .onTapGesture(count: 2) {
-            if let selectedTrack = selectedTracks.first,
-               let displayItem = displayItems.first(where: { $0.id == selectedTrack }) {
-                onDoubleClick(displayItem.track)
-            }
-        }
         .background(KeyboardEventHandler(
             isTextFieldFocused: isTextFieldFocused,
             isTableFocused: isTableFocused,
@@ -282,7 +279,8 @@ struct TrackTable: View {
                             isSelected: selectedTracks.contains(displayItem.id),
                             fontWeight: displayItem.isContainer ? .semibold : 
                                        displayItem.isMember ? .regular : .medium,
-                            metadataManager: metadataManager
+                            metadataManager: metadataManager,
+                            onDoubleClick: onDoubleClick
                         )
                             .foregroundColor(displayItem.isContainer ? .accentColor : .primary)
                     }
@@ -2122,8 +2120,9 @@ private struct EditableTrackCell: View {
     let track: Track
     let property: String
     let isSelected: Bool
-    var fontWeight: Font.Weight? = nil // Add optional font weight
+    var fontWeight: Font.Weight? = nil
     @ObservedObject var metadataManager: TrackMetadataManager
+    let onDoubleClick: (Track) -> Void
     
     @State private var isEditing = false
     @State private var editedText: String?
@@ -2140,31 +2139,34 @@ private struct EditableTrackCell: View {
                     get: { editedText ?? text },
                     set: { editedText = $0 }
                 ))
-                    .textFieldStyle(.plain)
-                    .focused($isFocused)
-                    .onSubmit {
+                .textFieldStyle(.plain)
+                .focused($isFocused)
+                .onSubmit {
+                    commitEdit()
+                }
+                .onChange(of: isFocused) { focused in
+                    if !focused {
                         commitEdit()
                     }
-                    .onChange(of: isFocused) { focused in
-                        if !focused {
-                            commitEdit()
-                        }
+                }
+                .onAppear {
+                    if editedText == nil {
+                        editedText = text
                     }
-                    .onAppear {
-                        // Only set if nil to preserve ongoing edits if any (though isEditing controls visibility)
-                        if editedText == nil {
-                            editedText = text
-                        }
-                        isFocused = true
-                    }
+                    isFocused = true
+                }
             } else {
                 Text(editedText ?? text)
-                    .fontWeight(fontWeight) // Apply font weight here on the Text view
+                    .fontWeight(fontWeight)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
-                    .gesture(isSelected ? TapGesture().onEnded {
+                    // KEY: Only allow hit testing when selected.
+                    // When not selected, clicks pass through to NSTableView for row selection.
+                    // When selected, our gesture handles single-click-to-edit and double-click-to-play.
+                    .allowsHitTesting(isSelected)
+                    .onTapGesture {
                         handleClick()
-                    } : nil)
+                    }
             }
         }
         .onChange(of: isSelected) { selected in
@@ -2178,7 +2180,6 @@ private struct EditableTrackCell: View {
                 }
             }
         }
-        // Ensure we stay in sync with parent updates
         .onChange(of: text) { newText in
             editedText = newText
         }
@@ -2186,7 +2187,6 @@ private struct EditableTrackCell: View {
             if isSelected {
                 lastSelectionTime = Date()
             }
-            // Sync initial state if needed
             if editedText == nil {
                 editedText = text
             }
@@ -2194,27 +2194,35 @@ private struct EditableTrackCell: View {
     }
     
     private func handleClick() {
-        if !isSelected { return }
-        
         let now = Date()
-        if now.timeIntervalSince(lastSelectionTime) < 0.5 {
-            return
-        }
+        let timeSinceSelection = now.timeIntervalSince(lastSelectionTime)
         
         clickCount += 1
         
         if clickCount == 1 {
-            let task = DispatchWorkItem {
-                if clickCount == 1 {
-                    startEditing()
-                }
+            if timeSinceSelection < 0.3 {
+                // This click came very soon after row was selected.
+                // The first click selected the row (NSTableView handled it).
+                // This second click means user double-clicked an unselected row → play!
                 clickCount = 0
+                onDoubleClick(track)
+            } else {
+                // Row was selected for a while, this is a single click.
+                // Wait to see if it's actually a double-click or single-click-to-edit.
+                let task = DispatchWorkItem {
+                    if clickCount == 1 && isSelected {
+                        startEditing()
+                    }
+                    clickCount = 0
+                }
+                workItem = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
             }
-            workItem = task
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
         } else {
+            // Second click on already-selected row → double-click → play!
             workItem?.cancel()
             clickCount = 0
+            onDoubleClick(track)
         }
     }
     
@@ -2230,7 +2238,6 @@ private struct EditableTrackCell: View {
         let currentVal = editedText ?? text
         if currentVal != text {
             Task { @MainActor in
-                // Using optional try since we're in a UI callback
                 try? await metadataManager.updateTrackMetadata(trackId: track.id!, updates: [property: currentVal])
             }
         }
