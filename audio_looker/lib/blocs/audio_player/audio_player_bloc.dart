@@ -136,8 +136,6 @@ class AudioPlayerBloc extends Bloc<AudioPlayerEvent, AudioPlayerState> {
         volume: currentVolume,
       );
       emit(loadedState);
-
-      emit(loadedState);
       print(
         "Bloc: Emitted initial loaded state with duration: $initialDurationMs ms",
       );

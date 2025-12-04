@@ -150,9 +150,11 @@ class PlaylistBloc extends Bloc<PlaylistEvent, PlaylistState> {
       }
     } catch (e) {
       print("PlaylistBloc: Error deleting playlist ID ${event.playlistId}: $e");
+      // Check state before emitting error
+      final wasLoaded = state is PlaylistLoaded;
       emit(PlaylistError("Failed to delete playlist: ${e.toString()}"));
       // Revert optimistic update on error
-      if (state is PlaylistLoaded && state is! PlaylistError) {
+      if (wasLoaded) {
         // Re-fetch to be safe or revert to previous known good state
         add(LoadPlaylists());
       }
@@ -194,10 +196,12 @@ class PlaylistBloc extends Bloc<PlaylistEvent, PlaylistState> {
       print(
         "PlaylistBloc: Error adding track to playlist ID ${event.playlistId}: $e",
       );
+      // Check state before emitting error
+      final wasLoaded = state is PlaylistLoaded;
       emit(PlaylistError("Failed to add track: ${e.toString()}"));
       // Revert optimistic update if implemented
       // Or reload playlists to show error state
-      if (state is PlaylistLoaded) add(LoadPlaylists());
+      if (wasLoaded) add(LoadPlaylists());
     }
   }
 
@@ -232,9 +236,11 @@ class PlaylistBloc extends Bloc<PlaylistEvent, PlaylistState> {
       print(
         "PlaylistBloc: Error removing track from playlist ID ${event.playlistId}: $e",
       );
+      // Check state before emitting error
+      final wasLoaded = state is PlaylistLoaded;
       emit(PlaylistError("Failed to remove track: ${e.toString()}"));
       // Revert optimistic update or reload
-      if (state is PlaylistLoaded) add(LoadPlaylists());
+      if (wasLoaded) add(LoadPlaylists());
     }
   }
 

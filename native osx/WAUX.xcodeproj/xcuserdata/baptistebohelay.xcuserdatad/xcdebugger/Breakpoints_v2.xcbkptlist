@@ -1476,20 +1476,6 @@
             landmarkType = "24">
             <Locations>
                <Location
-                  uuid = "2B938362-FC62-40A7-832B-CF4BDAD07A26 - 60d62d8d5a4c5812"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "closure #3 (Swift.String) -&gt; () in WAUX.EditableTrackCell.body.getter : some"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TrackListView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "2186"
-                  endingLineNumber = "2186">
-               </Location>
-               <Location
                   uuid = "2B938362-FC62-40A7-832B-CF4BDAD07A26 - 226d566f4402c646"
                   shouldBeEnabled = "Yes"
                   ignoreCount = "0"
@@ -1534,36 +1520,6 @@
             endingLineNumber = "2231"
             landmarkName = "startEditing()"
             landmarkType = "7">
-            <Locations>
-               <Location
-                  uuid = "E18F4899-0361-4469-82A7-52A2395EE341 - b73d88119780572b"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "WAUX.EditableTrackCell.commitEdit() -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TrackListView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "2232"
-                  endingLineNumber = "2232">
-               </Location>
-               <Location
-                  uuid = "E18F4899-0361-4469-82A7-52A2395EE341 - 9e1e06e9d8b23567"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "WAUX.EditableTrackCell.startEditing() -&gt; ()"
-                  moduleName = "WAUX.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/WAUX/Views/TrackListView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "2231"
-                  endingLineNumber = "2231">
-               </Location>
-            </Locations>
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
