@@ -104,7 +104,13 @@ struct TrackTable: View {
             // Note: Conditional columns removed for macOS 13 compatibility
             // All columns are now always visible
             TableColumn("Artist", value: \.track.artist) { displayItem in
-                Text(displayItem.track.artist)
+                EditableTrackCell(
+                    text: displayItem.track.artist,
+                    track: displayItem.track,
+                    property: "artist",
+                    isSelected: selectedTracks.contains(displayItem.id),
+                    metadataManager: metadataManager
+                )
                     .padding(.vertical, 2)
                     .background(backgroundForDisplayItem(displayItem))
                     .cornerRadius(4)
@@ -112,7 +118,13 @@ struct TrackTable: View {
             .width(min: 100, ideal: columnWidths[.artist] ?? 150)
             
             TableColumn("Album", value: \.track.album) { displayItem in
-                Text(displayItem.track.album)
+                EditableTrackCell(
+                    text: displayItem.track.album,
+                    track: displayItem.track,
+                    property: "album",
+                    isSelected: selectedTracks.contains(displayItem.id),
+                    metadataManager: metadataManager
+                )
                     .padding(.vertical, 2)
                     .background(backgroundForDisplayItem(displayItem))
                     .cornerRadius(4)
@@ -144,7 +156,13 @@ struct TrackTable: View {
             .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
             
             TableColumn("Composer", value: \.track.composerText) { displayItem in
-                Text(displayItem.track.composerText)
+                EditableTrackCell(
+                    text: displayItem.track.composerText,
+                    track: displayItem.track,
+                    property: "composer",
+                    isSelected: selectedTracks.contains(displayItem.id),
+                    metadataManager: metadataManager
+                )
                     .padding(.vertical, 2)
                     .background(backgroundForDisplayItem(displayItem))
                     .cornerRadius(4)
@@ -257,9 +275,15 @@ struct TrackTable: View {
                                 .foregroundColor(.accentColor)
                         }
                         
-                        Text(displayItem.track.title)
-                            .fontWeight(displayItem.isContainer ? .semibold : 
-                                       displayItem.isMember ? .regular : .medium)
+                        EditableTrackCell(
+                            text: displayItem.track.title,
+                            track: displayItem.track,
+                            property: "title",
+                            isSelected: selectedTracks.contains(displayItem.id),
+                            fontWeight: displayItem.isContainer ? .semibold : 
+                                       displayItem.isMember ? .regular : .medium,
+                            metadataManager: metadataManager
+                        )
                             .foregroundColor(displayItem.isContainer ? .accentColor : .primary)
                     }
                     
@@ -2088,6 +2112,127 @@ struct KeyboardEventHandler: NSViewRepresentable {
             self.onSpace = onSpace
             self.onBackspace = onBackspace
             self.onCommandL = onCommandL
+        }
+    }
+}
+
+// MARK: - Editable Track Cell
+private struct EditableTrackCell: View {
+    let text: String
+    let track: Track
+    let property: String
+    let isSelected: Bool
+    var fontWeight: Font.Weight? = nil // Add optional font weight
+    @ObservedObject var metadataManager: TrackMetadataManager
+    
+    @State private var isEditing = false
+    @State private var editedText: String?
+    @FocusState private var isFocused: Bool
+    
+    @State private var clickCount = 0
+    @State private var workItem: DispatchWorkItem?
+    @State private var lastSelectionTime: Date = .distantPast
+    
+    var body: some View {
+        ZStack(alignment: .leading) {
+            if isEditing {
+                TextField("", text: Binding(
+                    get: { editedText ?? text },
+                    set: { editedText = $0 }
+                ))
+                    .textFieldStyle(.plain)
+                    .focused($isFocused)
+                    .onSubmit {
+                        commitEdit()
+                    }
+                    .onChange(of: isFocused) { focused in
+                        if !focused {
+                            commitEdit()
+                        }
+                    }
+                    .onAppear {
+                        // Only set if nil to preserve ongoing edits if any (though isEditing controls visibility)
+                        if editedText == nil {
+                            editedText = text
+                        }
+                        isFocused = true
+                    }
+            } else {
+                Text(editedText ?? text)
+                    .fontWeight(fontWeight) // Apply font weight here on the Text view
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .gesture(isSelected ? TapGesture().onEnded {
+                        handleClick()
+                    } : nil)
+            }
+        }
+        .onChange(of: isSelected) { selected in
+            if selected {
+                lastSelectionTime = Date()
+            } else {
+                workItem?.cancel()
+                clickCount = 0
+                if isEditing {
+                    commitEdit()
+                }
+            }
+        }
+        // Ensure we stay in sync with parent updates
+        .onChange(of: text) { newText in
+            editedText = newText
+        }
+        .onAppear {
+            if isSelected {
+                lastSelectionTime = Date()
+            }
+            // Sync initial state if needed
+            if editedText == nil {
+                editedText = text
+            }
+        }
+    }
+    
+    private func handleClick() {
+        if !isSelected { return }
+        
+        let now = Date()
+        if now.timeIntervalSince(lastSelectionTime) < 0.5 {
+            return
+        }
+        
+        clickCount += 1
+        
+        if clickCount == 1 {
+            let task = DispatchWorkItem {
+                if clickCount == 1 {
+                    startEditing()
+                }
+                clickCount = 0
+            }
+            workItem = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
+        } else {
+            workItem?.cancel()
+            clickCount = 0
+        }
+    }
+    
+    private func startEditing() {
+        editedText = text
+        isEditing = true
+    }
+    
+    private func commitEdit() {
+        guard isEditing else { return }
+        isEditing = false
+        
+        let currentVal = editedText ?? text
+        if currentVal != text {
+            Task { @MainActor in
+                // Using optional try since we're in a UI callback
+                try? await metadataManager.updateTrackMetadata(trackId: track.id!, updates: [property: currentVal])
+            }
         }
     }
 }

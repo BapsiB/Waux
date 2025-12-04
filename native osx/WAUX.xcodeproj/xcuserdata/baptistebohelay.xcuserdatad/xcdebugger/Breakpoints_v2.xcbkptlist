@@ -800,7 +800,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "675"
             endingLineNumber = "675"
-            landmarkName = "getDragPreviewInfo(for:tracks:)"
+            landmarkName = "dragPreview(for:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -816,7 +816,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "676"
             endingLineNumber = "676"
-            landmarkName = "getDragPreviewInfo(for:tracks:)"
+            landmarkName = "dragPreview(for:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -928,7 +928,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "666"
             endingLineNumber = "666"
-            landmarkName = "getDragPreviewInfo(for:tracks:)"
+            landmarkName = "dragPreview(for:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
