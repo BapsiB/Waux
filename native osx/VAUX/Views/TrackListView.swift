@@ -1,5 +1,23 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
+
+/// Finds the SwiftUI `Table`'s underlying `NSTableView`, skipping SwiftUI `List` outline table views.
+fileprivate func findTrackListNSTableView(in view: NSView?) -> NSTableView? {
+    guard let view = view else { return nil }
+    if let tableView = view as? NSTableView {
+        let className = String(describing: type(of: tableView))
+        if className.contains("ListCore") {
+            // Keep searching for the actual Table-backed view.
+        } else {
+            return tableView
+        }
+    }
+    for subview in view.subviews {
+        if let found = findTrackListNSTableView(in: subview) { return found }
+    }
+    return nil
+}
 
 enum TrackColumn: String, CaseIterable, Hashable {
     case id
@@ -864,14 +882,18 @@ struct TrackListView: View {
     
     private func scrollToCurrentTrack() {
         guard let currentTrack = audioService.currentTrack else { return }
-        
-        // Find the display item for the current track
-        if let displayItem = displayItems.first(where: { $0.track.id == currentTrack.id }) {
-            // Select the current track - this will make it visible in most cases
-            selectedDisplayItems = [displayItem.id]
-            print("🎯 [TrackListView] Selected current track: \(currentTrack.title)")
-        } else {
+        guard let row = displayItems.firstIndex(where: { $0.track.id == currentTrack.id }) else {
             print("🎯 [TrackListView] Current track not found in display items: \(currentTrack.title)")
+            return
+        }
+        let displayItem = displayItems[row]
+        selectedDisplayItems = [displayItem.id]
+        print("🎯 [TrackListView] Selected current track: \(currentTrack.title)")
+        
+        DispatchQueue.main.async {
+            let window = NSApp.keyWindow ?? NSApp.mainWindow
+            guard let tableView = findTrackListNSTableView(in: window?.contentView) else { return }
+            tableView.scrollRowToVisible(row)
         }
     }
     
@@ -924,9 +946,6 @@ struct TrackListView: View {
                     scrollToCurrentTrack()
                 }
             )
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("GoToCurrentTrack"))) { _ in
-            scrollToCurrentTrack()
         }
         .background(
             TableSelectionHandler(
@@ -1019,12 +1038,7 @@ struct TrackListView: View {
             updateDisplayItems()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("GoToCurrentTrack"))) { _ in
-            // Handle menu action for Go to Current Track - find current track and select it
-            guard let currentTrack = audioService.currentTrack else { return }
-            
-            if let displayItem = displayItems.first(where: { $0.track.id == currentTrack.id }) {
-                selectedDisplayItems = [displayItem.id]
-            }
+            scrollToCurrentTrack()
         }
     }
     
@@ -1953,26 +1967,7 @@ class TableSelectionView: NSView {
     }
     
     private func findTableView(in view: NSView?) -> NSTableView? {
-        guard let view = view else { return nil }
-        
-        // Look for the actual SwiftUI Table's NSTableView, not the List's
-        if let tableView = view as? NSTableView {
-            let className = String(describing: type(of: tableView))
-            
-            // Skip ListCoreOutlineView (SwiftUI List) and look for Table's NSTableView
-            if className.contains("ListCore") {
-                // Continue searching for the actual Table
-            } else {
-                return tableView
-            }
-        }
-        
-        for subview in view.subviews {
-            if let tableView = findTableView(in: subview) {
-                return tableView
-            }
-        }
-        return nil
+        findTrackListNSTableView(in: view)
     }
 }
 
