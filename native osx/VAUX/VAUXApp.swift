@@ -16,16 +16,20 @@ class MenuActionState: ObservableObject {
     @Published var shouldShowAbout = false
     @Published var shouldGoToCurrentTrack = false
     @Published var shouldOpenCueFileHelper = false
+    /// When set, ContentView restores from this URL (File → Restore from Backup submenu).
+    @Published var pendingRestoreBackupURL: URL?
 }
 
 @main
 struct VAUXApp: App {
     @StateObject private var menuActionState = MenuActionState()
+    @StateObject private var restoreBackupMenuState = RestoreBackupMenuState()
     
     var body: some Scene {
         WindowGroup {
             MainWindowView()
                 .environmentObject(menuActionState)
+                .environmentObject(restoreBackupMenuState)
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -73,6 +77,21 @@ struct VAUXApp: App {
                 menuActionState.shouldOpenCueFileHelper = true
             }
             .keyboardShortcut("h", modifiers: [.command, .shift])
+        }
+        
+        CommandGroup(after: .importExport) {
+            Menu("Restore from Backup") {
+                if restoreBackupMenuState.entries.isEmpty {
+                    Button("No backups in Application Support") {}
+                        .disabled(true)
+                } else {
+                    ForEach(restoreBackupMenuState.entries) { entry in
+                        Button(entry.menuTitle) {
+                            menuActionState.pendingRestoreBackupURL = entry.url
+                        }
+                    }
+                }
+            }
         }
         
         CommandGroup(replacing: .appInfo) {

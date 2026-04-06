@@ -3,6 +3,7 @@ import AVFoundation
 import SQLite3
 import Combine
 import SwiftUI
+import CryptoKit
 import ID3TagEditor
 
 // Note: ID3Tag initializer is internal, so we'll use a different approach
@@ -62,6 +63,12 @@ class CollectionService: ObservableObject {
     
     // MARK: - Thread Safety
     let databaseQueue = DispatchQueue(label: "com.vaux.collection.database", qos: .userInitiated)
+    
+    // MARK: - Auto backup (throttled snapshots in Application Support; waveforms stripped in copies)
+    private var lastSuccessfulAutoBackupDate: Date?
+    private var isPerformingAutoBackup = false
+    private static let autoBackupThrottleInterval: TimeInterval = 30 * 60
+    private static let autoBackupMaxRotatedFiles = 10
     
     // MARK: - Initialization
     init() {
@@ -135,6 +142,7 @@ class CollectionService: ObservableObject {
     
     func closeCollection() {
         if let db = database {
+            sqlite3_update_hook(db, nil, nil)
             sqlite3_close(db)
             database = nil
         }
@@ -255,6 +263,8 @@ class CollectionService: ObservableObject {
         
         // Check and migrate database schema if needed
         try migrateDatabaseSchema()
+        
+        installAutoBackupMutationHook()
     }
     
     // MARK: - Database Migration
@@ -3996,6 +4006,253 @@ class CollectionService: ObservableObject {
             throw CollectionError.queryFailed(message: "Failed to update main track: \(errorMessage)")
         }
     }
+    
+    // MARK: - Auto backup & restore
+    
+    private static let autoBackupUpdateHook: @convention(c) (UnsafeMutableRawPointer?, Int32, UnsafePointer<Int8>?, UnsafePointer<Int8>?, sqlite3_int64) -> Void = { ctx, _, _, _, _ in
+        guard let ctx = ctx else { return }
+        Unmanaged<CollectionService>.fromOpaque(ctx).takeUnretainedValue().enqueueAutoBackupAfterMutation()
+    }
+    
+    private func installAutoBackupMutationHook() {
+        guard let db = database else { return }
+        sqlite3_update_hook(db, CollectionService.autoBackupUpdateHook, Unmanaged.passUnretained(self).toOpaque())
+    }
+    
+    private func enqueueAutoBackupAfterMutation() {
+        if isPerformingAutoBackup { return }
+        databaseQueue.async { [weak self] in
+            self?.runThrottledAutoBackupIfNeeded()
+        }
+    }
+    
+    private func runThrottledAutoBackupIfNeeded() {
+        guard let definition = activeCollectionDefinition, !isReadOnlyMode, database != nil else { return }
+        let now = Date()
+        if let last = lastSuccessfulAutoBackupDate, now.timeIntervalSince(last) < Self.autoBackupThrottleInterval {
+            return
+        }
+        do {
+            try performAutoBackupSnapshot(for: definition)
+            lastSuccessfulAutoBackupDate = now
+            print("[AutoBackup] Snapshot saved (waveforms stripped in backup file).")
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .vauxAutoBackupDidComplete, object: nil)
+            }
+        } catch {
+            print("[AutoBackup] Failed: \(error.localizedDescription)")
+        }
+    }
+    
+    private func applicationSupportRoot() throws -> URL {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            throw CollectionError.backupOperationFailed(reason: "Could not resolve Application Support directory.")
+        }
+        return base.appendingPathComponent("VAUX", isDirectory: true)
+    }
+    
+    private static func stableBackupFolderName(forDbPath path: String) -> String {
+        let hash = SHA256.hash(data: Data(path.utf8))
+        return hash.map { String(format: "%02x", $0) }.joined()
+    }
+    
+    /// Directory where automatic backups for the active database are stored (Application Support).
+    func autoBackupDirectoryURL() throws -> URL {
+        guard let definition = activeCollectionDefinition else {
+            throw CollectionError.backupOperationFailed(reason: "No collection is open.")
+        }
+        let root = try applicationSupportRoot()
+        let sub = Self.stableBackupFolderName(forDbPath: definition.dbPath)
+        return root.appendingPathComponent("DatabaseBackups", isDirectory: true).appendingPathComponent(sub, isDirectory: true)
+    }
+    
+    /// Auto-backup `.sqlite` files for the active database, **newest first** (same folder as rotation uses).
+    func sortedAutoBackupFileURLs() throws -> [URL] {
+        let backupDir = try autoBackupDirectoryURL()
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: backupDir.path) else { return [] }
+        let urls = try fm.contentsOfDirectory(at: backupDir, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])
+        let sqliteFiles = urls.filter { $0.pathExtension.lowercased() == "sqlite" }
+        return try sqliteFiles.sorted { a, b in
+            let da = try a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? .distantPast
+            let db = try b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? .distantPast
+            return da > db
+        }
+    }
+    
+    private func performAutoBackupSnapshot(for definition: CollectionDefinition) throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        if isPerformingAutoBackup { return }
+        isPerformingAutoBackup = true
+        defer { isPerformingAutoBackup = false }
+        
+        let backupDir = try autoBackupDirectoryURL()
+        try FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
+        
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let stamp = formatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let destURL = backupDir.appendingPathComponent("backup-\(stamp).sqlite")
+        let destPath = destURL.path.replacingOccurrences(of: "\\", with: "/")
+        
+        try exportConsistentDatabaseCopy(from: db, to: destURL)
+        try stripWaveformColumnInDatabaseFile(at: destPath)
+        try rotateAutoBackups(in: backupDir, keeping: Self.autoBackupMaxRotatedFiles)
+    }
+    
+    /// Copies the open database to `destURL` using SQLite APIs (falls back to file copy).
+    private func exportConsistentDatabaseCopy(from db: OpaquePointer, to destURL: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destURL.path) {
+            try fm.removeItem(at: destURL)
+        }
+        let destPath = destURL.path.replacingOccurrences(of: "\\", with: "/")
+        let escaped = destPath.replacingOccurrences(of: "'", with: "''")
+        let vacuumSQL = "VACUUM INTO '\(escaped)'"
+        if sqlite3_exec(db, vacuumSQL, nil, nil, nil) == SQLITE_OK {
+            return
+        }
+        let msg = String(cString: sqlite3_errmsg(db))
+        print("[AutoBackup] VACUUM INTO failed (\(msg)); trying sqlite3_backup…")
+        var dest: OpaquePointer?
+        guard sqlite3_open_v2(destPath, &dest, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK, let destDb = dest else {
+            throw CollectionError.backupOperationFailed(reason: "Could not create backup file.")
+        }
+        defer { sqlite3_close(destDb) }
+        guard let backup = sqlite3_backup_init(destDb, "main", db, "main") else {
+            throw CollectionError.backupOperationFailed(reason: "sqlite3_backup_init failed.")
+        }
+        defer { sqlite3_backup_finish(backup) }
+        var rc = SQLITE_OK
+        while rc == SQLITE_OK || rc == SQLITE_BUSY || rc == SQLITE_LOCKED {
+            rc = sqlite3_backup_step(backup, -1)
+        }
+        if rc != SQLITE_DONE {
+            try? fm.removeItem(at: destURL)
+            throw CollectionError.backupOperationFailed(reason: "sqlite3_backup_step failed (code \(rc)).")
+        }
+    }
+    
+    /// Sets `waveformData` to NULL for all tracks in a standalone DB file (minimizes backup size).
+    private func stripWaveformColumnInDatabaseFile(at path: String) throws {
+        var db: OpaquePointer?
+        let clean = path.replacingOccurrences(of: "\\", with: "/")
+        guard sqlite3_open_v2(clean, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let handle = db else {
+            throw CollectionError.backupOperationFailed(reason: "Could not open backup to strip waveforms.")
+        }
+        defer { sqlite3_close(handle) }
+        let sql = "UPDATE \(tableMusic) SET \(columnWaveformData) = NULL"
+        if sqlite3_exec(handle, sql, nil, nil, nil) != SQLITE_OK {
+            let err = String(cString: sqlite3_errmsg(handle))
+            throw CollectionError.backupOperationFailed(reason: "Strip waveforms failed: \(err)")
+        }
+    }
+    
+    private func rotateAutoBackups(in directory: URL, keeping maxFiles: Int) throws {
+        let fm = FileManager.default
+        let urls = try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])
+        let sqliteFiles = urls.filter { $0.pathExtension.lowercased() == "sqlite" }
+        let sorted = try sqliteFiles.sorted { a, b in
+            let da = try a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? .distantPast
+            let db = try b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? .distantPast
+            return da > db
+        }
+        guard sorted.count > maxFiles else { return }
+        for url in sorted.dropFirst(maxFiles) {
+            try? fm.removeItem(at: url)
+        }
+    }
+    
+    private func exportWaveformPayloadsByPathFromLiveDatabase() throws -> [String: String] {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+        var result: [String: String] = [:]
+        let sql = "SELECT \(columnPath), \(columnWaveformData) FROM \(tableMusic) WHERE \(columnWaveformData) IS NOT NULL AND length(\(columnWaveformData)) > 2"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw CollectionError.queryFailed(message: String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let pathPtr = sqlite3_column_text(stmt, 0) else { continue }
+            let path = String(cString: pathPtr)
+            if sqlite3_column_type(stmt, 1) == SQLITE_NULL { continue }
+            guard let wfPtr = sqlite3_column_text(stmt, 1) else { continue }
+            let json = String(cString: wfPtr)
+            if !json.isEmpty {
+                result[path] = json
+            }
+        }
+        return result
+    }
+    
+    private func applyWaveformPayloads(_ payloads: [String: String], toDatabaseAt path: String) throws {
+        guard !payloads.isEmpty else { return }
+        var db: OpaquePointer?
+        let clean = path.replacingOccurrences(of: "\\", with: "/")
+        guard sqlite3_open_v2(clean, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let handle = db else {
+            throw CollectionError.backupOperationFailed(reason: "Could not open restored copy for waveform merge.")
+        }
+        defer { sqlite3_close(handle) }
+        let sql = "UPDATE \(tableMusic) SET \(columnWaveformData) = ? WHERE \(columnPath) = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw CollectionError.backupOperationFailed(reason: String(cString: sqlite3_errmsg(handle)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        for (pathKey, json) in payloads {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            sqlite3_bind_text(stmt, 1, json, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, pathKey, -1, SQLITE_TRANSIENT)
+            _ = sqlite3_step(stmt)
+        }
+    }
+    
+    /// Replaces the live database with the selected backup; copies current waveforms into the backup copy by track path when possible.
+    func restoreFromBackup(backupFileURL: URL) async throws {
+        let definition = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<CollectionDefinition, Error>) in
+            databaseQueue.sync {
+                guard let def = self.activeCollectionDefinition else {
+                    cont.resume(throwing: CollectionError.databaseNotOpen)
+                    return
+                }
+                if self.isReadOnlyMode {
+                    cont.resume(throwing: CollectionError.backupOperationFailed(reason: "Cannot restore while the database is open read-only."))
+                    return
+                }
+                cont.resume(returning: def)
+            }
+        }
+        let livePath = definition.dbPath.replacingOccurrences(of: "\\", with: "/")
+        guard FileManager.default.fileExists(atPath: backupFileURL.path) else {
+            throw CollectionError.backupOperationFailed(reason: "Backup file not found.")
+        }
+        let waveformPayloads = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[String: String], Error>) in
+            databaseQueue.async {
+                do {
+                    let map = try self.exportWaveformPayloadsByPathFromLiveDatabase()
+                    cont.resume(returning: map)
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("vaux-restore-\(UUID().uuidString).sqlite")
+        try FileManager.default.copyItem(at: backupFileURL, to: tempURL)
+        do {
+            try applyWaveformPayloads(waveformPayloads, toDatabaseAt: tempURL.path)
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw error
+        }
+        closeCollection()
+        let liveURL = URL(fileURLWithPath: livePath)
+        do {
+            _ = try FileManager.default.replaceItemAt(liveURL, withItemAt: tempURL, backupItemName: "pre-restore-\(UUID().uuidString.prefix(8)).sqlite", options: [])
+        } catch {
+            throw CollectionError.backupOperationFailed(reason: error.localizedDescription)
+        }
+    }
 }
 
 // MARK: - Errors
@@ -4005,6 +4262,7 @@ enum CollectionError: LocalizedError {
     case queryFailed(message: String)
     case rootDirectoryNotFound(path: String)
     case invalidData
+    case backupOperationFailed(reason: String)
     
     var errorDescription: String? {
         switch self {
@@ -4018,6 +4276,12 @@ enum CollectionError: LocalizedError {
             return "Root directory not found: \(path)"
         case .invalidData:
             return "Invalid data format"
+        case .backupOperationFailed(let reason):
+            return reason
         }
     }
+}
+
+extension Notification.Name {
+    static let vauxAutoBackupDidComplete = Notification.Name("com.vaux.AutoBackupDidComplete")
 }

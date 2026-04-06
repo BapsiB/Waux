@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var fileChangesData: FileChangesData? = nil
     @State private var previousTracks: [Track] = []
     @EnvironmentObject private var menuActionState: MenuActionState
+    @EnvironmentObject private var restoreBackupMenuState: RestoreBackupMenuState
     
     var body: some View {
         ZStack {
@@ -130,6 +131,13 @@ struct ContentView: View {
                 menuActionState.shouldGoToCurrentTrack = false
             }
         }
+        .onChange(of: menuActionState.pendingRestoreBackupURL) { url in
+            guard let url = url else { return }
+            menuActionState.pendingRestoreBackupURL = nil
+            Task {
+                await restoreCollectionFromBackupFile(url)
+            }
+        }
         .onChange(of: collectionService.tracks) { newTracks in
             print("[ContentView] tracks changed, count=\(newTracks.count)")
             
@@ -161,12 +169,21 @@ struct ContentView: View {
             previousTracks = newTracks
         }
         .onAppear {
+            restoreBackupMenuState.refresh(collectionService: collectionService)
             if !hasAttemptedAutoLoad {
                 hasAttemptedAutoLoad = true
                 Task {
                     await attemptLoadLastFolder()
                 }
             }
+        }
+        .onChange(of: initialLoadComplete) { complete in
+            if complete {
+                restoreBackupMenuState.refresh(collectionService: collectionService)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .vauxAutoBackupDidComplete)) { _ in
+            restoreBackupMenuState.refresh(collectionService: collectionService)
         }
         .sheet(item: $fileChangesData) { data in
             FileChangesSheet(
@@ -194,6 +211,42 @@ struct ContentView: View {
                     }
                 }
             )
+        }
+    }
+    
+    private func restoreCollectionFromBackupFile(_ backupURL: URL) async {
+        guard let definition = collectionService.getActiveCollection() else {
+            await MainActor.run {
+                errorMessage = "No collection is open."
+                showingError = true
+            }
+            return
+        }
+        do {
+            try await collectionService.restoreFromBackup(backupFileURL: backupURL)
+            try await collectionService.openCollection(definition)
+            playlistService.setDatabase(
+                collectionService.getDatabase(),
+                collectionDefinition: definition,
+                databaseQueue: collectionService.databaseQueue,
+                collectionService: collectionService
+            )
+            try await collectionService.loadAllTracks()
+            try await playlistService.loadFolders()
+            try await playlistService.loadPlaylists()
+            await MainActor.run {
+                initialLoadComplete = true
+                previousTracks = collectionService.tracks
+            }
+            await scanForFileChanges()
+            await MainActor.run {
+                restoreBackupMenuState.refresh(collectionService: collectionService)
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Restore failed: \(error.localizedDescription)"
+                showingError = true
+            }
         }
     }
     
@@ -432,6 +485,10 @@ struct ContentView: View {
 
             // Save the folder preference for next time
             preferenceService.saveLastFolder(url)
+            
+            await MainActor.run {
+                restoreBackupMenuState.refresh(collectionService: collectionService)
+            }
             
         } catch {
             await MainActor.run {

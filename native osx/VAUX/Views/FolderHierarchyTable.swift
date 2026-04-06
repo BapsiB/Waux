@@ -1,12 +1,17 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 private let folderHierarchyIndentPerDepth: CGFloat = 16
 private let folderHierarchyWaveformMinInner: CGFloat = 48
+/// Second click on the same folder row within this window toggles expand/collapse (after first click selected the row).
+private let folderOpenSecondTapInterval: TimeInterval = 0.35
 
 struct FolderHierarchyTable: View {
     let rows: [FolderHierarchyTableRow]
     @Binding var selectedRowIds: Set<String>
+    /// Tracks last single tap on a folder row for select-then-open-within-interval.
+    @State private var folderSequentialTap: (rowId: String, at: Date)?
     @Binding var sortOrder: [KeyPathComparator<FolderHierarchyTableRow>]
     @Binding var visibleColumns: Set<TrackColumn>
     @Binding var columnWidths: [TrackColumn: CGFloat]
@@ -101,6 +106,42 @@ struct FolderHierarchyTable: View {
         }
     }
 
+    /// Single click anywhere on a folder row: select (respecting ⌘ for multi-select). A second click on the same row within `folderOpenSecondTapInterval` toggles expansion.
+    private func handleFolderRowTap(row: FolderHierarchyTableRow, folder: FolderNode) {
+        let rowId = row.id
+        let flags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        if flags.contains(.command) {
+            if selectedRowIds.contains(rowId) {
+                selectedRowIds.remove(rowId)
+            } else {
+                selectedRowIds.insert(rowId)
+            }
+            folderSequentialTap = nil
+            return
+        }
+
+        if flags.contains(.shift) {
+            selectedRowIds = [rowId]
+            folderSequentialTap = nil
+            return
+        }
+
+        let now = Date()
+        if let prev = folderSequentialTap,
+           prev.rowId == rowId,
+           now.timeIntervalSince(prev.at) < folderOpenSecondTapInterval {
+            if folder.hasChildren {
+                folderManager.toggleExpansion(for: folder.path)
+            }
+            folderSequentialTap = nil
+            return
+        }
+
+        selectedRowIds = [rowId]
+        folderSequentialTap = (rowId, now)
+    }
+
     // MARK: - Cells
 
     @ViewBuilder
@@ -113,15 +154,10 @@ struct FolderHierarchyTable: View {
             HStack(spacing: 6) {
                 Color.clear.frame(width: CGFloat(row.depth) * folderHierarchyIndentPerDepth)
                 if folder.hasChildren {
-                    Button {
-                        folderManager.toggleExpansion(for: folder.path)
-                    } label: {
-                        Image(systemName: folderManager.isExpanded(folder.path) ? "chevron.down" : "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .frame(width: 14, height: 14)
-                    }
-                    .buttonStyle(.plain)
+                    Image(systemName: folderManager.isExpanded(folder.path) ? "chevron.down" : "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 14, height: 14)
                 } else {
                     Color.clear.frame(width: 14, height: 14)
                 }
@@ -131,7 +167,9 @@ struct FolderHierarchyTable: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .help(folder.displayName)
+            .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
 
         case .track(let track):
             HStack(spacing: 4) {
@@ -167,6 +205,8 @@ struct FolderHierarchyTable: View {
             }
             .padding(.vertical, 2)
             .background(rowBackground(for: row))
+            .contentShape(Rectangle())
+            .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
 
         case .track(let track):
             if let tid = track.id {
@@ -187,8 +227,13 @@ struct FolderHierarchyTable: View {
     @ViewBuilder
     private func artistCell(for row: FolderHierarchyTableRow) -> some View {
         switch row.kind {
-        case .folder:
-            Text("—").foregroundColor(.secondary).font(.caption)
+        case .folder(let folder):
+            Text("—")
+                .foregroundColor(.secondary)
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
         case .track(let track):
             EditableTrackCell(
                 text: track.artist,
@@ -206,8 +251,13 @@ struct FolderHierarchyTable: View {
     @ViewBuilder
     private func albumCell(for row: FolderHierarchyTableRow) -> some View {
         switch row.kind {
-        case .folder:
-            Text("—").foregroundColor(.secondary).font(.caption)
+        case .folder(let folder):
+            Text("—")
+                .foregroundColor(.secondary)
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
         case .track(let track):
             EditableTrackCell(
                 text: track.album,
@@ -225,8 +275,11 @@ struct FolderHierarchyTable: View {
     @ViewBuilder
     private func durationCell(for row: FolderHierarchyTableRow) -> some View {
         switch row.kind {
-        case .folder:
+        case .folder(let folder):
             Text("")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
         case .track(let track):
             Text(track.formattedDuration)
                 .padding(.vertical, 2)
@@ -237,8 +290,13 @@ struct FolderHierarchyTable: View {
     @ViewBuilder
     private func ratingCell(for row: FolderHierarchyTableRow) -> some View {
         switch row.kind {
-        case .folder:
-            Text("—").foregroundColor(.secondary).font(.caption)
+        case .folder(let folder):
+            Text("—")
+                .foregroundColor(.secondary)
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
         case .track(let track):
             if let trackId = track.id {
                 InteractiveStarRating_New(
@@ -254,8 +312,13 @@ struct FolderHierarchyTable: View {
     @ViewBuilder
     private func dateAddedCell(for row: FolderHierarchyTableRow) -> some View {
         switch row.kind {
-        case .folder:
-            Text("—").foregroundColor(.secondary).font(.caption)
+        case .folder(let folder):
+            Text("—")
+                .foregroundColor(.secondary)
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
         case .track(let track):
             Text(track.formattedDateAdded)
                 .padding(.vertical, 2)
@@ -266,8 +329,13 @@ struct FolderHierarchyTable: View {
     @ViewBuilder
     private func composerCell(for row: FolderHierarchyTableRow) -> some View {
         switch row.kind {
-        case .folder:
-            Text("—").foregroundColor(.secondary).font(.caption)
+        case .folder(let folder):
+            Text("—")
+                .foregroundColor(.secondary)
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
         case .track(let track):
             EditableTrackCell(
                 text: track.composerText,
@@ -285,8 +353,13 @@ struct FolderHierarchyTable: View {
     @ViewBuilder
     private func tagsCell(for row: FolderHierarchyTableRow) -> some View {
         switch row.kind {
-        case .folder:
-            Text("—").foregroundColor(.secondary).font(.caption)
+        case .folder(let folder):
+            Text("—")
+                .foregroundColor(.secondary)
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
         case .track(let track):
             if let trackId = track.id {
                 InteractiveTagsView_New(
@@ -301,24 +374,8 @@ struct FolderHierarchyTable: View {
     }
 
     private func rowBackground(for row: FolderHierarchyTableRow) -> Color {
-        switch row.kind {
-        case .folder(let folder):
-            return folderManager.isSelected(folder.path) ? AppStyle.secondaryColor.opacity(0.1) : Color.clear
-        case .track(let track):
-            if let tid = track.id, selectedTracksSet.contains(tid) {
-                return AppStyle.secondaryColor.opacity(0.1)
-            }
-            return Color.clear
-        }
-    }
-
-    private var selectedTracksSet: Set<Int> {
-        var s = Set<Int>()
-        for id in selectedRowIds where id.hasPrefix("track:") {
-            let rest = String(id.dropFirst(6))
-            if let n = Int(rest) { s.insert(n) }
-        }
-        return s
+        guard selectedRowIds.contains(row.id) else { return Color.clear }
+        return AppStyle.secondaryColor.opacity(0.1)
     }
 
     // MARK: - Drag handle
@@ -338,6 +395,11 @@ struct FolderHierarchyTable: View {
                     let payload = paths.joined(separator: "\n")
                     return NSItemProvider(object: payload as NSString)
                 }
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        handleFolderRowTap(row: row, folder: folder)
+                    }
+                )
         case .track(let track):
             if #available(macOS 13.0, *) {
                 Image(systemName: "line.3.horizontal")
