@@ -1,6 +1,5 @@
 import SwiftUI
 import UniformTypeIdentifiers
-import CoreTransferable
 
 enum TrackColumn: String, CaseIterable, Hashable {
     case id
@@ -373,9 +372,11 @@ struct TrackTable: View {
                 .frame(width: 16, height: 16)
                 .contentShape(Rectangle())
                 .help(tooltipText)
-                .draggable(dragPayload(for: displayItem.track)) {
+                .onDrag({
+                    TrackDragItemProvider.make(for: tracksForDrag(from: displayItem.track))
+                }, preview: {
                     dragPreview(for: displayItem.track)
-                }
+                })
                 .onHover { hovering in
                     // When the preview is about to show and hover starts during drag, mark drag kind
                     if hovering {
@@ -422,7 +423,9 @@ struct TrackTable: View {
                 .frame(width: 16, height: 16)
                 .contentShape(Rectangle())
                 .help(tooltipText)
-                .onDrag { dragItem(for: displayItem.track) }
+                .onDrag {
+                    TrackDragItemProvider.make(for: tracksForDrag(from: displayItem.track))
+                }
                 .onHover { hovering in
                     if hovering {
                         Task { @MainActor in
@@ -514,21 +517,7 @@ struct TrackTable: View {
         }
     }
 
-    // MARK: - Drag support (Transferable + preview on macOS 13+)
-
-    @available(macOS 13.0, *)
-    struct DraggedTracks: Transferable {
-        let paths: [String]
-        static var transferRepresentation: some TransferRepresentation {
-            DataRepresentation(contentType: .plainText) { value in
-                (value.paths.joined(separator: "\n")).data(using: .utf8) ?? Data()
-            } importing: { data in
-                let string = String(data: data, encoding: .utf8) ?? ""
-                let paths = string.split(separator: "\n").map { String($0) }
-                return DraggedTracks(paths: paths)
-            }
-        }
-    }
+    // MARK: - Drag support (file URLs for external apps + plain text for in-app)
 
     private func tracksForDrag(from track: Track) -> [Track] {
         // Find the display item for this track
@@ -625,26 +614,6 @@ struct TrackTable: View {
     }
 
     @available(macOS 13.0, *)
-    private func dragPayload(for track: Track) -> DraggedTracks {
-        let tracks = tracksForDrag(from: track)
-        let paths = tracks.map { $0.path }
-        
-        // Log drag payload for debugging
-        print("🎵 [TrackListView] Creating drag payload:")
-        print("   - Source track: \(track.title)")
-        print("   - Tracks to drag: \(tracks.count)")
-        for (index, dragTrack) in tracks.enumerated() {
-            print("   - [\(index)] \(dragTrack.title) (\(dragTrack.path))")
-        }
-        // Mark drag kind globally for hover targets
-        Task { @MainActor in
-            DragStateManager.shared.beginTrackDrag()
-        }
-        
-        return DraggedTracks(paths: paths)
-    }
-
-    @available(macOS 13.0, *)
     @ViewBuilder
     private func dragPreview(for track: Track) -> some View {
         let tracks = tracksForDrag(from: track)
@@ -721,29 +690,6 @@ struct TrackTable: View {
         case .individual(let track):
             return ("music.note", .primary, track.displayTitle, nil)
         }
-    }
-
-
-
-    private func dragItem(for track: Track) -> NSItemProvider {
-        let tracksToExport = tracksForDrag(from: track)
-        let paths = tracksToExport.map { $0.path }
-        let payload = paths.joined(separator: "\n")
-        
-        print("🔍 [TrackListView] Creating legacy drag item:")
-        print("   - Source track: \(track.title)")
-        print("   - Selected display items: \(selectedTracks.count)")
-        print("   - Tracks to export: \(tracksToExport.count)")
-        for (index, exportTrack) in tracksToExport.enumerated() {
-            print("   - [\(index)] \(exportTrack.title)")
-        }
-        print("   - Payload length: \(payload.count) characters")
-        // Mark drag kind globally for hover targets (legacy path)
-        Task { @MainActor in
-            DragStateManager.shared.beginTrackDrag()
-        }
-        
-        return NSItemProvider(object: payload as NSString)
     }
 }
 

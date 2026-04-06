@@ -637,19 +637,13 @@ struct FolderTrackRowView: View {
             tracksToExport = [track]
         }
 
-        let paths = tracksToExport.map { $0.path }
-        let payload = paths.joined(separator: "\n")
-        
         print("🔍 [FolderHierarchyView] Creating drag item:")
         print("   - Track: \(track.title)")
         print("   - Selected tracks count: \(draggedIds.count)")
         print("   - Tracks to export: \(tracksToExport.count)")
-        print("   - Paths: \(paths)")
-        print("   - Payload type: \(type(of: payload))")
-        print("   - Payload length: \(payload.count)")
-        print("   - Payload content: '\(payload)'")
+        print("   - Paths: \(tracksToExport.map(\.path))")
         
-        return NSItemProvider(object: payload as NSString)
+        return TrackDragItemProvider.make(for: tracksToExport)
     }
 }
 
