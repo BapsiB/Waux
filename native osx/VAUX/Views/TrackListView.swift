@@ -1660,7 +1660,7 @@ struct TrackListView: View {
 }
 
 // MARK: - Table Width Observer
-private struct TableWidthObserver: NSViewRepresentable {
+struct TableWidthObserver: NSViewRepresentable {
     @Binding var columnWidths: [TrackColumn: CGFloat]
     let onWidthChange: () -> Void
     
@@ -2061,7 +2061,7 @@ struct KeyboardEventHandler: NSViewRepresentable {
 }
 
 // MARK: - Editable Track Cell
-private struct EditableTrackCell: View {
+struct EditableTrackCell: View {
     let text: String
     let track: Track
     let property: String
