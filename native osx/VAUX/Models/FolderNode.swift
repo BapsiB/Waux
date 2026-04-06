@@ -138,9 +138,11 @@ class FolderHierarchyBuilder {
             folderNodes[folderPath] = folderNode
         }
         
-        // Build parent-child relationships
-        var rootFolders: [FolderNode] = []
-        var childrenMap: [String: [FolderNode]] = [:]
+        // Build parent-child relationships using paths only, then assemble a deep tree.
+        // Storing [FolderNode] snapshots and updating parents in arbitrary order left nested
+        // folders with empty `children` (stale value types), so folder-only parents had no chevron.
+        var rootFolderPaths: [String] = []
+        var childrenMap: [String: [String]] = [:]
         
         for folderPath in allFolderPaths {
             let pathURL = URL(fileURLWithPath: folderPath)
@@ -151,38 +153,40 @@ class FolderHierarchyBuilder {
                 if childrenMap[parentPath] == nil {
                     childrenMap[parentPath] = []
                 }
-                if let childNode = folderNodes[folderPath] {
-                    childrenMap[parentPath]?.append(childNode)
-                }
+                childrenMap[parentPath]?.append(folderPath)
             } else {
-                // This is a root folder
-                if let rootNode = folderNodes[folderPath] {
-                    rootFolders.append(rootNode)
-                }
+                rootFolderPaths.append(folderPath)
             }
         }
         
-        // Update folder nodes with their children
-        for (parentPath, children) in childrenMap {
-            if let parentNode = folderNodes[parentPath] {
-                let updatedNode = FolderNode(
-                    name: parentNode.name,
-                    path: parentNode.path,
-                    isExpanded: parentNode.isExpanded,
-                    children: children,
-                    tracks: parentNode.tracks,
-                    level: parentNode.level
-                )
-                folderNodes[parentPath] = updatedNode
-                
-                // Update in root folders if it's a root
-                if let rootIndex = rootFolders.firstIndex(where: { $0.path == parentPath }) {
-                    rootFolders[rootIndex] = updatedNode
-                }
-            }
+        let rootFolders = rootFolderPaths.map {
+            buildFolderNode(at: $0, folderNodes: folderNodes, childrenMap: childrenMap)
         }
         
         return sortFolderHierarchy(rootFolders)
+    }
+    
+    /// Recursively builds folder nodes so each level references up-to-date nested `children`.
+    private static func buildFolderNode(
+        at path: String,
+        folderNodes: [String: FolderNode],
+        childrenMap: [String: [String]]
+    ) -> FolderNode {
+        guard let base = folderNodes[path] else {
+            fatalError("Missing folder node for path: \(path)")
+        }
+        let childPaths = childrenMap[path] ?? []
+        let builtChildren = childPaths.map {
+            buildFolderNode(at: $0, folderNodes: folderNodes, childrenMap: childrenMap)
+        }
+        return FolderNode(
+            name: base.name,
+            path: base.path,
+            isExpanded: base.isExpanded,
+            children: builtChildren,
+            tracks: base.tracks,
+            level: base.level
+        )
     }
     
     // Helper function to find the common prefix among path components
