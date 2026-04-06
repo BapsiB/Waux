@@ -106,6 +106,40 @@ struct FolderHierarchyTable: View {
         }
     }
 
+    /// Chevron only: toggle expand/collapse when the folder has children; selection matches `handleFolderRowTap` (⌘ / ⇧).
+    private func handleFolderDisclosureTap(row: FolderHierarchyTableRow, folder: FolderNode) {
+        let rowId = row.id
+        let flags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        if flags.contains(.command) {
+            if selectedRowIds.contains(rowId) {
+                selectedRowIds.remove(rowId)
+            } else {
+                selectedRowIds.insert(rowId)
+            }
+            folderSequentialTap = nil
+            if folder.hasChildren {
+                folderManager.toggleExpansion(for: folder.path)
+            }
+            return
+        }
+
+        if flags.contains(.shift) {
+            selectedRowIds = [rowId]
+            folderSequentialTap = nil
+            if folder.hasChildren {
+                folderManager.toggleExpansion(for: folder.path)
+            }
+            return
+        }
+
+        selectedRowIds = [rowId]
+        folderSequentialTap = nil
+        if folder.hasChildren {
+            folderManager.toggleExpansion(for: folder.path)
+        }
+    }
+
     /// Single click anywhere on a folder row: select (respecting ⌘ for multi-select). A second click on the same row within `folderOpenSecondTapInterval` toggles expansion.
     private func handleFolderRowTap(row: FolderHierarchyTableRow, folder: FolderNode) {
         let rowId = row.id
@@ -152,24 +186,38 @@ struct FolderHierarchyTable: View {
         switch row.kind {
         case .folder(let folder):
             HStack(spacing: 6) {
-                Color.clear.frame(width: CGFloat(row.depth) * folderHierarchyIndentPerDepth)
+                Color.clear
+                    .frame(width: CGFloat(row.depth) * folderHierarchyIndentPerDepth)
+                    .contentShape(Rectangle())
+                    .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
+
                 if folder.hasChildren {
                     Image(systemName: folderManager.isExpanded(folder.path) ? "chevron.down" : "chevron.right")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                        .help("Show or hide folder contents")
+                        .onTapGesture { handleFolderDisclosureTap(row: row, folder: folder) }
                 } else {
-                    Color.clear.frame(width: 14, height: 14)
+                    Color.clear
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                        .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
                 }
-                Image(systemName: "folder")
-                    .foregroundColor(AppStyle.mainColor)
-                    .font(.system(size: 14))
-                Spacer(minLength: 0)
+
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .foregroundColor(AppStyle.mainColor)
+                        .font(.system(size: 14))
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .help(folder.displayName)
+                .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .help(folder.displayName)
-            .onTapGesture { handleFolderRowTap(row: row, folder: folder) }
 
         case .track(let track):
             HStack(spacing: 4) {
