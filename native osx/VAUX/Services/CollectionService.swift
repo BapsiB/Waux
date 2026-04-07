@@ -201,12 +201,15 @@ class CollectionService: ObservableObject {
         
         print("Attempting to open database at: \(cleanPath)")
         
-        // Try with UTF8 encoding and thread safety
-        // First try read-write, if that fails, try read-only (match flags used in testDatabaseConnection)
-        var result = sqlite3_open_v2(cleanPath, &database, SQLITE_OPEN_READWRITE, nil)
+        // FULLMUTEX: serialized access so the same connection is safe across databaseQueue, main thread
+        // (e.g. searchTracks vs loadAllTracks / VACUUM INTO backup). Without this, libsqlite3 may assert:
+        // "illegal multi-threaded access to database connection".
+        let openFlagsRW = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
+        let openFlagsRO = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+        var result = sqlite3_open_v2(cleanPath, &database, openFlagsRW, nil)
         if result != SQLITE_OK {
             print("Read-write mode failed, trying read-only mode")
-            result = sqlite3_open_v2(cleanPath, &database, SQLITE_OPEN_READONLY, nil)
+            result = sqlite3_open_v2(cleanPath, &database, openFlagsRO, nil)
             if result == SQLITE_OK {
                 print("Database opened in read-only mode")
                 isReadOnlyMode = true
