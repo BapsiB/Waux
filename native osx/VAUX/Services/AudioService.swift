@@ -255,7 +255,11 @@ class AudioService: NSObject, ObservableObject {
         }
         
         print("Auto-playing next track: \(nextTrack.title)")
-        Task {
+        // `play()` must run on the main actor: `updateTimerInterval()` uses
+        // `Timer.scheduledTimer`, which is tied to the current run loop. A plain
+        // `Task { }` continuation after `await loadTrack` can run on a background
+        // executor whose run loop never fires the timer, so `currentTime` never updates.
+        Task { @MainActor in
             _ = await loadTrack(nextTrack)
             play()
         }
@@ -270,7 +274,9 @@ class AudioService: NSObject, ObservableObject {
         
         print("Manually playing next track: \(nextTrack.title)")
         _ = await loadTrack(nextTrack)
-        play()
+        await MainActor.run {
+            play()
+        }
     }
     
     /// Plays the previous track manually (for previous button)
@@ -282,7 +288,9 @@ class AudioService: NSObject, ObservableObject {
         
         print("Manually playing previous track: \(previousTrack.title)")
         _ = await loadTrack(previousTrack)
-        play()
+        await MainActor.run {
+            play()
+        }
     }
 }
 
