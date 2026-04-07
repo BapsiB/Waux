@@ -222,8 +222,12 @@ struct FolderHierarchyTable: View {
         case .track(let track):
             HStack(spacing: 4) {
                 Color.clear.frame(width: CGFloat(row.depth) * folderHierarchyIndentPerDepth)
+                let p = WaveformColumn.playbackParameters(track: track, audioService: audioService)
                 WaveformColumn(
                     track: track,
+                    playbackProgress: p.progress,
+                    isPlayingThisTrack: p.isPlayingThisTrack,
+                    highDetailWaveform: p.highDetailWaveform,
                     audioService: audioService,
                     waveformServiceHolder: waveformServiceHolder,
                     collectionService: collectionService

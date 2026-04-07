@@ -101,8 +101,12 @@ struct TrackTable: View {
             
             // Waveform column - always visible and second
             TableColumn("Waveform", value: \.track.waveformPointCount) { displayItem in
+                let p = WaveformColumn.playbackParameters(track: displayItem.track, audioService: audioService)
                 WaveformColumn(
                     track: displayItem.track,
+                    playbackProgress: p.progress,
+                    isPlayingThisTrack: p.isPlayingThisTrack,
+                    highDetailWaveform: p.highDetailWaveform,
                     audioService: audioService,
                     waveformServiceHolder: waveformServiceHolder,
                     collectionService: collectionService

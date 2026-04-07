@@ -10,6 +10,11 @@ class WaveformServiceHolder: ObservableObject {
 }
 
 struct WaveformView: View {
+    /// When `true`, bar count follows view width (~one bar per two points). When `false`, a fixed compact bar count is used (list rows when not actively playing this track).
+    var highDetail: Bool = true
+    /// Fixed number of vertical bars used when `highDetail` is `false`.
+    static let compactListBarCount: Int = 96
+
     let waveformData: [Double]
     let progress: Double // 0.0 - 1.0
     let markers: [TimeMarker]
@@ -30,8 +35,7 @@ struct WaveformView: View {
                 let centerY = size.height / 2.0
                 let maxAmplitude = size.height * 0.4
 
-                // Downsample to about half the pixel width like the Flutter code
-                let targetPoints = max(1, Int(size.width / 2.0))
+                let targetPoints = targetPointCount(forWidth: size.width)
                 let data = downsample(waveformData, to: targetPoints)
                 if data.isEmpty { return }
 
@@ -129,7 +133,7 @@ struct WaveformView: View {
             return 
         }
         
-        let targetPoints = max(1, Int(size.width / 2.0))
+        let targetPoints = targetPointCount(forWidth: size.width)
         let data = downsample(waveformData, to: targetPoints)
         if data.isEmpty { 
             print("[WaveformView] handleTap: downsampled data is empty")
@@ -147,6 +151,13 @@ struct WaveformView: View {
         print("  📊 Data: \(waveformData.count)→\(data.count) points, spacing=\(String(format: "%.1f", spacing)), width=\(String(format: "%.1f", actualWaveformWidth))")
         
         onTap?(ratio)
+    }
+
+    private func targetPointCount(forWidth width: CGFloat) -> Int {
+        if highDetail {
+            return max(1, Int(width / 2.0))
+        }
+        return Self.compactListBarCount
     }
 
     private func downsample(_ source: [Double], to targetPoints: Int) -> [Double] {
@@ -180,63 +191,134 @@ struct WaveformView: View {
 
 // MARK: - Table Column Component
 
+/// Play/pause + waveform for a track row. `Equatable` so SwiftUI skips redundant redraws when only other rows' playback state changes.
+private struct WaveformListCell: View, Equatable {
+    let track: Track
+    let playbackProgress: Double
+    let isPlayingThisTrack: Bool
+    let highDetailWaveform: Bool
+    let audioService: AudioService
+
+    static func == (lhs: WaveformListCell, rhs: WaveformListCell) -> Bool {
+        guard lhs.track.id == rhs.track.id else { return false }
+        guard lhs.track.waveformPointCount == rhs.track.waveformPointCount else { return false }
+        guard lhs.track.timeMarkers.count == rhs.track.timeMarkers.count else { return false }
+        guard lhs.isPlayingThisTrack == rhs.isPlayingThisTrack else { return false }
+        guard lhs.highDetailWaveform == rhs.highDetailWaveform else { return false }
+        return abs(lhs.playbackProgress - rhs.playbackProgress) < 0.0001
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button(action: {
+                handlePlayPauseButtonTap(track: track)
+            }) {
+                Image(systemName: isPlayingThisTrack ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(AppStyle.mainColor)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help(isPlayingThisTrack ? "Pause track" : "Play track")
+
+            WaveformView(
+                highDetail: highDetailWaveform,
+                waveformData: track.waveformData ?? [],
+                progress: playbackProgress,
+                markers: track.timeMarkers,
+                durationMs: track.duration,
+                isPlaying: isPlayingThisTrack,
+                onTap: { ratio in
+                    handleWaveformTap(track: track, ratio: ratio)
+                }
+            )
+            .frame(height: 36)
+        }
+    }
+
+    private func handlePlayPauseButtonTap(track: Track) {
+        if audioService.currentTrack?.id == track.id {
+            if audioService.isPlaying {
+                audioService.pause()
+            } else {
+                audioService.play()
+            }
+        } else {
+            Task {
+                _ = await audioService.loadTrack(track)
+                audioService.play()
+            }
+        }
+    }
+
+    private func handleWaveformTap(track: Track, ratio: Double) {
+        print("🎵 [WaveformColumn] SEEK: Track \(track.id ?? -1) '\(track.title)'")
+        print("  ⏱️ Stored: \(track.duration)ms (\(track.duration/1000)s) | Current Audio: \(String(format: "%.1f", audioService.duration))s | Ratio: \(String(format: "%.3f", ratio))")
+
+        if audioService.currentTrack?.id == track.id {
+            let seekTimeSeconds = audioService.duration * ratio
+            print("  🎯 Current track seek: \(String(format: "%.1f", seekTimeSeconds))s")
+            audioService.play()
+            audioService.seek(to: seekTimeSeconds)
+        } else {
+            Task {
+                let player = await audioService.loadTrack(track)
+                audioService.play()
+
+                if let player = player {
+                    player.currentTime = 0.0
+                    let correctDuration = player.duration
+
+                    let seekTimeSeconds = correctDuration * ratio
+                    print("  🎯 New track seek: \(String(format: "%.1f", seekTimeSeconds))s (correct duration: \(String(format: "%.1f", correctDuration))s)")
+                    audioService.seek(to: seekTimeSeconds)
+
+                    let correctDuration2 = player.duration
+                    if abs(correctDuration2 - correctDuration) > 1.0 {
+                        let seekTimeSeconds = correctDuration2 * ratio
+                        print("  🎯 New track seek: \(String(format: "%.1f", seekTimeSeconds))s (correct duration: \(String(format: "%.1f", correctDuration))s)")
+                        audioService.seek(to: seekTimeSeconds)
+                    }
+                } else {
+                    print("  ❌ Failed to load track")
+                }
+            }
+        }
+    }
+}
+
 struct WaveformColumn: View {
     let track: Track
-    @ObservedObject var audioService: AudioService
+    let playbackProgress: Double
+    let isPlayingThisTrack: Bool
+    let highDetailWaveform: Bool
+    let audioService: AudioService
     @ObservedObject var waveformServiceHolder: WaveformServiceHolder
     @ObservedObject var collectionService: CollectionService
+
+    /// Compute at the table level (single `AudioService` observation) and pass into each row so cells do not subscribe to timer-driven playback updates.
+    static func playbackParameters(track: Track, audioService: AudioService) -> (progress: Double, isPlayingThisTrack: Bool, highDetailWaveform: Bool) {
+        guard let tid = track.id, let currentId = audioService.currentTrack?.id, tid == currentId else {
+            return (0, false, false)
+        }
+        let progress = audioService.duration > 0
+            ? min(1.0, max(0.0, audioService.currentTime / audioService.duration))
+            : 0.0
+        let isPlayingThisTrack = audioService.isPlaying
+        let highDetailWaveform = isPlayingThisTrack
+        return (progress, isPlayingThisTrack, highDetailWaveform)
+    }
     
     var body: some View {
-        // Debug logging to see what's happening
-//        let _ = print("[TrackListView] Rendering waveform for track \(track.id ?? -1): hasData=\(track.waveformData != nil), isEmpty=\(track.waveformData?.isEmpty ?? true), bins=\(track.waveformData?.count ?? 0)")
-        
         Group {
-            if let waveformData = track.waveformData, !waveformData.isEmpty {
-                let progress: Double = {
-                    if let current = audioService.currentTrack?.id,
-                       let id = track.id,
-                       current == id,
-                       audioService.duration > 0 {
-                        return min(1.0, max(0.0, audioService.currentTime / audioService.duration))
-                    }
-                    return 0.0
-                }()
-                
-                
-                let isPlaying: Bool = {
-                    if let current = audioService.currentTrack?.id,
-                       let id = track.id,
-                       current == id {
-                        return audioService.isPlaying
-                    }
-                    return false
-                }()
-                
-                HStack(spacing: 4) {
-                    // Play/Pause button
-                    Button(action: {
-                        handlePlayPauseButtonTap(track: track)
-                    }) {
-                        Image(systemName: getPlayPauseIcon(for: track))
-                            .font(.title2)
-                            .foregroundColor(AppStyle.mainColor)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(getPlayPauseHelpText(for: track))
-                    
-                    // Waveform view
-                    WaveformView(
-                        waveformData: waveformData,
-                        progress: progress,
-                        markers: track.timeMarkers,
-                        durationMs: track.duration,
-                        isPlaying: isPlaying,
-                        onTap: { ratio in
-                            handleWaveformTap(track: track, ratio: ratio)
-                        }
-                    )
-                    .frame(height: 36)
-                }
+            if track.waveformData?.isEmpty == false {
+                WaveformListCell(
+                    track: track,
+                    playbackProgress: playbackProgress,
+                    isPlayingThisTrack: isPlayingThisTrack,
+                    highDetailWaveform: highDetailWaveform,
+                    audioService: audioService
+                )
+                .equatable()
             } else {
                 // Check if this track is currently being analyzed
                 let isCurrentlyAnalyzing = waveformServiceHolder.service?.analyzingTrackIds.contains(track.id ?? -1) ?? false
@@ -296,78 +378,6 @@ struct WaveformColumn: View {
                             waveformServiceHolder.service?.analyzeIfMissing(track)
                         }
                     }
-                }
-            }
-        }
-    }
-    
-    private func handlePlayPauseButtonTap(track: Track) {
-        if audioService.currentTrack?.id == track.id {
-            // Current track is playing - toggle play/pause
-            if audioService.isPlaying {
-                audioService.pause()
-            } else {
-                audioService.play()
-            }
-        } else {
-            // Different track - load and play
-            Task {
-                _ = await audioService.loadTrack(track)
-                audioService.play()
-            }
-        }
-    }
-    
-    private func getPlayPauseIcon(for track: Track) -> String {
-        if audioService.currentTrack?.id == track.id && audioService.isPlaying {
-            return "pause.circle.fill"
-        } else {
-            return "play.circle.fill"
-        }
-    }
-    
-    private func getPlayPauseHelpText(for track: Track) -> String {
-        if audioService.currentTrack?.id == track.id && audioService.isPlaying {
-            return "Pause track"
-        } else {
-            return "Play track"
-        }
-    }
-    
-    private func handleWaveformTap(track: Track, ratio: Double) {
-        // Concise logging for debugging time calculation (NEW VERSION)
-        print("🎵 [WaveformColumn] SEEK: Track \(track.id ?? -1) '\(track.title)'")
-        print("  ⏱️ Stored: \(track.duration)ms (\(track.duration/1000)s) | Current Audio: \(String(format: "%.1f", audioService.duration))s | Ratio: \(String(format: "%.3f", ratio))")
-        
-        if audioService.currentTrack?.id == track.id {
-            // Current track - use current audio duration
-            let seekTimeSeconds = audioService.duration * ratio
-            print("  🎯 Current track seek: \(String(format: "%.1f", seekTimeSeconds))s")
-            audioService.play()
-            audioService.seek(to: seekTimeSeconds)
-        } else {
-            Task {
-                let player = await audioService.loadTrack(track)
-                audioService.play()
-                
-                // Get the duration directly from the returned player
-                if let player = player {
-                    // Do an initial seek to 0 to get the correct duration
-                    player.currentTime = 0.0
-                    let correctDuration = player.duration
-                    
-                    let seekTimeSeconds = correctDuration * ratio
-                    print("  🎯 New track seek: \(String(format: "%.1f", seekTimeSeconds))s (correct duration: \(String(format: "%.1f", correctDuration))s)")
-                    audioService.seek(to: seekTimeSeconds)
-
-                    let correctDuration2 = player.duration
-                    if(abs(correctDuration2 - correctDuration) > 1.0) {
-                        let seekTimeSeconds = correctDuration2 * ratio
-                        print("  🎯 New track seek: \(String(format: "%.1f", seekTimeSeconds))s (correct duration: \(String(format: "%.1f", correctDuration))s)")
-                        audioService.seek(to: seekTimeSeconds)
-                    }
-                } else {
-                    print("  ❌ Failed to load track")
                 }
             }
         }
