@@ -2,6 +2,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AppKit
 
+/// Posted when the track table handles a row double-click (before SwiftUI cells see the event). Cells use this to cancel pending single-click-to-edit.
+private extension Notification.Name {
+    static let trackListRowDoubleClicked = Notification.Name("trackListRowDoubleClicked")
+}
+
 /// Finds the SwiftUI `Table`'s underlying `NSTableView`, skipping SwiftUI `List` outline table views.
 fileprivate func findTrackListNSTableView(in view: NSView?) -> NSTableView? {
     guard let view = view else { return nil }
@@ -82,7 +87,6 @@ struct TrackTable: View {
     @ObservedObject var waveformServiceHolder: WaveformServiceHolder
     @ObservedObject var collectionService: CollectionService
     @ObservedObject var trackGroupService: TrackGroupService
-    let onDoubleClick: (Track) -> Void
     let onKeyPressA: () -> Void
     let onKeyPressSpace: () -> Void
     let onKeyPressBackspace: () -> Void
@@ -131,7 +135,7 @@ struct TrackTable: View {
                     property: "artist",
                     isSelected: selectedTracks.contains(displayItem.id),
                     metadataManager: metadataManager,
-                    onDoubleClick: onDoubleClick
+                    onDoubleClick: nil
                 )
                     .padding(.vertical, 2)
                     .background(backgroundForDisplayItem(displayItem))
@@ -146,7 +150,7 @@ struct TrackTable: View {
                     property: "album",
                     isSelected: selectedTracks.contains(displayItem.id),
                     metadataManager: metadataManager,
-                    onDoubleClick: onDoubleClick
+                    onDoubleClick: nil
                 )
                     .padding(.vertical, 2)
                     .background(backgroundForDisplayItem(displayItem))
@@ -185,7 +189,7 @@ struct TrackTable: View {
                     property: "composer",
                     isSelected: selectedTracks.contains(displayItem.id),
                     metadataManager: metadataManager,
-                    onDoubleClick: onDoubleClick
+                    onDoubleClick: nil
                 )
                     .padding(.vertical, 2)
                     .background(backgroundForDisplayItem(displayItem))
@@ -301,7 +305,7 @@ struct TrackTable: View {
                             fontWeight: displayItem.isContainer ? .semibold : 
                                        displayItem.isMember ? .regular : .medium,
                             metadataManager: metadataManager,
-                            onDoubleClick: onDoubleClick
+                            onDoubleClick: nil
                         )
                             .foregroundColor(displayItem.isContainer ? .accentColor : .primary)
                     }
@@ -920,16 +924,6 @@ struct TrackListView: View {
                 waveformServiceHolder: waveformServiceHolder,
                 collectionService: collectionService,
                 trackGroupService: trackGroupService,
-                onDoubleClick: { track in
-                    print("Double-clicked track: \(track.title)")
-                    print("Track path: \(track.path)")
-                    print("Is URL: \(track.isUrl)")
-                    print("Duration: \(track.duration) ms")
-                    Task {
-                        _ = await audioService.loadTrack(track)
-                        audioService.play()
-                    }
-                },
                 onKeyPressA: {
                     selectedDisplayItems = Set(displayItems.map { $0.id })
                 },
@@ -954,7 +948,17 @@ struct TrackListView: View {
         .background(
             TableSelectionHandler(
                 selectedDisplayItems: $selectedDisplayItems,
-                displayItems: displayItems
+                displayItems: displayItems,
+                onRowDoubleClick: { track in
+                    print("Double-clicked track: \(track.title)")
+                    print("Track path: \(track.path)")
+                    print("Is URL: \(track.isUrl)")
+                    print("Duration: \(track.duration) ms")
+                    Task {
+                        _ = await audioService.loadTrack(track)
+                        audioService.play()
+                    }
+                }
             )
         )
         .contextMenu {
@@ -1826,16 +1830,19 @@ struct TableWidthObserver: NSViewRepresentable {
 struct TableSelectionHandler: NSViewRepresentable {
     @Binding var selectedDisplayItems: Set<TrackDisplayItem.ID>
     let displayItems: [TrackDisplayItem]
+    let onRowDoubleClick: (Track) -> Void
     
     func makeNSView(context: Context) -> NSView {
         let view = TableSelectionView(selectedDisplayItems: _selectedDisplayItems)
         view.displayItems = displayItems
+        view.onRowDoubleClick = onRowDoubleClick
         return view
     }
     
     func updateNSView(_ nsView: NSView, context: Context) {
         if let view = nsView as? TableSelectionView {
             view.displayItems = displayItems
+            view.onRowDoubleClick = onRowDoubleClick
         }
     }
 }
@@ -1843,6 +1850,7 @@ struct TableSelectionHandler: NSViewRepresentable {
 class TableSelectionView: NSView {
     var selectedDisplayItems: Binding<Set<TrackDisplayItem.ID>>
     var displayItems: [TrackDisplayItem] = []
+    var onRowDoubleClick: ((Track) -> Void)?
     
     init(selectedDisplayItems: Binding<Set<TrackDisplayItem.ID>>) {
         self.selectedDisplayItems = selectedDisplayItems
@@ -1875,6 +1883,30 @@ class TableSelectionView: NSView {
     
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
         guard let window = self.window, window == event.window else { return event }
+        
+        // Row double-click: handled here so it works when the row wasn't selected yet
+        // (editable cells use allowsHitTesting(isSelected), so SwiftUI never sees the first click).
+        if event.clickCount == 2, let play = onRowDoubleClick,
+           let tableView = findTableView(in: window.contentView) {
+            let locationInTable = tableView.convert(event.locationInWindow, from: nil)
+            if tableView.bounds.contains(locationInTable) {
+                let row = tableView.row(at: locationInTable)
+                if row >= 0 && row < displayItems.count {
+                    let track = displayItems[row].track
+                    if let tid = track.id {
+                        NotificationCenter.default.post(
+                            name: .trackListRowDoubleClicked,
+                            object: nil,
+                            userInfo: ["trackId": tid]
+                        )
+                    }
+                    DispatchQueue.main.async {
+                        play(track)
+                    }
+                    return nil
+                }
+            }
+        }
         
         // Check if we are in an editing state (text field/view is first responder)
         // This handles the case where user is editing a tag and clicks another row
@@ -2067,7 +2099,8 @@ struct EditableTrackCell: View {
     let isSelected: Bool
     var fontWeight: Font.Weight? = nil
     @ObservedObject var metadataManager: TrackMetadataManager
-    let onDoubleClick: (Track) -> Void
+    /// When nil, double-click-to-play is handled by `TableSelectionView` (AppKit) so it works on unselected rows.
+    let onDoubleClick: ((Track) -> Void)?
     
     @State private var isEditing = false
     @State private var editedText: String?
@@ -2076,6 +2109,24 @@ struct EditableTrackCell: View {
     @State private var clickCount = 0
     @State private var workItem: DispatchWorkItem?
     @State private var lastSelectionTime: Date = .distantPast
+    
+    init(
+        text: String,
+        track: Track,
+        property: String,
+        isSelected: Bool,
+        fontWeight: Font.Weight? = nil,
+        metadataManager: TrackMetadataManager,
+        onDoubleClick: ((Track) -> Void)? = nil
+    ) {
+        self.text = text
+        self.track = track
+        self.property = property
+        self.isSelected = isSelected
+        self.fontWeight = fontWeight
+        self.metadataManager = metadataManager
+        self.onDoubleClick = onDoubleClick
+    }
     
     var body: some View {
         ZStack(alignment: .leading) {
@@ -2128,6 +2179,11 @@ struct EditableTrackCell: View {
         .onChange(of: text) { newText in
             editedText = newText
         }
+        .onReceive(NotificationCenter.default.publisher(for: .trackListRowDoubleClicked)) { note in
+            guard let tid = note.userInfo?["trackId"] as? Int, tid == track.id else { return }
+            workItem?.cancel()
+            clickCount = 0
+        }
         .onAppear {
             if isSelected {
                 lastSelectionTime = Date()
@@ -2139,6 +2195,29 @@ struct EditableTrackCell: View {
     }
     
     private func handleClick() {
+        if let onDoubleClick = onDoubleClick {
+            handleClickLegacyDoubleClickToPlay(onDoubleClick: onDoubleClick)
+        } else {
+            // Double-click is handled at NSTableView level; only schedule single-click-to-edit.
+            clickCount += 1
+            if clickCount == 1 {
+                let task = DispatchWorkItem {
+                    if clickCount == 1 && isSelected {
+                        startEditing()
+                    }
+                    clickCount = 0
+                }
+                workItem = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
+            } else {
+                workItem?.cancel()
+                clickCount = 0
+            }
+        }
+    }
+    
+    /// Used when `onDoubleClick` is set (e.g. folder hierarchy table), where cell-level play is still required.
+    private func handleClickLegacyDoubleClickToPlay(onDoubleClick: @escaping (Track) -> Void) {
         let now = Date()
         let timeSinceSelection = now.timeIntervalSince(lastSelectionTime)
         
@@ -2146,14 +2225,9 @@ struct EditableTrackCell: View {
         
         if clickCount == 1 {
             if timeSinceSelection < 0.3 {
-                // This click came very soon after row was selected.
-                // The first click selected the row (NSTableView handled it).
-                // This second click means user double-clicked an unselected row → play!
                 clickCount = 0
                 onDoubleClick(track)
             } else {
-                // Row was selected for a while, this is a single click.
-                // Wait to see if it's actually a double-click or single-click-to-edit.
                 let task = DispatchWorkItem {
                     if clickCount == 1 && isSelected {
                         startEditing()
@@ -2164,7 +2238,6 @@ struct EditableTrackCell: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
             }
         } else {
-            // Second click on already-selected row → double-click → play!
             workItem?.cancel()
             clickCount = 0
             onDoubleClick(track)
