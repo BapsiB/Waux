@@ -1524,5 +1524,97 @@
             landmarkType = "24">
          </BreakpointContent>
       </BreakpointProxy>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "DCB8EED2-CCF4-454B-9BDD-6AB128DDF99B"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "VAUX/Views/TrackListView.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "2058"
+            endingLineNumber = "2058"
+            landmarkName = "rightMouseDown(with:)"
+            landmarkType = "7">
+            <Locations>
+               <Location
+                  uuid = "DCB8EED2-CCF4-454B-9BDD-6AB128DDF99B - edf5249d1f6d81ba"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "VAUX.KeyboardEventHandler.KeyEventView.keyDown(with: __C.NSEvent) -&gt; ()"
+                  moduleName = "VAUX.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/VAUX/Views/TrackListView.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "2058"
+                  endingLineNumber = "2058">
+               </Location>
+               <Location
+                  uuid = "DCB8EED2-CCF4-454B-9BDD-6AB128DDF99B - cd6565759d683ca4"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "VAUX.TableSelectionView.rightMouseDown(with: __C.NSEvent) -&gt; ()"
+                  moduleName = "VAUX.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/VAUX/Views/TrackListView.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "2058"
+                  endingLineNumber = "2058">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "358C2DC4-8EBA-4079-A627-39C2E5E7DB0A"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "VAUX/Views/TrackListView.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "2050"
+            endingLineNumber = "2050"
+            landmarkName = "rightMouseDown(with:)"
+            landmarkType = "7">
+            <Locations>
+               <Location
+                  uuid = "358C2DC4-8EBA-4079-A627-39C2E5E7DB0A - edf5249d1f6d82a2"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "VAUX.KeyboardEventHandler.KeyEventView.keyDown(with: __C.NSEvent) -&gt; ()"
+                  moduleName = "VAUX.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/VAUX/Views/TrackListView.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "2050"
+                  endingLineNumber = "2050">
+               </Location>
+               <Location
+                  uuid = "358C2DC4-8EBA-4079-A627-39C2E5E7DB0A - cd6565759d683fbc"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "VAUX.TableSelectionView.rightMouseDown(with: __C.NSEvent) -&gt; ()"
+                  moduleName = "VAUX.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/baptistebohelay/Dev/Flutter/audio%20looker/native%20osx/VAUX/Views/TrackListView.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "2050"
+                  endingLineNumber = "2050">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
    </Breakpoints>
 </Bucket>

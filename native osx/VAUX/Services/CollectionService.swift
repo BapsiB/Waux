@@ -1970,12 +1970,14 @@ class CollectionService: ObservableObject {
                         return
                     }
                     
-                    // Update the track in the local array on the main thread
+                    // Update the track in the local array on the main thread.
+                    // Assign a new array so @Published emits; subscript-only mutation may not notify $tracks subscribers.
                     Task { @MainActor in
                         if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
-                            // Update track in place using withUpdates method
                             let updates = ["rating": newRating as Any]
-                            self.tracks[index] = self.tracks[index].withUpdates(updates)
+                            var updatedTracks = self.tracks
+                            updatedTracks[index] = updatedTracks[index].withUpdates(updates)
+                            self.tracks = updatedTracks
                         }
                     }
                     
@@ -2097,11 +2099,13 @@ class CollectionService: ObservableObject {
                         return
                     }
                     
-                    // Update the track in the local array on the main thread
+                    // Update the track in the local array on the main thread.
+                    // Assign a new array so @Published emits; subscript-only mutation may not notify $tracks subscribers.
                     Task { @MainActor in
                         if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
-                            // Update track in place using withUpdates method
-                            self.tracks[index] = self.tracks[index].withUpdates(updates)
+                            var updatedTracks = self.tracks
+                            updatedTracks[index] = updatedTracks[index].withUpdates(updates)
+                            self.tracks = updatedTracks
                         }
                     }
                     

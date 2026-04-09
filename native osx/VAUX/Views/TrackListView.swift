@@ -87,12 +87,9 @@ struct TrackTable: View {
     @ObservedObject var waveformServiceHolder: WaveformServiceHolder
     @ObservedObject var collectionService: CollectionService
     @ObservedObject var trackGroupService: TrackGroupService
-    let onKeyPressA: () -> Void
-    let onKeyPressSpace: () -> Void
     let onKeyPressBackspace: () -> Void
     let onColumnWidthChange: () -> Void
     let onGroupToggle: (String) -> Void
-    let onGoToCurrentTrack: () -> Void
     
     var body: some View {
         Table(displayItems, selection: $selectedTracks, sortOrder: $sortOrder) {
@@ -215,15 +212,6 @@ struct TrackTable: View {
         .focusable()
         .focused($isTableFocused)
         .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: onColumnWidthChange))
-        .background(KeyboardEventHandler(
-            isTextFieldFocused: isTextFieldFocused,
-            isTableFocused: isTableFocused,
-            hasSelection: !selectedTracks.isEmpty,
-            onCommandA: onKeyPressA,
-            onSpace: onKeyPressSpace,
-            onBackspace: onKeyPressBackspace,
-            onCommandL: onGoToCurrentTrack
-        ))
         .onDeleteCommand {
             if !isTextFieldFocused && isTableFocused && !selectedTracks.isEmpty {
                 onKeyPressBackspace()
@@ -924,13 +912,6 @@ struct TrackListView: View {
                 waveformServiceHolder: waveformServiceHolder,
                 collectionService: collectionService,
                 trackGroupService: trackGroupService,
-                onKeyPressA: {
-                    selectedDisplayItems = Set(displayItems.map { $0.id })
-                },
-                onKeyPressSpace: {
-                    // Same track - toggle play/pause
-                    audioService.togglePlayPause()
-                },
                 onKeyPressBackspace: {
                     let selectedTracksList = displayItems.filter { selectedDisplayItems.contains($0.id) }.map { $0.track }
                     if !selectedTracksList.isEmpty {
@@ -939,10 +920,7 @@ struct TrackListView: View {
                     }
                 },
                 onColumnWidthChange: saveColumnWidths,
-                onGroupToggle: handleGroupToggle,
-                onGoToCurrentTrack: {
-                    scrollToCurrentTrack()
-                }
+                onGroupToggle: handleGroupToggle
             )
         }
         .background(
@@ -958,6 +936,22 @@ struct TrackListView: View {
                         _ = await audioService.loadTrack(track)
                         audioService.play()
                     }
+                },
+                onKeyPressA: {
+                    selectedDisplayItems = Set(displayItems.map { $0.id })
+                },
+                onKeyPressSpace: {
+                    audioService.togglePlayPause()
+                },
+                onKeyPressBackspace: {
+                    let selectedTracksList = displayItems.filter { selectedDisplayItems.contains($0.id) }.map { $0.track }
+                    if !selectedTracksList.isEmpty {
+                        tracksToDelete = selectedTracksList
+                        showDeleteConfirmation = true
+                    }
+                },
+                onGoToCurrentTrack: {
+                    scrollToCurrentTrack()
                 }
             )
         )
@@ -1831,11 +1825,19 @@ struct TableSelectionHandler: NSViewRepresentable {
     @Binding var selectedDisplayItems: Set<TrackDisplayItem.ID>
     let displayItems: [TrackDisplayItem]
     let onRowDoubleClick: (Track) -> Void
+    let onKeyPressA: () -> Void
+    let onKeyPressSpace: () -> Void
+    let onKeyPressBackspace: () -> Void
+    let onGoToCurrentTrack: () -> Void
     
     func makeNSView(context: Context) -> NSView {
         let view = TableSelectionView(selectedDisplayItems: _selectedDisplayItems)
         view.displayItems = displayItems
         view.onRowDoubleClick = onRowDoubleClick
+        view.onKeyPressA = onKeyPressA
+        view.onKeyPressSpace = onKeyPressSpace
+        view.onKeyPressBackspace = onKeyPressBackspace
+        view.onGoToCurrentTrack = onGoToCurrentTrack
         return view
     }
     
@@ -1843,6 +1845,14 @@ struct TableSelectionHandler: NSViewRepresentable {
         if let view = nsView as? TableSelectionView {
             view.displayItems = displayItems
             view.onRowDoubleClick = onRowDoubleClick
+            view.onKeyPressA = onKeyPressA
+            view.onKeyPressSpace = onKeyPressSpace
+            view.onKeyPressBackspace = onKeyPressBackspace
+            view.onGoToCurrentTrack = onGoToCurrentTrack
+            view.hasSelection = !selectedDisplayItems.isEmpty
+            DispatchQueue.main.async {
+                view.applyAllowsTypeSelect()
+            }
         }
     }
 }
@@ -1851,6 +1861,11 @@ class TableSelectionView: NSView {
     var selectedDisplayItems: Binding<Set<TrackDisplayItem.ID>>
     var displayItems: [TrackDisplayItem] = []
     var onRowDoubleClick: ((Track) -> Void)?
+    var onKeyPressA: (() -> Void)?
+    var onKeyPressSpace: (() -> Void)?
+    var onKeyPressBackspace: (() -> Void)?
+    var onGoToCurrentTrack: (() -> Void)?
+    var hasSelection = false
     
     init(selectedDisplayItems: Binding<Set<TrackDisplayItem.ID>>) {
         self.selectedDisplayItems = selectedDisplayItems
@@ -1858,27 +1873,80 @@ class TableSelectionView: NSView {
         self.wantsLayer = true
     }
     
-    private var monitor: Any?
+    private var mouseMonitor: Any?
+    private var keyMonitor: Any?
     
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         
-        if let monitor = monitor {
+        if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
-            self.monitor = nil
+            mouseMonitor = nil
+        }
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
         }
         
         if window != nil {
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
                 return self?.handleMouseDown(event) ?? event
+            }
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                return self?.handleKeyDown(event) ?? event
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.applyAllowsTypeSelect()
             }
         }
     }
     
     deinit {
-        if let monitor = monitor {
+        if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
+    
+    /// `NSTableView` receives key events before SwiftUI background views; disable type-select and handle shortcuts in a local monitor.
+    func applyAllowsTypeSelect() {
+        guard let tableView = findTableView(in: window?.contentView) else { return }
+        tableView.allowsTypeSelect = false
+    }
+    
+    private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        guard let window = self.window, window === event.window else { return event }
+        guard let tableView = findTableView(in: window.contentView) else { return event }
+        
+        let fr = window.firstResponder
+        if fr is NSTextField { return event }
+        if let tv = fr as? NSTextView, tv.isEditable { return event }
+        
+        let tableHasFocus = fr === tableView || fr === tableView.enclosingScrollView
+        guard tableHasFocus else { return event }
+        
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let key = event.charactersIgnoringModifiers ?? ""
+        
+        if modifiers.contains(.command), key == "a" {
+            onKeyPressA?()
+            return nil
+        }
+        if key == " " {
+            onKeyPressSpace?()
+            return nil
+        }
+        if event.keyCode == 51, hasSelection {
+            onKeyPressBackspace?()
+            return nil
+        }
+        if modifiers.contains(.command), key == "l" {
+            onGoToCurrentTrack?()
+            return nil
+        }
+        return event
     }
     
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
@@ -2004,90 +2072,6 @@ class TableSelectionView: NSView {
     
     private func findTableView(in view: NSView?) -> NSTableView? {
         findTrackListNSTableView(in: view)
-    }
-}
-
-// macOS 13-compatible keyboard event handler
-struct KeyboardEventHandler: NSViewRepresentable {
-    let isTextFieldFocused: Bool
-    let isTableFocused: Bool
-    let hasSelection: Bool
-    let onCommandA: () -> Void
-    let onSpace: () -> Void
-    let onBackspace: () -> Void
-    let onCommandL: () -> Void
-    
-    func makeNSView(context: Context) -> NSView {
-        let view = KeyEventView()
-        view.coordinator = context.coordinator
-        return view
-    }
-    
-    func updateNSView(_ nsView: NSView, context: Context) {
-        if let keyView = nsView as? KeyEventView {
-            keyView.coordinator = context.coordinator
-        }
-    }
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(
-            isTextFieldFocused: isTextFieldFocused,
-            isTableFocused: isTableFocused,
-            hasSelection: hasSelection,
-            onCommandA: onCommandA,
-            onSpace: onSpace,
-            onBackspace: onBackspace,
-            onCommandL: onCommandL
-        )
-    }
-    
-    class KeyEventView: NSView {
-        var coordinator: Coordinator?
-        
-        override var acceptsFirstResponder: Bool { true }
-        
-        override func keyDown(with event: NSEvent) {
-            guard let coordinator = coordinator else {
-                super.keyDown(with: event)
-                return
-            }
-            
-            let modifiers = event.modifierFlags
-            let key = event.charactersIgnoringModifiers ?? ""
-            
-            if modifiers.contains(.command) && key == "a" {
-                coordinator.onCommandA()
-            } else if key == " " && !coordinator.isTextFieldFocused && coordinator.isTableFocused {
-                coordinator.onSpace()
-            } else if event.keyCode == 51 && !coordinator.isTextFieldFocused && coordinator.isTableFocused && coordinator.hasSelection {
-                // 51 is backspace/delete
-                coordinator.onBackspace()
-            } else if modifiers.contains(.command) && key == "l" {
-                coordinator.onCommandL()
-            } else {
-                super.keyDown(with: event)
-            }
-        }
-    }
-    
-    class Coordinator {
-        let isTextFieldFocused: Bool
-        let isTableFocused: Bool
-        let hasSelection: Bool
-        let onCommandA: () -> Void
-        let onSpace: () -> Void
-        let onBackspace: () -> Void
-        let onCommandL: () -> Void
-        
-        init(isTextFieldFocused: Bool, isTableFocused: Bool, hasSelection: Bool, onCommandA: @escaping () -> Void, onSpace: @escaping () -> Void, onBackspace: @escaping () -> Void, onCommandL: @escaping () -> Void) {
-            self.isTextFieldFocused = isTextFieldFocused
-            self.isTableFocused = isTableFocused
-            self.hasSelection = hasSelection
-            self.onCommandA = onCommandA
-            self.onSpace = onSpace
-            self.onBackspace = onBackspace
-            self.onCommandL = onCommandL
-        }
     }
 }
 

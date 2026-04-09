@@ -24,10 +24,7 @@ struct FolderHierarchyTable: View {
     @ObservedObject var folderManager: FolderHierarchyManager
     let onDoubleClickTrack: (Track) -> Void
     let onColumnWidthChange: () -> Void
-    let onKeyPressA: () -> Void
-    let onKeyPressSpace: () -> Void
     let onKeyPressBackspace: () -> Void
-    let onGoToCurrentTrack: () -> Void
 
     var body: some View {
         Table(rows, selection: $selectedRowIds, sortOrder: $sortOrder) {
@@ -85,15 +82,6 @@ struct FolderHierarchyTable: View {
         .focusable()
         .focused($isTableFocused)
         .background(TableWidthObserver(columnWidths: $columnWidths, onWidthChange: onColumnWidthChange))
-        .background(KeyboardEventHandler(
-            isTextFieldFocused: isTextFieldFocused,
-            isTableFocused: isTableFocused,
-            hasSelection: !selectedRowIds.isEmpty,
-            onCommandA: onKeyPressA,
-            onSpace: onKeyPressSpace,
-            onBackspace: onKeyPressBackspace,
-            onCommandL: onGoToCurrentTrack
-        ))
         .onDeleteCommand {
             if !isTextFieldFocused && isTableFocused && !selectedRowIds.isEmpty {
                 onKeyPressBackspace()

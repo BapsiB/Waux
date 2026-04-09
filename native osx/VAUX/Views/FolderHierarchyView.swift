@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct FolderHierarchyView: View {
     @ObservedObject var collectionService: CollectionService
@@ -65,27 +66,34 @@ struct FolderHierarchyView: View {
                 }
             },
             onColumnWidthChange: saveColumnWidths,
-            onKeyPressA: {
-                selectedRowIds = Set(flatRows.map(\.id))
-            },
-            onKeyPressSpace: {
-                audioService.togglePlayPause()
-            },
             onKeyPressBackspace: {
                 let tracks = selectedTracksFromRows()
                 if !tracks.isEmpty {
                     tracksToDelete = tracks
                     showDeleteConfirmation = true
                 }
-            },
-            onGoToCurrentTrack: {
-                scrollToCurrentTrack()
             }
         )
         .background(
             FolderHierarchyTableSelectionHandler(
                 selectedRowIds: $selectedRowIds,
-                rows: flatRows
+                rows: flatRows,
+                onKeyPressA: {
+                    selectedRowIds = Set(flatRows.map(\.id))
+                },
+                onKeyPressSpace: {
+                    audioService.togglePlayPause()
+                },
+                onKeyPressBackspace: {
+                    let tracks = selectedTracksFromRows()
+                    if !tracks.isEmpty {
+                        tracksToDelete = tracks
+                        showDeleteConfirmation = true
+                    }
+                },
+                onGoToCurrentTrack: {
+                    scrollToCurrentTrack()
+                }
             )
         )
         .onAppear {
@@ -287,16 +295,32 @@ struct FolderHierarchyView: View {
 private struct FolderHierarchyTableSelectionHandler: NSViewRepresentable {
     @Binding var selectedRowIds: Set<String>
     let rows: [FolderHierarchyTableRow]
+    let onKeyPressA: () -> Void
+    let onKeyPressSpace: () -> Void
+    let onKeyPressBackspace: () -> Void
+    let onGoToCurrentTrack: () -> Void
 
     func makeNSView(context: Context) -> NSView {
         let view = FolderHierarchySelectionView(selectedRowIds: $selectedRowIds)
         view.rows = rows
+        view.onKeyPressA = onKeyPressA
+        view.onKeyPressSpace = onKeyPressSpace
+        view.onKeyPressBackspace = onKeyPressBackspace
+        view.onGoToCurrentTrack = onGoToCurrentTrack
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         if let v = nsView as? FolderHierarchySelectionView {
             v.rows = rows
+            v.onKeyPressA = onKeyPressA
+            v.onKeyPressSpace = onKeyPressSpace
+            v.onKeyPressBackspace = onKeyPressBackspace
+            v.onGoToCurrentTrack = onGoToCurrentTrack
+            v.hasSelection = !selectedRowIds.isEmpty
+            DispatchQueue.main.async {
+                v.applyAllowsTypeSelect()
+            }
         }
     }
 }
@@ -304,6 +328,11 @@ private struct FolderHierarchyTableSelectionHandler: NSViewRepresentable {
 private final class FolderHierarchySelectionView: NSView {
     var selectedRowIds: Binding<Set<String>>
     var rows: [FolderHierarchyTableRow] = []
+    var onKeyPressA: (() -> Void)?
+    var onKeyPressSpace: (() -> Void)?
+    var onKeyPressBackspace: (() -> Void)?
+    var onGoToCurrentTrack: (() -> Void)?
+    var hasSelection = false
 
     init(selectedRowIds: Binding<Set<String>>) {
         self.selectedRowIds = selectedRowIds
@@ -313,23 +342,73 @@ private final class FolderHierarchySelectionView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private var monitor: Any?
+    private var mouseMonitor: Any?
+    private var keyMonitor: Any?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if let monitor = monitor {
+        if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
-            self.monitor = nil
+            mouseMonitor = nil
+        }
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
         }
         if window != nil {
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
                 self?.handleMouseDown(event) ?? event
+            }
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                self?.handleKeyDown(event) ?? event
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.applyAllowsTypeSelect()
             }
         }
     }
 
     deinit {
-        if let monitor = monitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = mouseMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = keyMonitor { NSEvent.removeMonitor(monitor) }
+    }
+
+    func applyAllowsTypeSelect() {
+        guard let tableView = findTableView(in: window?.contentView) else { return }
+        tableView.allowsTypeSelect = false
+    }
+
+    private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        guard let window = self.window, window === event.window else { return event }
+        guard let tableView = findTableView(in: window.contentView) else { return event }
+
+        let fr = window.firstResponder
+        if fr is NSTextField { return event }
+        if let tv = fr as? NSTextView, tv.isEditable { return event }
+
+        let tableHasFocus = fr === tableView || fr === tableView.enclosingScrollView
+        guard tableHasFocus else { return event }
+
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let key = event.charactersIgnoringModifiers ?? ""
+
+        if modifiers.contains(.command), key == "a" {
+            onKeyPressA?()
+            return nil
+        }
+        if key == " " {
+            onKeyPressSpace?()
+            return nil
+        }
+        if event.keyCode == 51, hasSelection {
+            onKeyPressBackspace?()
+            return nil
+        }
+        if modifiers.contains(.command), key == "l" {
+            onGoToCurrentTrack?()
+            return nil
+        }
+        return event
     }
 
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
