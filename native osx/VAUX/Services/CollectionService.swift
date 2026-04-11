@@ -3081,17 +3081,50 @@ class CollectionService: ObservableObject {
                     
                     print("✅ [CollectionService] Successfully updated database title and path for track \(trackId)")
                     
-                    // Step 4: Reload tracks to reflect all changes
-                    Task { @MainActor in
-                        try? await self.loadAllTracks()
+                    // Step 4: Patch in-memory track list (avoids full reload, isLoading spinner, and table churn)
+                    DispatchQueue.main.async {
+                        self.applyRenamedTrackInMemory(trackId: trackId, newTitle: newTitle, newRelativePath: newRelativePath)
+                        continuation.resume()
                     }
-                    
-                    continuation.resume()
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
+    }
+    
+    /// Updates `tracks` after a DB/file rename so callers do not need `loadAllTracks()` (no loading spinner, minimal UI churn).
+    private func applyRenamedTrackInMemory(trackId: Int, newTitle: String, newRelativePath: String) {
+        guard let index = tracks.firstIndex(where: { $0.id == trackId }) else {
+            print("⚠️ [CollectionService] applyRenamedTrackInMemory: track \(trackId) not in memory")
+            return
+        }
+        let base = tracks[index]
+        let withRelativePath = Track(
+            id: base.id,
+            title: newTitle,
+            artist: base.artist,
+            album: base.album,
+            albumArtist: base.albumArtist,
+            composer: base.composer,
+            genre: base.genre,
+            year: base.year,
+            trackNumber: base.trackNumber,
+            discNumber: base.discNumber,
+            bpm: base.bpm,
+            path: newRelativePath,
+            isUrl: base.isUrl,
+            duration: base.duration,
+            timeMarkers: base.timeMarkers,
+            waveformData: base.waveformData,
+            rating: base.rating,
+            comment: base.comment,
+            generalTags: base.generalTags,
+            dateAdded: base.dateAdded
+        )
+        var updatedTracks = tracks
+        updatedTracks[index] = resolveTrackPath(withRelativePath)
+        tracks = updatedTracks.sorted()
     }
     
     /// Sanitizes a filename by removing invalid characters
