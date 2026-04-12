@@ -51,7 +51,12 @@ struct ContentView: View {
                             showingFolderPicker: $showingFolderPicker,
                             selectedItem: $selectedItem,
                             isImportingNewFolder: $isImportingNewFolder,
-                            initialLoadComplete: initialLoadComplete
+                            initialLoadComplete: initialLoadComplete,
+                            onPlaylistTracksChanged: {
+                                if let item = selectedItem {
+                                    Task { await loadPlaylistTracks(for: item) }
+                                }
+                            }
                         )
                     }
                 }
@@ -289,7 +294,12 @@ struct ContentView: View {
             
             switch item {
             case .playlist(let playlist):
-                trackPaths = playlist.trackPaths
+                // Prefer in-memory playlist from service so reloads reflect adds/removes without re-selecting.
+                if let fresh = playlistService.playlists.first(where: { $0.id == playlist.id }) {
+                    trackPaths = fresh.trackPaths
+                } else {
+                    trackPaths = playlist.trackPaths
+                }
                 itemName = playlist.name
             case .folder(let folder):
                 trackPaths = try await playlistService.getFolderTrackPaths(folderId: folder.id)

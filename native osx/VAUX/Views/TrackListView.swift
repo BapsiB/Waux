@@ -712,6 +712,10 @@ struct TrackListView: View {
     @ObservedObject var audioService: AudioService
     let tracksFilter: [Track]? // If provided, only show these tracks; otherwise show all tracks
     @ObservedObject var searchService: SearchService
+    @ObservedObject var playlistService: PlaylistService
+    /// When set, delete/backspace removes tracks from this playlist only (no trash confirmation).
+    let loadedPlaylistId: String?
+    let onPlaylistTracksChanged: (() -> Void)?
     @Binding var isImportingNewFolder: Bool
     let initialLoadComplete: Bool
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
@@ -738,11 +742,24 @@ struct TrackListView: View {
     private let visibleColumnsDefaultsKey = "TrackListView.visibleColumns"
     private let columnWidthsDefaultsKey = "TrackListView.columnWidths"
     
-    init(collectionService: CollectionService, audioService: AudioService, tracksFilter: [Track]? = nil, searchService: SearchService, isImportingNewFolder: Binding<Bool> = .constant(false), initialLoadComplete: Bool = false) {
+    init(
+        collectionService: CollectionService,
+        audioService: AudioService,
+        tracksFilter: [Track]? = nil,
+        searchService: SearchService,
+        playlistService: PlaylistService,
+        loadedPlaylistId: String? = nil,
+        onPlaylistTracksChanged: (() -> Void)? = nil,
+        isImportingNewFolder: Binding<Bool> = .constant(false),
+        initialLoadComplete: Bool = false
+    ) {
         self.collectionService = collectionService
         self.audioService = audioService
         self.tracksFilter = tracksFilter
         self.searchService = searchService
+        self.playlistService = playlistService
+        self.loadedPlaylistId = loadedPlaylistId
+        self.onPlaylistTracksChanged = onPlaylistTracksChanged
         self._isImportingNewFolder = isImportingNewFolder
         self.initialLoadComplete = initialLoadComplete
         self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
@@ -913,11 +930,7 @@ struct TrackListView: View {
                 collectionService: collectionService,
                 trackGroupService: trackGroupService,
                 onKeyPressBackspace: {
-                    let selectedTracksList = displayItems.filter { selectedDisplayItems.contains($0.id) }.map { $0.track }
-                    if !selectedTracksList.isEmpty {
-                        tracksToDelete = selectedTracksList
-                        showDeleteConfirmation = true
-                    }
+                    initiateDeleteSelectedTracks()
                 },
                 onColumnWidthChange: saveColumnWidths,
                 onGroupToggle: handleGroupToggle
@@ -944,11 +957,7 @@ struct TrackListView: View {
                     audioService.togglePlayPause()
                 },
                 onKeyPressBackspace: {
-                    let selectedTracksList = displayItems.filter { selectedDisplayItems.contains($0.id) }.map { $0.track }
-                    if !selectedTracksList.isEmpty {
-                        tracksToDelete = selectedTracksList
-                        showDeleteConfirmation = true
-                    }
+                    initiateDeleteSelectedTracks()
                 },
                 onGoToCurrentTrack: {
                     scrollToCurrentTrack()
@@ -962,7 +971,7 @@ struct TrackListView: View {
                 columnContextMenu()
             }
         }
-        .alert("Rating Update Error", isPresented: $showingRatingError) {
+        .alert("Error", isPresented: $showingRatingError) {
             Button("OK") { }
         } message: {
             Text(ratingErrorMessage)
@@ -1323,6 +1332,40 @@ struct TrackListView: View {
         return trackIds
     }
     
+    private func initiateDeleteSelectedTracks() {
+        let selectedTracksList = displayItems.filter { selectedDisplayItems.contains($0.id) }.map { $0.track }
+        guard !selectedTracksList.isEmpty else { return }
+        if loadedPlaylistId != nil {
+            removeSelectedTracksFromPlaylist(tracks: selectedTracksList)
+        } else {
+            tracksToDelete = selectedTracksList
+            showDeleteConfirmation = true
+        }
+    }
+    
+    private func removeSelectedTracksFromPlaylist(tracks: [Track]) {
+        guard let playlistId = loadedPlaylistId else { return }
+        var seenPaths = Set<String>()
+        let uniqueTracks = tracks.filter { seenPaths.insert($0.path).inserted }
+        Task {
+            do {
+                for track in uniqueTracks {
+                    try await playlistService.removeTrackFromPlaylist(playlistId: playlistId, absoluteTrackPath: track.path)
+                }
+                await MainActor.run {
+                    selectedDisplayItems.removeAll()
+                    onPlaylistTracksChanged?()
+                }
+            } catch {
+                print("❌ Failed to remove tracks from playlist: \(error)")
+                await MainActor.run {
+                    ratingErrorMessage = "Failed to remove from playlist: \(error.localizedDescription)"
+                    showingRatingError = true
+                }
+            }
+        }
+    }
+    
     private func deleteSelectedTracks() {
         guard !tracksToDelete.isEmpty else { return }
         
@@ -1443,12 +1486,8 @@ struct TrackListView: View {
             
             Divider()
             
-            Button("Move to Trash", role: .destructive) {
-                let selectedTracksList = displayItems.filter { selectedDisplayItems.contains($0.id) }.map { $0.track }
-                if !selectedTracksList.isEmpty {
-                    tracksToDelete = selectedTracksList
-                    showDeleteConfirmation = true
-                }
+            Button(loadedPlaylistId != nil ? "Remove from Playlist" : "Move to Trash", role: .destructive) {
+                initiateDeleteSelectedTracks()
             }
             
             // Only show "Refresh Data" for local files
@@ -1815,7 +1854,8 @@ struct TableWidthObserver: NSViewRepresentable {
     TrackListView(
         collectionService: collectionService,
         audioService: AudioService(),
-        searchService: SearchService()
+        searchService: SearchService(),
+        playlistService: PlaylistService()
     )
 }
 

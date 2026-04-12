@@ -269,18 +269,14 @@ class PlaylistService: ObservableObject {
         }
     }
     
-    private func loadPlaylistTracksSync(playlistId: String, db: OpaquePointer) throws -> [String] {
-        guard let activeCollection = activeCollectionDefinition else {
-            return []
-        }
-        
+    /// Raw `track_path` values as stored in SQLite (used for DELETE that must match exactly).
+    private func fetchRawPlaylistTrackPathsSync(playlistId: String, db: OpaquePointer) throws -> [String] {
         let query = """
             SELECT \(columnPlaylistTracksTrackPath) 
             FROM \(tablePlaylistTracks) 
             WHERE \(columnPlaylistTracksPlaylistId) = ? 
             ORDER BY \(columnPlaylistTracksSortOrder) ASC
         """
-        
         var statement: OpaquePointer?
         let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
         defer { sqlite3_finalize(statement) }
@@ -292,25 +288,42 @@ class PlaylistService: ObservableObject {
         
         sqlite3_bind_text(statement, 1, (playlistId as NSString).utf8String, -1, nil)
         
-        var trackPaths: [String] = []
-        
+        var rawPaths: [String] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            let storedPath = String(cString: sqlite3_column_text(statement, 0))
-            
-            // Resolve relative paths for shared collections
-            let resolvedPath: String
-            if activeCollection.type == .shared,
-               activeCollection.rootPath != nil,
-               URL(string: storedPath)?.scheme == nil {
-                resolvedPath = (activeCollection.rootPath! as NSString).appendingPathComponent(storedPath)
-            } else {
-                resolvedPath = storedPath
-            }
-            
-            trackPaths.append(resolvedPath)
+            rawPaths.append(String(cString: sqlite3_column_text(statement, 0)))
         }
-        
-        return trackPaths
+        return rawPaths
+    }
+    
+    /// Same resolution as when loading playlist tracks for the UI (keep in sync with removal matching).
+    private func resolveStoredPathForPlaylistDisplay(_ storedPath: String, activeCollection: CollectionDefinition) -> String {
+        if activeCollection.type == .shared,
+           activeCollection.rootPath != nil,
+           URL(string: storedPath)?.scheme == nil {
+            // Tracks outside the shared root are stored as absolute paths; do not prefix the collection root.
+            if storedPath.hasPrefix("/") {
+                return storedPath
+            }
+            return (activeCollection.rootPath! as NSString).appendingPathComponent(storedPath)
+        }
+        return storedPath
+    }
+    
+    /// Whether two paths refer to the same file (handles `/private` prefix, symlinks, Unicode normalization).
+    private func playlistRemovalPathsMatch(_ a: String, _ b: String) -> Bool {
+        if a == b { return true }
+        let u1 = URL(fileURLWithPath: a).resolvingSymlinksInPath().standardizedFileURL
+        let u2 = URL(fileURLWithPath: b).resolvingSymlinksInPath().standardizedFileURL
+        if u1.path == u2.path { return true }
+        return u1.path.precomposedStringWithCanonicalMapping == u2.path.precomposedStringWithCanonicalMapping
+    }
+    
+    private func loadPlaylistTracksSync(playlistId: String, db: OpaquePointer) throws -> [String] {
+        guard let activeCollection = activeCollectionDefinition else {
+            return []
+        }
+        let rawPaths = try fetchRawPlaylistTrackPathsSync(playlistId: playlistId, db: db)
+        return rawPaths.map { resolveStoredPathForPlaylistDisplay($0, activeCollection: activeCollection) }
     }
     
     private func loadPlaylistTracks(playlistId: String) async throws -> [String] {
@@ -544,20 +557,20 @@ class PlaylistService: ObservableObject {
         
         return try await withDatabaseQueue {
             let db = try self.getDatabaseConnection()
-            var pathToRemove = absoluteTrackPath
             
-            // Convert to relative path if it's a shared collection
-            if activeCollection.type == .shared,
-               activeCollection.rootPath != nil,
-               URL(string: absoluteTrackPath)?.scheme == nil {
-                let absoluteURL = URL(fileURLWithPath: absoluteTrackPath)
-                let rootURL = URL(fileURLWithPath: activeCollection.rootPath!)
-                
-                if absoluteURL.path.hasPrefix(rootURL.path) {
-                    pathToRemove = String(absoluteURL.path.dropFirst(rootURL.path.count + 1))
-                } else {
-                    pathToRemove = absoluteTrackPath
+            // Find the exact `track_path` row in SQLite (stored string may differ from `track.path`:
+            // relative vs absolute, /private/var vs /var, Unicode normalization, etc.). A plain DELETE
+            // with a recomputed path often matches 0 rows while sqlite3_step still returns SQLITE_DONE.
+            let rawPaths = try self.fetchRawPlaylistTrackPathsSync(playlistId: playlistId, db: db)
+            guard let rawToDelete = rawPaths.first(where: { raw in
+                let resolved = self.resolveStoredPathForPlaylistDisplay(raw, activeCollection: activeCollection)
+                return self.playlistRemovalPathsMatch(resolved, absoluteTrackPath)
+            }) else {
+                // Already removed (duplicate remove in one batch, double keypress, or racing reload).
+                await MainActor.run {
+                    self.syncInMemoryPlaylistRemove(playlistId: playlistId, absoluteTrackPath: absoluteTrackPath)
                 }
+                return ()
             }
             
             let query = """
@@ -575,7 +588,7 @@ class PlaylistService: ObservableObject {
             }
             
             sqlite3_bind_text(statement, 1, (playlistId as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(statement, 2, (pathToRemove as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(statement, 2, (rawToDelete as NSString).utf8String, -1, nil)
             
             let deleteResult = sqlite3_step(statement)
             if deleteResult != SQLITE_DONE {
@@ -583,17 +596,30 @@ class PlaylistService: ObservableObject {
                 throw PlaylistError.queryFailed(message: errorMessage)
             }
             
-            // Update local playlist
-            let finalPathToRemove = pathToRemove
-            await MainActor.run {
-                if let index = self.playlists.firstIndex(where: { $0.id == playlistId }) {
-                    self.playlists[index].removeTrack(finalPathToRemove)
+            let changed = Int(sqlite3_changes(db))
+            if changed == 0 {
+                await MainActor.run {
+                    self.syncInMemoryPlaylistRemove(playlistId: playlistId, absoluteTrackPath: absoluteTrackPath)
                 }
+                return ()
             }
             
-            print("Removed track '\(pathToRemove)' from playlist '\(playlistId)'")
+            await MainActor.run {
+                self.syncInMemoryPlaylistRemove(playlistId: playlistId, absoluteTrackPath: absoluteTrackPath)
+            }
+            
+            print("Removed track (raw DB path: '\(rawToDelete)') from playlist '\(playlistId)'")
             return ()
         }
+    }
+    
+    private func syncInMemoryPlaylistRemove(playlistId: String, absoluteTrackPath: String) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
+        var pl = playlists[index]
+        pl.trackPaths.removeAll { existing in
+            playlistRemovalPathsMatch(existing, absoluteTrackPath)
+        }
+        playlists[index] = pl
     }
     
     func renamePlaylist(playlistId: String, newName: String) async throws {

@@ -10,6 +10,8 @@ struct MainContentArea: View {
     @Binding var selectedItem: SelectableItem?
     @Binding var isImportingNewFolder: Bool
     let initialLoadComplete: Bool
+    /// Reload playlist (or folder) tracks after the playlist editor mutates the current playlist.
+    let onPlaylistTracksChanged: () -> Void
     @StateObject private var searchService = SearchService()
     @State private var showFolderView = false
     @StateObject private var folderManager = FolderHierarchyManager()
@@ -42,10 +44,16 @@ struct MainContentArea: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if !playlistTracks.isEmpty {
                         TrackListView(
-                            collectionService: collectionService, 
-                            audioService: audioService, 
+                            collectionService: collectionService,
+                            audioService: audioService,
                             tracksFilter: playlistTracks,
                             searchService: searchService,
+                            playlistService: playlistService,
+                            loadedPlaylistId: {
+                                if case .playlist(let p) = selectedItem { return p.id }
+                                return nil
+                            }(),
+                            onPlaylistTracksChanged: onPlaylistTracksChanged,
                             isImportingNewFolder: $isImportingNewFolder,
                             initialLoadComplete: initialLoadComplete
                         )
@@ -82,9 +90,10 @@ struct MainContentArea: View {
                         )
                     } else {
                         TrackListView(
-                            collectionService: collectionService, 
+                            collectionService: collectionService,
                             audioService: audioService,
                             searchService: searchService,
+                            playlistService: playlistService,
                             isImportingNewFolder: $isImportingNewFolder,
                             initialLoadComplete: initialLoadComplete
                         )
