@@ -12,6 +12,7 @@ struct ContentView: View {
     @StateObject private var audioService = AudioService()
     @StateObject private var collectionService = CollectionService()
     @StateObject private var playlistService = PlaylistService()
+    @StateObject private var trackGroupService = TrackGroupService()
     @StateObject private var preferenceService = PreferenceService.shared
     @State private var showingFolderPicker = false
     @State private var showingError = false
@@ -45,6 +46,7 @@ struct ContentView: View {
                         MainContentArea(
                             collectionService: collectionService,
                             playlistService: playlistService,
+                            trackGroupService: trackGroupService,
                             audioService: audioService,
                             playlistTracks: playlistTracks,
                             isLoadingPlaylistTracks: isLoadingPlaylistTracks,
@@ -236,9 +238,11 @@ struct ContentView: View {
                 databaseQueue: collectionService.databaseQueue,
                 collectionService: collectionService
             )
+            trackGroupService.setDatabase(collectionService.getDatabase(), databaseQueue: collectionService.databaseQueue)
             try await collectionService.loadAllTracks()
             try await playlistService.loadFolders()
             try await playlistService.loadPlaylists()
+            try await trackGroupService.loadGroups()
             await MainActor.run {
                 initialLoadComplete = true
                 previousTracks = collectionService.tracks
@@ -448,8 +452,9 @@ struct ContentView: View {
             try await collectionService.openCollection(definition)
             print("[OpenFolder] Collection opened")
             
-            // Set up playlist service with the same database, collection, and queue
+            // Set up playlist and track-group services with the same database, collection, and queue
             playlistService.setDatabase(collectionService.getDatabase(), collectionDefinition: definition, databaseQueue: collectionService.databaseQueue, collectionService: collectionService)
+            trackGroupService.setDatabase(collectionService.getDatabase(), databaseQueue: collectionService.databaseQueue)
             
             // If we just created a DB, import all audio files under the selected folder
             if dbAtRoot == nil {
@@ -472,6 +477,8 @@ struct ContentView: View {
             print("[OpenFolder] Folders loaded: \(playlistService.folders.count)")
             try await playlistService.loadPlaylists()
             print("[OpenFolder] Playlists loaded: \(playlistService.playlists.count)")
+            try await trackGroupService.loadGroups()
+            print("[OpenFolder] Track groups loaded: \(trackGroupService.groups.count)")
             
             // Mark initial load as complete
             await MainActor.run {

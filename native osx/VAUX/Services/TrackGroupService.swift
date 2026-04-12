@@ -131,7 +131,8 @@ class TrackGroupService: ObservableObject {
     
     // MARK: - Private Properties
     private var database: OpaquePointer?
-    private let databaseQueue = DispatchQueue(label: "com.vaux.trackgroup.database", qos: .userInitiated)
+    /// Must be `CollectionService.databaseQueue` when using the collection DB (single serial queue per connection).
+    private var serialAccessQueue: DispatchQueue?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     
     // MARK: - Performance Optimization Properties
@@ -158,10 +159,15 @@ class TrackGroupService: ObservableObject {
     }
     
     // MARK: - Database Setup
-    func setDatabase(_ database: OpaquePointer?) {
+    func setDatabase(_ database: OpaquePointer?, databaseQueue: DispatchQueue?) {
         self.database = database
-        // Clear prepared statements when database changes
+        self.serialAccessQueue = databaseQueue
         clearPreparedStatements()
+        if database == nil {
+            DispatchQueue.main.async { [weak self] in
+                self?.groups = []
+            }
+        }
     }
     
     // MARK: - Prepared Statement Management
@@ -827,7 +833,11 @@ class TrackGroupService: ObservableObject {
     /// - Parameter trackId: ID of the track to clean up
     private func cleanupTrackFromAllGroups(trackId: Int) async throws {
         return try await withCheckedThrowingContinuation { continuation in
-            databaseQueue.async { [weak self] in
+            guard let serialAccessQueue = self.serialAccessQueue else {
+                continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
+                return
+            }
+            serialAccessQueue.async { [weak self] in
                 guard let self = self, let database = self.database else {
                     continuation.resume(throwing: TrackGroupError.databaseError("Database not available"))
                     return
@@ -965,7 +975,11 @@ class TrackGroupService: ObservableObject {
     /// Validates that tracks exist in the database
     private func validateTracksExistInDatabase(_ trackIds: [Int]) async throws {
         return try await withCheckedThrowingContinuation { continuation in
-            databaseQueue.async { [weak self] in
+            guard let serialAccessQueue = self.serialAccessQueue else {
+                continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
+                return
+            }
+            serialAccessQueue.async { [weak self] in
                 guard let self = self, let database = self.database else {
                     continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
                     return
@@ -1034,7 +1048,7 @@ class TrackGroupService: ObservableObject {
     
     /// Validates database connection and state
     private func validateDatabaseConnection() throws {
-        guard database != nil else {
+        guard database != nil, serialAccessQueue != nil else {
             throw TrackGroupError.databaseConnectionLost
         }
     }
@@ -1115,7 +1129,11 @@ class TrackGroupService: ObservableObject {
     /// Reloads a specific group from database
     private func reloadGroupFromDatabase(_ groupId: String) async throws {
         return try await withCheckedThrowingContinuation { continuation in
-            databaseQueue.async { [weak self] in
+            guard let serialAccessQueue = self.serialAccessQueue else {
+                continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
+                return
+            }
+            serialAccessQueue.async { [weak self] in
                 guard let self = self, let database = self.database else {
                     continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
                     return
@@ -1191,7 +1209,11 @@ extension TrackGroupService {
     /// Saves a group to the database with enhanced error handling and validation
     private func saveGroupToDatabase(_ group: TrackGroup) async throws {
         return try await withCheckedThrowingContinuation { continuation in
-            databaseQueue.async { [weak self] in
+            guard let serialAccessQueue = self.serialAccessQueue else {
+                continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
+                return
+            }
+            serialAccessQueue.async { [weak self] in
                 guard let self = self, let database = self.database else {
                     continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
                     return
@@ -1317,7 +1339,11 @@ extension TrackGroupService {
     /// Deletes a group from the database
     private func deleteGroupFromDatabase(_ groupId: String) async throws {
         return try await withCheckedThrowingContinuation { continuation in
-            databaseQueue.async { [weak self] in
+            guard let serialAccessQueue = self.serialAccessQueue else {
+                continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
+                return
+            }
+            serialAccessQueue.async { [weak self] in
                 guard let self = self, let database = self.database else {
                     continuation.resume(throwing: TrackGroupError.databaseError("Database not available"))
                     return
@@ -1384,7 +1410,11 @@ extension TrackGroupService {
     /// Updates a group in the database
     private func updateGroupInDatabase(_ group: TrackGroup) async throws {
         return try await withCheckedThrowingContinuation { continuation in
-            databaseQueue.async { [weak self] in
+            guard let serialAccessQueue = self.serialAccessQueue else {
+                continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
+                return
+            }
+            serialAccessQueue.async { [weak self] in
                 guard let self = self, let database = self.database else {
                     continuation.resume(throwing: TrackGroupError.databaseError("Database not available"))
                     return
@@ -1487,7 +1517,11 @@ extension TrackGroupService {
     /// Updates only the main track for a group
     private func updateGroupMainTrackInDatabase(groupId: String, mainTrackId: Int) async throws {
         return try await withCheckedThrowingContinuation { continuation in
-            databaseQueue.async { [weak self] in
+            guard let serialAccessQueue = self.serialAccessQueue else {
+                continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
+                return
+            }
+            serialAccessQueue.async { [weak self] in
                 guard let self = self, let database = self.database else {
                     continuation.resume(throwing: TrackGroupError.databaseError("Database not available"))
                     return
@@ -1520,7 +1554,11 @@ extension TrackGroupService {
     /// Updates only the expansion state for a group
     private func updateGroupExpansionInDatabase(groupId: String, isExpanded: Bool) async throws {
         return try await withCheckedThrowingContinuation { continuation in
-            databaseQueue.async { [weak self] in
+            guard let serialAccessQueue = self.serialAccessQueue else {
+                continuation.resume(throwing: TrackGroupError.databaseConnectionLost)
+                return
+            }
+            serialAccessQueue.async { [weak self] in
                 guard let self = self, let database = self.database else {
                     continuation.resume(throwing: TrackGroupError.databaseError("Database not available"))
                     return
@@ -1553,7 +1591,11 @@ extension TrackGroupService {
     /// Loads all groups from the database
     private func loadGroupsFromDatabase() async throws -> [TrackGroup] {
         return try await withCheckedThrowingContinuation { continuation in
-            databaseQueue.async { [weak self] in
+            guard let serialAccessQueue = self.serialAccessQueue else {
+                continuation.resume(throwing: TrackGroupError.databaseError("Database not available"))
+                return
+            }
+            serialAccessQueue.async { [weak self] in
                 guard let self = self, let database = self.database else {
                     continuation.resume(throwing: TrackGroupError.databaseError("Database not available"))
                     return

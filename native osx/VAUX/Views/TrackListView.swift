@@ -720,7 +720,7 @@ struct TrackListView: View {
     let initialLoadComplete: Bool
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @StateObject private var metadataManager: TrackMetadataManager
-    @StateObject private var trackGroupService: TrackGroupService
+    @ObservedObject var trackGroupService: TrackGroupService
     @StateObject private var trackDisplayService: TrackDisplayService
     @State private var sortOrder = [KeyPathComparator(\TrackDisplayItem.track.title)]
     @State private var selectedDisplayItems = Set<TrackDisplayItem.ID>()
@@ -748,6 +748,7 @@ struct TrackListView: View {
         tracksFilter: [Track]? = nil,
         searchService: SearchService,
         playlistService: PlaylistService,
+        trackGroupService: TrackGroupService,
         loadedPlaylistId: String? = nil,
         onPlaylistTracksChanged: (() -> Void)? = nil,
         isImportingNewFolder: Binding<Bool> = .constant(false),
@@ -758,14 +759,13 @@ struct TrackListView: View {
         self.tracksFilter = tracksFilter
         self.searchService = searchService
         self.playlistService = playlistService
+        self._trackGroupService = ObservedObject(wrappedValue: trackGroupService)
         self.loadedPlaylistId = loadedPlaylistId
         self.onPlaylistTracksChanged = onPlaylistTracksChanged
         self._isImportingNewFolder = isImportingNewFolder
         self.initialLoadComplete = initialLoadComplete
         self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
-        let groupService = TrackGroupService()
-        self._trackGroupService = StateObject(wrappedValue: groupService)
-        self._trackDisplayService = StateObject(wrappedValue: TrackDisplayService(trackGroupService: groupService))
+        self._trackDisplayService = StateObject(wrappedValue: TrackDisplayService(trackGroupService: trackGroupService))
     }
     
 
@@ -1851,11 +1851,13 @@ struct TableWidthObserver: NSViewRepresentable {
 
 #Preview {
     let collectionService = CollectionService()
+    let trackGroupService = TrackGroupService()
     TrackListView(
         collectionService: collectionService,
         audioService: AudioService(),
         searchService: SearchService(),
-        playlistService: PlaylistService()
+        playlistService: PlaylistService(),
+        trackGroupService: trackGroupService
     )
 }
 

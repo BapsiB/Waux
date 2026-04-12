@@ -3,6 +3,7 @@ import SwiftUI
 struct MainContentArea: View {
     @ObservedObject var collectionService: CollectionService
     @ObservedObject var playlistService: PlaylistService
+    @ObservedObject var trackGroupService: TrackGroupService
     @ObservedObject var audioService: AudioService
     let playlistTracks: [Track]
     let isLoadingPlaylistTracks: Bool
@@ -49,6 +50,7 @@ struct MainContentArea: View {
                             tracksFilter: playlistTracks,
                             searchService: searchService,
                             playlistService: playlistService,
+                            trackGroupService: trackGroupService,
                             loadedPlaylistId: {
                                 if case .playlist(let p) = selectedItem { return p.id }
                                 return nil
@@ -94,6 +96,7 @@ struct MainContentArea: View {
                             audioService: audioService,
                             searchService: searchService,
                             playlistService: playlistService,
+                            trackGroupService: trackGroupService,
                             isImportingNewFolder: $isImportingNewFolder,
                             initialLoadComplete: initialLoadComplete
                         )

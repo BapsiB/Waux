@@ -62,7 +62,8 @@ class CollectionService: ObservableObject {
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     
     // MARK: - Thread Safety
-    let databaseQueue = DispatchQueue(label: "com.vaux.collection.database", qos: .userInitiated)
+    private let collectionDatabaseSession = CollectionDatabaseSession()
+    var databaseQueue: DispatchQueue { collectionDatabaseSession.queue }
     
     // MARK: - Auto backup (throttled snapshots in Application Support; waveforms stripped in copies)
     private var lastSuccessfulAutoBackupDate: Date?

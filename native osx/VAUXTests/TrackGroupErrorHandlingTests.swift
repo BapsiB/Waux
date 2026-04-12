@@ -8,6 +8,7 @@ class TrackGroupErrorHandlingTests: XCTestCase {
     private var service: TrackGroupService!
     private var database: OpaquePointer?
     private var testDatabasePath: String!
+    private let testDatabaseQueue = DispatchQueue(label: "com.vaux.tests.TrackGroupErrorHandlingTests")
     
     // MARK: - Test Setup and Teardown
     
@@ -26,7 +27,7 @@ class TrackGroupErrorHandlingTests: XCTestCase {
         
         // Initialize service
         service = TrackGroupService()
-        service.setDatabase(database)
+        service.setDatabase(database, databaseQueue: testDatabaseQueue)
         
         // Insert test tracks
         try insertTestTracks()
@@ -214,7 +215,7 @@ class TrackGroupErrorHandlingTests: XCTestCase {
     
     func testOperationsWithoutDatabaseConnection() async {
         // Close database connection
-        service.setDatabase(nil)
+        service.setDatabase(nil, databaseQueue: nil)
         
         // Test createGroup
         do {
@@ -313,7 +314,7 @@ class TrackGroupErrorHandlingTests: XCTestCase {
         
         // Create a fresh service to test loading
         let loadService = TrackGroupService()
-        loadService.setDatabase(database)
+        loadService.setDatabase(database, databaseQueue: testDatabaseQueue)
         
         // Load groups - should handle corrupted data gracefully
         try await loadService.loadGroups()
@@ -336,7 +337,7 @@ class TrackGroupErrorHandlingTests: XCTestCase {
         if let database = database {
             sqlite3_close(database)
             self.database = nil
-            service.setDatabase(nil)
+            service.setDatabase(nil, databaseQueue: nil)
         }
         
         do {
@@ -362,7 +363,7 @@ class TrackGroupErrorHandlingTests: XCTestCase {
         // Reopen database for direct modification
         let result = sqlite3_open(testDatabasePath, &database)
         XCTAssertEqual(result, SQLITE_OK)
-        service.setDatabase(database)
+        service.setDatabase(database, databaseQueue: testDatabaseQueue)
         
         let prepareResult = sqlite3_prepare_v2(database, updateSQL, -1, &statement, nil)
         XCTAssertEqual(prepareResult, SQLITE_OK)

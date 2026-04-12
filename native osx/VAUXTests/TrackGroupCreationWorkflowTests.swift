@@ -8,6 +8,7 @@ class TrackGroupCreationWorkflowTests: XCTestCase {
     private var service: TrackGroupService!
     private var database: OpaquePointer?
     private var testDatabasePath: String!
+    private let testDatabaseQueue = DispatchQueue(label: "com.vaux.tests.TrackGroupCreationWorkflowTests")
     
     // Test tracks
     private var testTracks: [Track] = []
@@ -29,7 +30,7 @@ class TrackGroupCreationWorkflowTests: XCTestCase {
         
         // Initialize service
         service = TrackGroupService()
-        service.setDatabase(database)
+        service.setDatabase(database, databaseQueue: testDatabaseQueue)
         
         // Insert test tracks
         try insertTestTracks()

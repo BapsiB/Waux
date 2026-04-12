@@ -8,6 +8,7 @@ class TrackDisplayServiceTests: XCTestCase {
     var trackDisplayService: TrackDisplayService!
     var sampleTracks: [Track]!
     var database: OpaquePointer?
+    private let testDatabaseQueue = DispatchQueue(label: "com.vaux.tests.TrackDisplayServiceTests")
     
     override func setUp() {
         super.setUp()
@@ -20,7 +21,7 @@ class TrackDisplayServiceTests: XCTestCase {
         createTestTables()
         
         trackGroupService = TrackGroupService()
-        trackGroupService.setDatabase(database)
+        trackGroupService.setDatabase(database, databaseQueue: testDatabaseQueue)
         trackDisplayService = TrackDisplayService(trackGroupService: trackGroupService)
         
         // Create sample tracks for testing

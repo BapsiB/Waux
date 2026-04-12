@@ -77,7 +77,7 @@ struct CollectionServiceTrackGroupIntegrationTests {
         try await collectionService.openCollection(definition)
         
         // Set database reference for track group service
-        trackGroupService.setDatabase(collectionService.getDatabase())
+        trackGroupService.setDatabase(collectionService.getDatabase(), databaseQueue: collectionService.databaseQueue)
         
         // Initially should have no groups
         let initialGroups = try await collectionService.loadTrackGroups()
@@ -98,7 +98,7 @@ struct CollectionServiceTrackGroupIntegrationTests {
         // Close and reopen collection to test persistence
         collectionService.closeCollection()
         try await collectionService.openCollection(definition)
-        trackGroupService.setDatabase(collectionService.getDatabase())
+        trackGroupService.setDatabase(collectionService.getDatabase(), databaseQueue: collectionService.databaseQueue)
         
         // Load groups and verify persistence
         let loadedGroups = try await collectionService.loadTrackGroups()

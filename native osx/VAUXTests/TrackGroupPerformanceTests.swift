@@ -10,6 +10,7 @@ class TrackGroupPerformanceTests: XCTestCase {
     private var collectionService: CollectionService!
     private var database: OpaquePointer?
     private var testDatabasePath: String!
+    private let testDatabaseQueue = DispatchQueue(label: "com.vaux.tests.TrackGroupPerformanceTests")
     
     // MARK: - Performance Test Configuration
     private let smallCollectionSize = 100
@@ -36,7 +37,7 @@ class TrackGroupPerformanceTests: XCTestCase {
         
         // Initialize services
         trackGroupService = TrackGroupService()
-        trackGroupService.setDatabase(database)
+        trackGroupService.setDatabase(database, databaseQueue: testDatabaseQueue)
         trackDisplayService = TrackDisplayService(trackGroupService: trackGroupService)
         
         print("🚀 Performance test setup complete")

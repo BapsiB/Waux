@@ -8,6 +8,7 @@ class TrackGroupServiceTests: XCTestCase {
     private var service: TrackGroupService!
     private var database: OpaquePointer?
     private var testDatabasePath: String!
+    private let testDatabaseQueue = DispatchQueue(label: "com.vaux.tests.TrackGroupServiceTests")
     
     // MARK: - Test Setup and Teardown
     
@@ -26,7 +27,7 @@ class TrackGroupServiceTests: XCTestCase {
         
         // Initialize service
         service = TrackGroupService()
-        service.setDatabase(database)
+        service.setDatabase(database, databaseQueue: testDatabaseQueue)
         
         // Insert test tracks
         try insertTestTracks()
@@ -490,7 +491,7 @@ class TrackGroupServiceTests: XCTestCase {
         
         // Create a fresh service instance to test loading
         let loadService = TrackGroupService()
-        loadService.setDatabase(database)
+        loadService.setDatabase(database, databaseQueue: testDatabaseQueue)
         
         // Load groups
         try await loadService.loadGroups()
@@ -702,7 +703,7 @@ class TrackGroupServiceTests: XCTestCase {
         if let database = database {
             sqlite3_close(database)
             self.database = nil
-            service.setDatabase(nil)
+            service.setDatabase(nil, databaseQueue: nil)
         }
         
         // Try to remove track - should get database error
