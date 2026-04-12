@@ -24,8 +24,6 @@ struct PlaylistSidebar: View {
     @State private var duplicatePlaylistName = ""
     @State private var parentFolderForNewFolder: PlaylistFolder?
     @State private var parentFolderForNewPlaylist: PlaylistFolder?
-    @State private var showingSnackbar = false
-    @State private var snackbarMessage = ""
     
     // Computed property to generate hierarchical items
     private var hierarchicalItems: [HierarchicalItem] {
@@ -262,20 +260,6 @@ struct PlaylistSidebar: View {
         } message: {
             Text(errorMessage)
         }
-        .overlay(
-            // Snackbar overlay
-            VStack {
-                Spacer()
-                
-                if showingSnackbar {
-                    SnackbarView(message: snackbarMessage) {
-                        showingSnackbar = false
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
-                }
-            }
-        )
         .onAppear {
             Task {
                 do {
@@ -528,11 +512,25 @@ struct PlaylistSidebar: View {
                             let result = try await playlistService.addTracksToPlaylist(playlistId: playlist.id, trackPaths: paths)
                             print("   - ✅ Finished adding tracks: \(result.newTracks) new, \(result.duplicateTracks) duplicates")
                             
-                            // Show snackbar only if there were duplicates
                             if result.duplicateTracks > 0 {
+                                let name = playlist.name
+                                let dup = result.duplicateTracks
+                                let new = result.newTracks
+                                let message: String
+                                if new > 0 {
+                                    let added = new == 1 ? "1 track" : "\(new) tracks"
+                                    if dup == 1 {
+                                        message = "Added \(added). One was already in \"\(name)\"."
+                                    } else {
+                                        message = "Added \(added). \(dup) were already in \"\(name)\"."
+                                    }
+                                } else if dup == 1 {
+                                    message = "That track was already in \"\(name)\""
+                                } else {
+                                    message = "\(dup) tracks were already in \"\(name)\""
+                                }
                                 await MainActor.run {
-                                    snackbarMessage = "\(result.duplicateTracks) tracks were already in \(playlist.name)"
-                                    showingSnackbar = true
+                                    playlistService.showSnackbar(message: message)
                                 }
                             }
                         } catch {

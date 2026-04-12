@@ -318,6 +318,19 @@ class PlaylistService: ObservableObject {
         return u1.path.precomposedStringWithCanonicalMapping == u2.path.precomposedStringWithCanonicalMapping
     }
     
+    /// True if the playlist already lists this file (uses the same path resolution as removal).
+    private func playlistAlreadyContainsAbsoluteTrack(playlistId: String, absoluteTrackPath: String, db: OpaquePointer) throws -> Bool {
+        guard let activeCollection = activeCollectionDefinition else { return false }
+        let rawPaths = try fetchRawPlaylistTrackPathsSync(playlistId: playlistId, db: db)
+        for raw in rawPaths {
+            let resolved = resolveStoredPathForPlaylistDisplay(raw, activeCollection: activeCollection)
+            if playlistRemovalPathsMatch(resolved, absoluteTrackPath) {
+                return true
+            }
+        }
+        return false
+    }
+    
     private func loadPlaylistTracksSync(playlistId: String, db: OpaquePointer) throws -> [String] {
         guard let activeCollection = activeCollectionDefinition else {
             return []
@@ -434,6 +447,12 @@ class PlaylistService: ObservableObject {
         
         return try await withDatabaseQueue {
             let db = try self.getDatabaseConnection()
+            
+            if try self.playlistAlreadyContainsAbsoluteTrack(playlistId: playlistId, absoluteTrackPath: absoluteTrackPath, db: db) {
+                print("Track '\(absoluteTrackPath)' already in playlist '\(playlistId)' (resolved match)")
+                return false
+            }
+            
             var pathToAdd = absoluteTrackPath
             
             // Convert to relative path if it's a shared collection and the path is within its root
@@ -448,29 +467,6 @@ class PlaylistService: ObservableObject {
                 } else {
                     print("Warning: Track path '\(absoluteTrackPath)' is not within shared root '\(activeCollection.rootPath!)'. Storing absolute path in playlist.")
                     pathToAdd = absoluteTrackPath
-                }
-            }
-            
-            // Check if track already exists in this playlist
-            let checkQuery = """
-                SELECT COUNT(*) FROM \(self.tablePlaylistTracks) 
-                WHERE \(self.columnPlaylistTracksPlaylistId) = ? AND \(self.columnPlaylistTracksTrackPath) = ?
-            """
-            var checkStatement: OpaquePointer?
-            
-            let checkResult = sqlite3_prepare_v2(db, checkQuery, -1, &checkStatement, nil)
-            defer { sqlite3_finalize(checkStatement) }
-            
-            if checkResult == SQLITE_OK {
-                sqlite3_bind_text(checkStatement, 1, (playlistId as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(checkStatement, 2, (pathToAdd as NSString).utf8String, -1, nil)
-                
-                if sqlite3_step(checkStatement) == SQLITE_ROW {
-                    let count = sqlite3_column_int(checkStatement, 0)
-                    if count > 0 {
-                        print("Track '\(pathToAdd)' already in playlist '\(playlistId)'")
-                        return false // Track was already present (duplicate)
-                    }
                 }
             }
             
