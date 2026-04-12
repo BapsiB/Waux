@@ -425,7 +425,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 12.4;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.5;
 				MODULE_CACHE_DIR = "$(PROJECT_TEMP_DIR)/ModuleCache";
 				PRODUCT_BUNDLE_IDENTIFIER = com.vaux.audio.VAUX;
@@ -459,7 +459,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 12.4;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.5;
 				MODULE_CACHE_DIR = "$(PROJECT_TEMP_DIR)/ModuleCache";
 				PRODUCT_BUNDLE_IDENTIFIER = com.vaux.audio.VAUX;

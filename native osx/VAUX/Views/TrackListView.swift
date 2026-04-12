@@ -72,6 +72,12 @@ enum TrackColumn: String, CaseIterable, Hashable {
         case .dateAdded: return "Date Added"
         }
     }
+
+    /// Columns implemented in `TrackTable` (gear menu only lists these so toggles match real columns).
+    /// Columns in the main track table (SwiftUI `TableColumnBuilder` supports at most 10 columns here).
+    static let trackListTableColumns: [TrackColumn] = [
+        .waveformData, .title, .artist, .album, .duration, .rating, .dateAdded, .generalTags, .type,
+    ]
 }
 
 struct TrackTable: View {
@@ -79,6 +85,7 @@ struct TrackTable: View {
     @Binding var selectedTracks: Set<TrackDisplayItem.ID>
     @Binding var sortOrder: [KeyPathComparator<TrackDisplayItem>]
     @Binding var visibleColumns: Set<TrackColumn>
+    @Binding var columnCustomization: TableColumnCustomization<TrackDisplayItem>
     @Binding var columnWidths: [TrackColumn: CGFloat]
     @Binding var isTextFieldFocused: Bool
     @FocusState var isTableFocused: Bool
@@ -92,121 +99,65 @@ struct TrackTable: View {
     let onGroupToggle: (String) -> Void
     
     var body: some View {
-        Table(displayItems, selection: $selectedTracks, sortOrder: $sortOrder) {
-            // Drag handle column - always visible and first
-            // Use a small settings icon in the header to represent the columns menu
+        Table(displayItems, selection: $selectedTracks, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
             TableColumn("⚙︎") { (displayItem: TrackDisplayItem) in
                 dragHandle(for: displayItem)
             }
             .width(24)
             
-            // Waveform column - always visible and second
             TableColumn("Waveform", value: \.track.waveformPointCount) { displayItem in
-                let p = WaveformColumn.playbackParameters(track: displayItem.track, audioService: audioService)
-                WaveformColumn(
-                    track: displayItem.track,
-                    playbackProgress: p.progress,
-                    isPlayingThisTrack: p.isPlayingThisTrack,
-                    highDetailWaveform: p.highDetailWaveform,
-                    audioService: audioService,
-                    waveformServiceHolder: waveformServiceHolder,
-                    collectionService: collectionService
-                )
-                .id("waveform-\(displayItem.track.id ?? -1)-\(displayItem.track.waveformPointCount)")
-                .help(tooltipForDisplayItem(displayItem))
-                .background(backgroundForDisplayItem(displayItem))
+                waveformTableCell(for: displayItem)
             }
             .width(min: 120, ideal: columnWidths[.waveformData] ?? 160, max:200)
+            .customizationID(TrackColumn.waveformData.rawValue)
             
             TableColumn("Title", value: \.track.title) { displayItem in
                 titleCell(for: displayItem)
             }
             .width(min: 150, ideal: columnWidths[.title] ?? 250)
+            .customizationID(TrackColumn.title.rawValue)
             
-            // Note: Conditional columns removed for macOS 13 compatibility
-            // All columns are now always visible
             TableColumn("Artist", value: \.track.artist) { displayItem in
-                EditableTrackCell(
-                    text: displayItem.track.artist,
-                    track: displayItem.track,
-                    property: "artist",
-                    isSelected: selectedTracks.contains(displayItem.id),
-                    metadataManager: metadataManager,
-                    onDoubleClick: nil
-                )
-                    .padding(.vertical, 2)
-                    .background(backgroundForDisplayItem(displayItem))
-                    .cornerRadius(4)
+                artistTableCell(for: displayItem)
             }
             .width(min: 100, ideal: columnWidths[.artist] ?? 150)
+            .customizationID(TrackColumn.artist.rawValue)
             
             TableColumn("Album", value: \.track.album) { displayItem in
-                EditableTrackCell(
-                    text: displayItem.track.album,
-                    track: displayItem.track,
-                    property: "album",
-                    isSelected: selectedTracks.contains(displayItem.id),
-                    metadataManager: metadataManager,
-                    onDoubleClick: nil
-                )
-                    .padding(.vertical, 2)
-                    .background(backgroundForDisplayItem(displayItem))
-                    .cornerRadius(4)
+                albumTableCell(for: displayItem)
             }
             .width(min: 100, ideal: columnWidths[.album] ?? 120)
+            .customizationID(TrackColumn.album.rawValue)
             
             TableColumn("Duration", value: \.track.formattedDuration) { displayItem in
-                Text(displayItem.track.formattedDuration)
-                    .padding(.vertical, 2)
-                    .background(backgroundForDisplayItem(displayItem))
-                    .cornerRadius(4)
+                durationTableCell(for: displayItem)
             }
             .width(min: 5, ideal: 10, max:80)
+            .customizationID(TrackColumn.duration.rawValue)
             
             TableColumn("Rating", value: \.track.rating) { displayItem in
-                ratingCell(for: displayItem)
-                    .padding(.vertical, 2)
-                    .background(backgroundForDisplayItem(displayItem))
-                    .cornerRadius(4)
+                ratingTableCell(for: displayItem)
             }
             .width(min: 60, ideal: columnWidths[.rating] ?? 70, max: 100)
+            .customizationID(TrackColumn.rating.rawValue)
             
             TableColumn("Date Added", value: \.track.dateAddedSortValue) { displayItem in
-                Text(displayItem.track.formattedDateAdded)
-                    .padding(.vertical, 2)
-                    .background(backgroundForDisplayItem(displayItem))
-                    .cornerRadius(4)
+                dateAddedTableCell(for: displayItem)
             }
             .width(min: 120, ideal: columnWidths[.dateAdded] ?? 140)
-            
-            TableColumn("Composer", value: \.track.composerText) { displayItem in
-                EditableTrackCell(
-                    text: displayItem.track.composerText,
-                    track: displayItem.track,
-                    property: "composer",
-                    isSelected: selectedTracks.contains(displayItem.id),
-                    metadataManager: metadataManager,
-                    onDoubleClick: nil
-                )
-                    .padding(.vertical, 2)
-                    .background(backgroundForDisplayItem(displayItem))
-                    .cornerRadius(4)
-            }
-            .width(min: 100, ideal: columnWidths[.composer] ?? 150)
+            .customizationID(TrackColumn.dateAdded.rawValue)
             
             TableColumn("Tags", value: \.track.generalTags.count) { displayItem in
-                if let trackId = displayItem.track.id {
-                    InteractiveTagsView_New(
-                        trackId: trackId,
-                        metadataManager: metadataManager,
-                        isTextFieldFocused: $isTextFieldFocused
-                    )
-                    .padding(.vertical, 2)
-                    .background(backgroundForDisplayItem(displayItem))
-                    .cornerRadius(4)
-                }
+                tagsTableCell(for: displayItem)
             }
             .width(min: 120, ideal: columnWidths[.generalTags] ?? 200, max:600)
+            .customizationID(TrackColumn.generalTags.rawValue)
+            
+            TableColumn("Type", value: \.track.sourceType.rawValue) { displayItem in
+                typeTableCell(for: displayItem)
+            }
+            .width(min: 72, ideal: columnWidths[.type] ?? 100, max: 160)
+            .customizationID(TrackColumn.type.rawValue)
         }
         .tableStyle(.bordered)
         .focusable()
@@ -222,6 +173,93 @@ struct TrackTable: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 isTableFocused = true
             }
+        }
+    }
+    
+    @ViewBuilder
+    private func waveformTableCell(for displayItem: TrackDisplayItem) -> some View {
+        let p = WaveformColumn.playbackParameters(track: displayItem.track, audioService: audioService)
+        WaveformColumn(
+            track: displayItem.track,
+            playbackProgress: p.progress,
+            isPlayingThisTrack: p.isPlayingThisTrack,
+            highDetailWaveform: p.highDetailWaveform,
+            audioService: audioService,
+            waveformServiceHolder: waveformServiceHolder,
+            collectionService: collectionService
+        )
+        .id("waveform-\(displayItem.track.id ?? -1)-\(displayItem.track.waveformPointCount)")
+        .help(tooltipForDisplayItem(displayItem))
+        .background(backgroundForDisplayItem(displayItem))
+    }
+    
+    private func artistTableCell(for displayItem: TrackDisplayItem) -> some View {
+        EditableTrackCell(
+            text: displayItem.track.artist,
+            track: displayItem.track,
+            property: "artist",
+            isSelected: selectedTracks.contains(displayItem.id),
+            metadataManager: metadataManager,
+            onDoubleClick: nil
+        )
+            .padding(.vertical, 2)
+            .background(backgroundForDisplayItem(displayItem))
+            .cornerRadius(4)
+    }
+    
+    private func albumTableCell(for displayItem: TrackDisplayItem) -> some View {
+        EditableTrackCell(
+            text: displayItem.track.album,
+            track: displayItem.track,
+            property: "album",
+            isSelected: selectedTracks.contains(displayItem.id),
+            metadataManager: metadataManager,
+            onDoubleClick: nil
+        )
+            .padding(.vertical, 2)
+            .background(backgroundForDisplayItem(displayItem))
+            .cornerRadius(4)
+    }
+    
+    private func durationTableCell(for displayItem: TrackDisplayItem) -> some View {
+        Text(displayItem.track.formattedDuration)
+            .padding(.vertical, 2)
+            .background(backgroundForDisplayItem(displayItem))
+            .cornerRadius(4)
+    }
+    
+    private func ratingTableCell(for displayItem: TrackDisplayItem) -> some View {
+        ratingCell(for: displayItem)
+            .padding(.vertical, 2)
+            .background(backgroundForDisplayItem(displayItem))
+            .cornerRadius(4)
+    }
+    
+    private func dateAddedTableCell(for displayItem: TrackDisplayItem) -> some View {
+        Text(displayItem.track.formattedDateAdded)
+            .padding(.vertical, 2)
+            .background(backgroundForDisplayItem(displayItem))
+            .cornerRadius(4)
+    }
+    
+    private func typeTableCell(for displayItem: TrackDisplayItem) -> some View {
+        typeCell(for: displayItem.track)
+            .padding(.vertical, 2)
+            .background(backgroundForDisplayItem(displayItem))
+            .cornerRadius(4)
+    }
+    
+    @ViewBuilder
+    private func tagsTableCell(for displayItem: TrackDisplayItem) -> some View {
+        if let trackId = displayItem.track.id {
+            InteractiveTagsView_New(
+                trackId: trackId,
+                metadataManager: metadataManager,
+                isTextFieldFocused: $isTextFieldFocused
+            )
+            .padding(.vertical, 2)
+            .background(backgroundForDisplayItem(displayItem))
+            .cornerRadius(4)
         }
     }
     
@@ -401,7 +439,7 @@ struct TrackTable: View {
                 }
                 .contextMenu {
                     // Column visibility controls when right-clicking the drag handle
-                    ForEach(TrackColumn.allCases, id: \.self) { column in
+                    ForEach(TrackColumn.trackListTableColumns, id: \.self) { column in
                         Button {
                             if visibleColumns.contains(column) {
                                 // Always keep title and waveform columns visible
@@ -424,7 +462,7 @@ struct TrackTable: View {
                     }
                     Divider()
                     Button("Show All Columns") {
-                        visibleColumns = Set(TrackColumn.allCases)
+                        visibleColumns = Set(TrackColumn.trackListTableColumns)
                     }
                     Button("Show Default Columns") {
                         visibleColumns = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
@@ -449,7 +487,7 @@ struct TrackTable: View {
                 }
                 .contextMenu {
                     // Column visibility controls when right-clicking the drag handle
-                    ForEach(TrackColumn.allCases, id: \.self) { column in
+                    ForEach(TrackColumn.trackListTableColumns, id: \.self) { column in
                         Button {
                             if visibleColumns.contains(column) {
                                 // Always keep title and waveform columns visible
@@ -472,7 +510,7 @@ struct TrackTable: View {
                     }
                     Divider()
                     Button("Show All Columns") {
-                        visibleColumns = Set(TrackColumn.allCases)
+                        visibleColumns = Set(TrackColumn.trackListTableColumns)
                     }
                     Button("Show Default Columns") {
                         visibleColumns = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
@@ -727,7 +765,10 @@ struct TrackListView: View {
     @State private var displayItems: [TrackDisplayItem] = []
     @State private var showingRatingError = false
     @State private var ratingErrorMessage = ""
-    @State private var visibleColumns: Set<TrackColumn> = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
+    private static let defaultVisibleTrackColumns: Set<TrackColumn> = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
+    
+    @State private var visibleColumns: Set<TrackColumn> = Self.defaultVisibleTrackColumns
+    @State private var tableColumnCustomization: TableColumnCustomization<TrackDisplayItem> = Self.tableCustomization(matching: Self.defaultVisibleTrackColumns)
     @State private var showTagEditor = false
     @State private var showMetadataEditor = false
     @State private var columnWidths: [TrackColumn: CGFloat] = [:]
@@ -919,6 +960,7 @@ struct TrackListView: View {
                 selectedTracks: $selectedDisplayItems,
                 sortOrder: $sortOrder,
                 visibleColumns: $visibleColumns,
+                columnCustomization: $tableColumnCustomization,
                 columnWidths: $columnWidths,
                 isTextFieldFocused: Binding(
                     get: { isTextFieldFocused },
@@ -1021,6 +1063,14 @@ struct TrackListView: View {
         .onAppear(perform: loadPreferences)
         .onChange(of: visibleColumns) { _ in
             saveVisibleColumns()
+            tableColumnCustomization = Self.tableCustomization(matching: visibleColumns)
+        }
+        .onChange(of: tableColumnCustomization) { _, newValue in
+            let derived = Self.visibleColumns(from: newValue)
+            if derived != visibleColumns {
+                visibleColumns = derived
+                saveVisibleColumns()
+            }
         }
         .onChange(of: filteredTracks) { _ in
             // Update display items when tracks change
@@ -1566,7 +1616,7 @@ struct TrackListView: View {
     @ViewBuilder
     private func columnContextMenu() -> some View {
         // Column visibility only
-        ForEach(TrackColumn.allCases, id: \.self) { column in
+        ForEach(TrackColumn.trackListTableColumns, id: \.self) { column in
             Button {
                 if visibleColumns.contains(column) {
                     // Always keep title and waveform columns visible
@@ -1589,7 +1639,7 @@ struct TrackListView: View {
         }
         Divider()
         Button("Show All Columns") {
-            visibleColumns = Set(TrackColumn.allCases)
+            visibleColumns = Set(TrackColumn.trackListTableColumns)
         }
         Button("Show Default Columns") {
             visibleColumns = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
@@ -1660,6 +1710,29 @@ struct TrackListView: View {
     
     // MARK: - Column Width Persistence
     
+    private static func tableCustomization(matching visible: Set<TrackColumn>) -> TableColumnCustomization<TrackDisplayItem> {
+        var c = TableColumnCustomization<TrackDisplayItem>()
+        for col in TrackColumn.trackListTableColumns {
+            switch col {
+            case .waveformData, .title:
+                c[visibility: col.rawValue] = .visible
+            default:
+                c[visibility: col.rawValue] = visible.contains(col) ? .visible : .hidden
+            }
+        }
+        return c
+    }
+    
+    private static func visibleColumns(from customization: TableColumnCustomization<TrackDisplayItem>) -> Set<TrackColumn> {
+        var result: Set<TrackColumn> = [.waveformData, .title]
+        for col in TrackColumn.trackListTableColumns where col != .waveformData && col != .title {
+            if customization[visibility: col.rawValue] != .hidden {
+                result.insert(col)
+            }
+        }
+        return result
+    }
+    
     private func loadPreferences() {
         print("🔧 [TrackListView] Loading preferences...")
         guard !hasLoadedPreferences else { 
@@ -1668,12 +1741,14 @@ struct TrackListView: View {
         }
         hasLoadedPreferences = true
         
-        // Visible columns
+        // Visible columns (normalize to columns that exist in the table; always include title + waveform)
         if let stored = UserDefaults.standard.stringArray(forKey: visibleColumnsDefaultsKey) {
-            let set = Set(stored.compactMap { TrackColumn(rawValue: $0) })
-            if !set.isEmpty {
-                visibleColumns = set
-                print("🔧 [TrackListView] Loaded visible columns: \(set.map { $0.displayName })")
+            let parsed = Set(stored.compactMap { TrackColumn(rawValue: $0) })
+            if !parsed.isEmpty {
+                let allowed = Set(TrackColumn.trackListTableColumns)
+                visibleColumns = parsed.intersection(allowed).union([.waveformData, .title])
+                tableColumnCustomization = Self.tableCustomization(matching: visibleColumns)
+                print("🔧 [TrackListView] Loaded visible columns: \(visibleColumns.map { $0.displayName })")
             } else {
                 print("🔧 [TrackListView] No valid visible columns found in stored data: \(stored)")
             }
