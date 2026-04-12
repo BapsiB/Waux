@@ -964,8 +964,7 @@ struct HierarchicalItemView: View {
                     onDuplicate: { onPlaylistDuplicate(playlist) },
                     onExport: { onPlaylistExport(playlist) },
                     onDelete: { onPlaylistDelete(playlist) },
-                    onDrop: { providers in onDrop(providers, playlist) },
-                    draggedOver: draggedOver
+                    onDrop: { providers in onDrop(providers, playlist) }
                 )
                 .onDrag {
                     print("🧲 [SidebarDrag] onDrag begin (kind=playlist, id=\(playlist.id))")
@@ -973,9 +972,6 @@ struct HierarchicalItemView: View {
                         DragStateManager.shared.beginPlaylistDrag()
                     }
                     return NSItemProvider(object: "playlist:\(playlist.id)" as NSString)
-                }
-                .onDrop(of: [UTType.plainText], isTargeted: $draggedOver) { providers in
-                    handlePlaylistDrop(providers: providers, targetPlaylist: playlist)
                 }
                 .onHover { hovering in
                     if hovering {
@@ -1049,48 +1045,6 @@ struct HierarchicalItemView: View {
             }
         }
         return false
-    }
-    
-    private func handlePlaylistDrop(providers: [NSItemProvider], targetPlaylist: Playlist) -> Bool {
-        // First check if this is a drag-and-drop of playlists/folders (for organization)
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-                _ = provider.loadObject(ofClass: NSString.self) { object, error in
-                    guard let dragData = object as? String else { 
-                        // If it's not drag data, fall back to the existing file drop handler
-                        return
-                    }
-                    
-                    Task { @MainActor in
-                        do {
-                            if dragData.hasPrefix("playlist:") {
-                                let playlistId = String(dragData.dropFirst("playlist:".count))
-                                // Validate that playlist exists and is not the same as target
-                                if let playlist = playlistService.playlists.first(where: { $0.id == playlistId }),
-                                   playlistId != targetPlaylist.id,
-                                   playlist.folderId != targetPlaylist.folderId {
-                                    try await playlistService.movePlaylistToFolder(playlistId: playlistId, folderId: targetPlaylist.folderId)
-                                }
-                            } else if dragData.hasPrefix("folder:") {
-                                let folderId = String(dragData.dropFirst("folder:".count))
-                                // Validate that folder exists and prevent invalid moves
-                                if let folder = playlistService.folders.first(where: { $0.id == folderId }),
-                                   folder.parentFolderId != targetPlaylist.folderId {
-                                    try await playlistService.moveFolderToFolder(folderId: folderId, parentFolderId: targetPlaylist.folderId)
-                                }
-                            }
-                        } catch {
-                            print("Error handling playlist drop: \(error)")
-                            // Error handling should be done at the parent level
-                        }
-                    }
-                }
-                return true
-            }
-        }
-        
-        // Fall back to existing file drop handler
-        return onDrop(providers, targetPlaylist)
     }
 }
 
@@ -1250,10 +1204,14 @@ struct PlaylistItemView: View {
     let onExport: () -> Void
     let onDelete: () -> Void
     let onDrop: ([NSItemProvider]) -> Bool
-    let draggedOver: Bool
     
     @State private var scale: CGFloat = 1.0
     @State private var localDraggedOver: Bool = false
+    @ObservedObject private var dragState = DragStateManager.shared
+    
+    private var showDropHighlight: Bool {
+        localDraggedOver && !dragState.isOrganizationalDrag
+    }
     
     var body: some View {
         HStack(spacing: 8) {
@@ -1288,13 +1246,13 @@ struct PlaylistItemView: View {
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            localDraggedOver ? Color.green.opacity(0.2) : Color.clear
+            showDropHighlight ? Color.green.opacity(0.2) : Color.clear
         )
         .overlay(
-            localDraggedOver ?
+            showDropHighlight ?
             RoundedRectangle(cornerRadius: 4)
                 .stroke(Color.green, lineWidth: 2)
-                .animation(.easeInOut(duration: 0.2), value: localDraggedOver)
+                .animation(.easeInOut(duration: 0.2), value: showDropHighlight)
             : nil
         )
         .contentShape(Rectangle())
@@ -1303,9 +1261,12 @@ struct PlaylistItemView: View {
         }
         .scaleEffect(scale)
         .onDrop(of: [UTType.plainText], isTargeted: $localDraggedOver) { providers in
-            // Clear drag overlay immediately
             localDraggedOver = false
-            
+            // Playlists accept track drops only; organizational moves use folder (or root) drop targets.
+            if dragState.isOrganizationalDrag {
+                DragStateManager.shared.reset()
+                return false
+            }
             let result = onDrop(providers)
             if result {
                 triggerBounceAnimation()
