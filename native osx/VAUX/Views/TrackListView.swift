@@ -95,6 +95,7 @@ struct TrackTable: View {
     @ObservedObject var collectionService: CollectionService
     @ObservedObject var trackGroupService: TrackGroupService
     let onKeyPressBackspace: () -> Void
+    let onKeyPressSpace: () -> Void
     let onColumnWidthChange: () -> Void
     let onGroupToggle: (String) -> Void
     
@@ -167,6 +168,13 @@ struct TrackTable: View {
             if !isTextFieldFocused && isTableFocused && !selectedTracks.isEmpty {
                 onKeyPressBackspace()
             }
+        }
+        .onKeyPress(.space) {
+            // `SwiftUIOutlineTableView` applies Space after key handling; returning `.handled` here
+            // suppresses that default (which was updating `selection` even when an `NSEvent` monitor consumed the key).
+            guard !isTextFieldFocused else { return .ignored }
+            onKeyPressSpace()
+            return .handled
         }
         .onAppear {
             // Set focus to the table when it appears to ensure it can receive keyboard events
@@ -952,7 +960,6 @@ struct TrackListView: View {
     }
     
     var body: some View {
-        let _ = print("🎨 [TrackListView] Body view rendering - columnWidths: \(columnWidths.map { "\($0.key.displayName): \($0.value)" })")
         
         VStack {
             TrackTable(
@@ -974,6 +981,9 @@ struct TrackListView: View {
                 onKeyPressBackspace: {
                     initiateDeleteSelectedTracks()
                 },
+                onKeyPressSpace: {
+                    audioService.togglePlayPause()
+                },
                 onColumnWidthChange: saveColumnWidths,
                 onGroupToggle: handleGroupToggle
             )
@@ -994,9 +1004,6 @@ struct TrackListView: View {
                 },
                 onKeyPressA: {
                     selectedDisplayItems = Set(displayItems.map { $0.id })
-                },
-                onKeyPressSpace: {
-                    audioService.togglePlayPause()
                 },
                 onKeyPressBackspace: {
                     initiateDeleteSelectedTracks()
@@ -1983,7 +1990,6 @@ struct TableSelectionHandler: NSViewRepresentable {
     let displayItems: [TrackDisplayItem]
     let onRowDoubleClick: (Track) -> Void
     let onKeyPressA: () -> Void
-    let onKeyPressSpace: () -> Void
     let onKeyPressBackspace: () -> Void
     let onGoToCurrentTrack: () -> Void
     
@@ -1992,7 +1998,6 @@ struct TableSelectionHandler: NSViewRepresentable {
         view.displayItems = displayItems
         view.onRowDoubleClick = onRowDoubleClick
         view.onKeyPressA = onKeyPressA
-        view.onKeyPressSpace = onKeyPressSpace
         view.onKeyPressBackspace = onKeyPressBackspace
         view.onGoToCurrentTrack = onGoToCurrentTrack
         return view
@@ -2003,7 +2008,6 @@ struct TableSelectionHandler: NSViewRepresentable {
             view.displayItems = displayItems
             view.onRowDoubleClick = onRowDoubleClick
             view.onKeyPressA = onKeyPressA
-            view.onKeyPressSpace = onKeyPressSpace
             view.onKeyPressBackspace = onKeyPressBackspace
             view.onGoToCurrentTrack = onGoToCurrentTrack
             view.hasSelection = !selectedDisplayItems.isEmpty
@@ -2019,7 +2023,6 @@ class TableSelectionView: NSView {
     var displayItems: [TrackDisplayItem] = []
     var onRowDoubleClick: ((Track) -> Void)?
     var onKeyPressA: (() -> Void)?
-    var onKeyPressSpace: (() -> Void)?
     var onKeyPressBackspace: (() -> Void)?
     var onGoToCurrentTrack: (() -> Void)?
     var hasSelection = false
@@ -2073,26 +2076,35 @@ class TableSelectionView: NSView {
         tableView.allowsTypeSelect = false
     }
     
+    /// True when keyboard focus is on the track table or an embedded row view (used for ⌘A / delete / ⌘L).
+    private func firstResponderIsInTrackTable(_ tableView: NSTableView, firstResponder: NSResponder?) -> Bool {
+        if firstResponder === tableView || firstResponder === tableView.enclosingScrollView {
+            return true
+        }
+        var r: NSResponder? = firstResponder
+        while let view = r as? NSView {
+            if view === tableView { return true }
+            r = view.superview
+        }
+        return false
+    }
+    
     private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        let key = event.charactersIgnoringModifiers ?? ""
+
         guard let window = self.window, window === event.window else { return event }
         guard let tableView = findTableView(in: window.contentView) else { return event }
-        
+
         let fr = window.firstResponder
         if fr is NSTextField { return event }
         if let tv = fr as? NSTextView, tv.isEditable { return event }
-        
-        let tableHasFocus = fr === tableView || fr === tableView.enclosingScrollView
-        guard tableHasFocus else { return event }
-        
+
+        guard firstResponderIsInTrackTable(tableView, firstResponder: fr) else { return event }
+
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let key = event.charactersIgnoringModifiers ?? ""
-        
+
         if modifiers.contains(.command), key == "a" {
             onKeyPressA?()
-            return nil
-        }
-        if key == " " {
-            onKeyPressSpace?()
             return nil
         }
         if event.keyCode == 51, hasSelection {
