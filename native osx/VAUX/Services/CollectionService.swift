@@ -1219,6 +1219,17 @@ class CollectionService: ObservableObject {
         // Delete from database
         try deleteTrack(id)
     }
+    
+    /// Updates published `tracks` after DB deletion without `loadAllTracks()` (avoids global loading spinner and full table reload).
+    @MainActor
+    func removeTracksFromMemory(trackIds: [Int]) {
+        guard !trackIds.isEmpty else { return }
+        let idSet = Set(trackIds)
+        tracks = tracks.filter { track in
+            guard let tid = track.id else { return true }
+            return !idSet.contains(tid)
+        }
+    }
 
     func updateTrackPath(trackId: Int, newPath: String) throws {
         guard let db = database else { throw CollectionError.databaseNotOpen }

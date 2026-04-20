@@ -1430,6 +1430,7 @@ struct TrackListView: View {
         
         Task {
             do {
+                let deletedIds = tracksToDelete.compactMap(\.id)
                 // Delete tracks from database and move files to trash
                 for track in tracksToDelete {
                     if let trackId = track.id {
@@ -1438,8 +1439,7 @@ struct TrackListView: View {
                     }
                 }
                 
-                // Reload tracks to reflect changes
-                try await collectionService.loadAllTracks()
+                await collectionService.removeTracksFromMemory(trackIds: deletedIds)
                 
                 // Clear selection and tracks to delete
                 await MainActor.run {

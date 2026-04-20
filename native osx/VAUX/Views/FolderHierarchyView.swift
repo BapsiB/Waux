@@ -242,12 +242,13 @@ struct FolderHierarchyView: View {
         let count = tracksToDelete.count
         Task {
             do {
+                let deletedIds = tracksToDelete.compactMap(\.id)
                 for track in tracksToDelete {
                     if let trackId = track.id {
                         try collectionService.deleteTrackAndMoveToTrash(trackId)
                     }
                 }
-                try await collectionService.loadAllTracks()
+                await collectionService.removeTracksFromMemory(trackIds: deletedIds)
                 await MainActor.run {
                     tracksToDelete = []
                     selectedRowIds.removeAll()

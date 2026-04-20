@@ -1528,7 +1528,7 @@
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
             uuid = "81D0E4F6-D675-4DB5-BAD4-E7D9771C3213"
-            shouldBeEnabled = "Yes"
+            shouldBeEnabled = "No"
             ignoreCount = "0"
             continueAfterRunningActions = "No"
             filePath = "VAUX/Views/TrackListView.swift"
