@@ -762,6 +762,8 @@ struct TrackListView: View {
     /// When set, delete/backspace removes tracks from this playlist only (no trash confirmation).
     let loadedPlaylistId: String?
     let onPlaylistTracksChanged: (() -> Void)?
+    /// When set, adds “Open in Playlist” to the track context menu and loads the chosen playlist in the sidebar.
+    let onNavigateToPlaylist: ((Playlist) -> Void)?
     @Binding var isImportingNewFolder: Bool
     let initialLoadComplete: Bool
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
@@ -800,6 +802,7 @@ struct TrackListView: View {
         trackGroupService: TrackGroupService,
         loadedPlaylistId: String? = nil,
         onPlaylistTracksChanged: (() -> Void)? = nil,
+        onNavigateToPlaylist: ((Playlist) -> Void)? = nil,
         isImportingNewFolder: Binding<Bool> = .constant(false),
         initialLoadComplete: Bool = false
     ) {
@@ -811,6 +814,7 @@ struct TrackListView: View {
         self._trackGroupService = ObservedObject(wrappedValue: trackGroupService)
         self.loadedPlaylistId = loadedPlaylistId
         self.onPlaylistTracksChanged = onPlaylistTracksChanged
+        self.onNavigateToPlaylist = onNavigateToPlaylist
         self._isImportingNewFolder = isImportingNewFolder
         self.initialLoadComplete = initialLoadComplete
         self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
@@ -1534,6 +1538,23 @@ struct TrackListView: View {
             }
             Button("Edit Metadata…") {
                 showMetadataEditor = true
+            }
+            if let onNavigateToPlaylist {
+                let selectedItems = displayItems.filter { selectedDisplayItems.contains($0.id) }
+                let paths = selectedItems.map(\.track.path)
+                let playlistsWithSelection = playlistService.playlistsContainingAllTracks(absoluteTrackPaths: paths)
+                Menu("Open in Playlist") {
+                    if playlistsWithSelection.isEmpty {
+                        Button("No playlists") {}
+                            .disabled(true)
+                    } else {
+                        ForEach(playlistsWithSelection, id: \.id) { playlist in
+                            Button(playlist.name) {
+                                onNavigateToPlaylist(playlist)
+                            }
+                        }
+                    }
+                }
             }
             
             Divider()

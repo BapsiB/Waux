@@ -318,6 +318,27 @@ class PlaylistService: ObservableObject {
         return u1.path.precomposedStringWithCanonicalMapping == u2.path.precomposedStringWithCanonicalMapping
     }
     
+    /// Playlists that list this file (same path matching as add/remove; uses in-memory `playlists`).
+    func playlistsContaining(absoluteTrackPath: String) -> [Playlist] {
+        playlists.filter { pl in
+            pl.trackPaths.contains { path in
+                playlistRemovalPathsMatch(path, absoluteTrackPath)
+            }
+        }.sorted { $0.name < $1.name }
+    }
+    
+    /// Playlists that contain every listed file (intersection). Empty `paths` yields no playlists.
+    func playlistsContainingAllTracks(absoluteTrackPaths: [String]) -> [Playlist] {
+        guard !absoluteTrackPaths.isEmpty else { return [] }
+        return playlists.filter { pl in
+            absoluteTrackPaths.allSatisfy { absPath in
+                pl.trackPaths.contains { path in
+                    playlistRemovalPathsMatch(path, absPath)
+                }
+            }
+        }.sorted { $0.name < $1.name }
+    }
+    
     /// True if the playlist already lists this file (uses the same path resolution as removal).
     private func playlistAlreadyContainsAbsoluteTrack(playlistId: String, absoluteTrackPath: String, db: OpaquePointer) throws -> Bool {
         guard let activeCollection = activeCollectionDefinition else { return false }

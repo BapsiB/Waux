@@ -56,6 +56,9 @@ struct MainContentArea: View {
                                 return nil
                             }(),
                             onPlaylistTracksChanged: onPlaylistTracksChanged,
+                            onNavigateToPlaylist: { playlist in
+                                selectedItem = .playlist(playlist)
+                            },
                             isImportingNewFolder: $isImportingNewFolder,
                             initialLoadComplete: initialLoadComplete
                         )
@@ -88,7 +91,11 @@ struct MainContentArea: View {
                             collectionService: collectionService,
                             audioService: audioService,
                             folderManager: folderManager,
-                            searchService: searchService
+                            searchService: searchService,
+                            playlistService: playlistService,
+                            onNavigateToPlaylist: { playlist in
+                                selectedItem = .playlist(playlist)
+                            }
                         )
                     } else {
                         TrackListView(
@@ -97,6 +104,9 @@ struct MainContentArea: View {
                             searchService: searchService,
                             playlistService: playlistService,
                             trackGroupService: trackGroupService,
+                            onNavigateToPlaylist: { playlist in
+                                selectedItem = .playlist(playlist)
+                            },
                             isImportingNewFolder: $isImportingNewFolder,
                             initialLoadComplete: initialLoadComplete
                         )

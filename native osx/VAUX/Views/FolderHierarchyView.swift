@@ -6,6 +6,9 @@ struct FolderHierarchyView: View {
     @ObservedObject var audioService: AudioService
     @ObservedObject var folderManager: FolderHierarchyManager
     @ObservedObject var searchService: SearchService
+    @ObservedObject var playlistService: PlaylistService
+    /// Opens the chosen playlist as the main content (same as selecting it in the sidebar).
+    var onNavigateToPlaylist: ((Playlist) -> Void)?
     @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @StateObject private var metadataManager: TrackMetadataManager
 
@@ -23,11 +26,20 @@ struct FolderHierarchyView: View {
     private let visibleColumnsDefaultsKey = "FolderHierarchyView.visibleColumns"
     private let columnWidthsDefaultsKey = "FolderHierarchyView.columnWidths"
 
-    init(collectionService: CollectionService, audioService: AudioService, folderManager: FolderHierarchyManager, searchService: SearchService) {
+    init(
+        collectionService: CollectionService,
+        audioService: AudioService,
+        folderManager: FolderHierarchyManager,
+        searchService: SearchService,
+        playlistService: PlaylistService,
+        onNavigateToPlaylist: ((Playlist) -> Void)? = nil
+    ) {
         self.collectionService = collectionService
         self.audioService = audioService
         self.folderManager = folderManager
         self.searchService = searchService
+        self.playlistService = playlistService
+        self.onNavigateToPlaylist = onNavigateToPlaylist
         self._metadataManager = StateObject(wrappedValue: TrackMetadataManager(collectionService: collectionService))
     }
 
@@ -229,6 +241,22 @@ struct FolderHierarchyView: View {
             }
             Button("Edit Tags…") { showTagEditor = true }
             Button("Edit Metadata…") { showMetadataEditor = true }
+            if let onNavigateToPlaylist {
+                let paths = trackList.map(\.path)
+                let playlistsWithSelection = playlistService.playlistsContainingAllTracks(absoluteTrackPaths: paths)
+                Menu("Open in Playlist") {
+                    if playlistsWithSelection.isEmpty {
+                        Button("No playlists") {}
+                            .disabled(true)
+                    } else {
+                        ForEach(playlistsWithSelection, id: \.id) { playlist in
+                            Button(playlist.name) {
+                                onNavigateToPlaylist(playlist)
+                            }
+                        }
+                    }
+                }
+            }
             Divider()
             Button("Move to Trash", role: .destructive) {
                 tracksToDelete = trackList
@@ -520,6 +548,7 @@ private final class FolderHierarchySelectionView: NSView {
         collectionService: collectionService,
         audioService: AudioService(),
         folderManager: folderManager,
-        searchService: SearchService()
+        searchService: SearchService(),
+        playlistService: PlaylistService()
     )
 }

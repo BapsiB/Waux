@@ -1543,22 +1543,6 @@
       <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
-            uuid = "8C3E37CB-8E30-4A6C-BA32-6E133AE14BB3"
-            shouldBeEnabled = "Yes"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "VAUX/Views/TrackListView.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "2214"
-            endingLineNumber = "2214"
-            landmarkName = "rightMouseDown(with:)"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
             uuid = "F0F0906E-BB3D-4CFF-9561-7F371B62ADF2"
             shouldBeEnabled = "Yes"
             ignoreCount = "0"
@@ -1616,8 +1600,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "2027"
             endingLineNumber = "2027"
-            landmarkName = "TableSelectionView"
-            landmarkType = "3">
+            landmarkName = "updateNSView(_:context:)"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -1648,7 +1632,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "798"
             endingLineNumber = "798"
-            landmarkName = "init(collectionService:audioService:tracksFilter:searchService:playlistService:trackGroupService:loadedPlaylistId:onPlaylistTracksChanged:isImportingNewFolder:initialLoadComplete:)"
+            landmarkName = "init(collectionService:audioService:tracksFilter:searchService:playlistService:trackGroupService:loadedPlaylistId:onPlaylistTracksChanged:onNavigateToPlaylist:isImportingNewFolder:initialLoadComplete:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -1664,7 +1648,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "2107"
             endingLineNumber = "2107"
-            landmarkName = "handleKeyDown(_:)"
+            landmarkName = "firstResponderIsInTrackTable(_:firstResponder:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
