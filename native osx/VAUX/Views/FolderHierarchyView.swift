@@ -91,6 +91,12 @@ struct FolderHierarchyView: View {
                         showDeleteConfirmation = true
                     }
                 },
+                onExpandSelectedFolder: {
+                    expandSelectedFolder()
+                },
+                onCollapseSelectedFolder: {
+                    collapseSelectedFolder()
+                },
                 onGoToCurrentTrack: {
                     scrollToCurrentTrack()
                 }
@@ -158,6 +164,24 @@ struct FolderHierarchyView: View {
         if flatRows.contains(where: { $0.id == rid }) {
             selectedRowIds = [rid]
         }
+    }
+
+    private func expandSelectedFolder() -> Bool {
+        guard selectedRowIds.count == 1, let selectedRowId = selectedRowIds.first else { return false }
+        guard let selectedRow = flatRows.first(where: { $0.id == selectedRowId }) else { return false }
+        guard case .folder(let folder) = selectedRow.kind, folder.hasChildren else { return false }
+        guard !folderManager.isExpanded(folder.path) else { return false }
+        folderManager.toggleExpansion(for: folder.path)
+        return true
+    }
+
+    private func collapseSelectedFolder() -> Bool {
+        guard selectedRowIds.count == 1, let selectedRowId = selectedRowIds.first else { return false }
+        guard let selectedRow = flatRows.first(where: { $0.id == selectedRowId }) else { return false }
+        guard case .folder(let folder) = selectedRow.kind, folder.hasChildren else { return false }
+        guard folderManager.isExpanded(folder.path) else { return false }
+        folderManager.toggleExpansion(for: folder.path)
+        return true
     }
 
     private func pruneSelection() {
@@ -299,6 +323,8 @@ private struct FolderHierarchyTableSelectionHandler: NSViewRepresentable {
     let onKeyPressA: () -> Void
     let onKeyPressSpace: () -> Void
     let onKeyPressBackspace: () -> Void
+    let onExpandSelectedFolder: () -> Bool
+    let onCollapseSelectedFolder: () -> Bool
     let onGoToCurrentTrack: () -> Void
 
     func makeNSView(context: Context) -> NSView {
@@ -307,6 +333,8 @@ private struct FolderHierarchyTableSelectionHandler: NSViewRepresentable {
         view.onKeyPressA = onKeyPressA
         view.onKeyPressSpace = onKeyPressSpace
         view.onKeyPressBackspace = onKeyPressBackspace
+        view.onExpandSelectedFolder = onExpandSelectedFolder
+        view.onCollapseSelectedFolder = onCollapseSelectedFolder
         view.onGoToCurrentTrack = onGoToCurrentTrack
         return view
     }
@@ -317,6 +345,8 @@ private struct FolderHierarchyTableSelectionHandler: NSViewRepresentable {
             v.onKeyPressA = onKeyPressA
             v.onKeyPressSpace = onKeyPressSpace
             v.onKeyPressBackspace = onKeyPressBackspace
+            v.onExpandSelectedFolder = onExpandSelectedFolder
+            v.onCollapseSelectedFolder = onCollapseSelectedFolder
             v.onGoToCurrentTrack = onGoToCurrentTrack
             v.hasSelection = !selectedRowIds.isEmpty
             DispatchQueue.main.async {
@@ -332,6 +362,8 @@ private final class FolderHierarchySelectionView: NSView {
     var onKeyPressA: (() -> Void)?
     var onKeyPressSpace: (() -> Void)?
     var onKeyPressBackspace: (() -> Void)?
+    var onExpandSelectedFolder: (() -> Bool)?
+    var onCollapseSelectedFolder: (() -> Bool)?
     var onGoToCurrentTrack: (() -> Void)?
     var hasSelection = false
 
@@ -403,6 +435,12 @@ private final class FolderHierarchySelectionView: NSView {
         }
         if event.keyCode == 51, hasSelection {
             onKeyPressBackspace?()
+            return nil
+        }
+        if event.keyCode == 124, hasSelection, onExpandSelectedFolder?() == true {
+            return nil
+        }
+        if event.keyCode == 123, hasSelection, onCollapseSelectedFolder?() == true {
             return nil
         }
         if modifiers.contains(.command), key == "l" {
