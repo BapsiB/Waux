@@ -1,6 +1,10 @@
 import Foundation
 import AVFoundation
 import Combine
+#if os(macOS)
+import AppKit
+import MediaPlayer
+#endif
 
 class AudioService: NSObject, ObservableObject {
     @Published var currentTrack: Track?
@@ -25,14 +29,26 @@ class AudioService: NSObject, ObservableObject {
     var getNextTrack: (() -> Track?)?
     var getPreviousTrack: (() -> Track?)?
     
+    #if os(macOS)
+    /// Refreshes Now Playing on a ~1s cadence while audio is running so macOS keeps routing media keys here.
+    private var nowPlayingHeartbeatTick: Int = 0
+    private var appBecameActiveObserver: NSObjectProtocol?
+    #endif
+    
     override init() {
         super.init()
         setupAudioSession()
         setupTimer()
         loadVolumeFromPreferences()
+        #if os(macOS)
+        setupRemoteTransportControls()
+        #endif
     }
     
     deinit {
+        #if os(macOS)
+        teardownRemoteTransportControls()
+        #endif
         timer?.invalidate()
         audioPlayer?.stop()
     }
@@ -78,6 +94,18 @@ class AudioService: NSObject, ObservableObject {
         if abs(newDuration - duration) > 0.01 { // 10ms threshold
             duration = newDuration
         }
+        
+        #if os(macOS)
+        if isPlaying {
+            nowPlayingHeartbeatTick += 1
+            if nowPlayingHeartbeatTick >= 10 {
+                nowPlayingHeartbeatTick = 0
+                syncNowPlayingInfo()
+            }
+        } else {
+            nowPlayingHeartbeatTick = 0
+        }
+        #endif
     }
     
     private func loadVolumeFromPreferences() {
@@ -142,6 +170,7 @@ class AudioService: NSObject, ObservableObject {
                 isLoading = false
                 updateTimerInterval()
                 print("🔍 [AudioService] loadTrack: player.duration=\(String(format: "%.1f", playerDuration))s, set duration=\(String(format: "%.1f", duration))s")
+                syncNowPlayingInfo()
             }
             
             return audioPlayer
@@ -173,6 +202,7 @@ class AudioService: NSObject, ObservableObject {
         isPlaying = true
         isIdle = false
         updateTimerInterval()
+        syncNowPlayingInfo()
     }
     
     func pause() {
@@ -181,6 +211,7 @@ class AudioService: NSObject, ObservableObject {
         isPlaying = false
         isIdle = true
         updateTimerInterval()
+        syncNowPlayingInfo()
     }
     
     func stop() {
@@ -192,6 +223,7 @@ class AudioService: NSObject, ObservableObject {
         isIdle = true
         currentTime = 0
         updateTimerInterval()
+        syncNowPlayingInfo()
     }
     
     func seek(to timeS: TimeInterval) {
@@ -207,6 +239,7 @@ class AudioService: NSObject, ObservableObject {
         }
         
         print("🔍 [AudioService] seek: requested=\(String(format: "%.1f", timeS))s, durationBefore=\(String(format: "%.1f", durationBefore))s, durationAfter=\(String(format: "%.1f", durationAfter))s, currentTime=\(String(format: "%.1f", currentTime))s")
+        syncNowPlayingInfo()
     }
     
     func seekToRatio(_ ratio: Double) {
@@ -233,6 +266,105 @@ class AudioService: NSObject, ObservableObject {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    #if os(macOS)
+    /// Hardware media keys (F7–F9 / Touch Bar) and Control Center route through `MPRemoteCommandCenter`
+    /// when Now Playing info is published.
+    private func setupRemoteTransportControls() {
+        let center = MPRemoteCommandCenter.shared()
+        
+        center.togglePlayPauseCommand.isEnabled = true
+        center.playCommand.isEnabled = true
+        center.pauseCommand.isEnabled = true
+        center.nextTrackCommand.isEnabled = true
+        center.previousTrackCommand.isEnabled = true
+        center.togglePlayPauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.currentTrack != nil, !self.isLoading else { return }
+                self.togglePlayPause()
+            }
+            return .success
+        }
+        
+        center.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.currentTrack != nil, !self.isLoading else { return }
+                if !self.isPlaying { self.play() }
+            }
+            return .success
+        }
+        
+        center.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.currentTrack != nil else { return }
+                if self.isPlaying { self.pause() }
+            }
+            return .success
+        }
+        
+        center.nextTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.currentTrack != nil, !self.isLoading else { return }
+                await self.playNextTrack()
+            }
+            return .success
+        }
+        
+        center.previousTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.currentTrack != nil, !self.isLoading else { return }
+                await self.playPreviousTrack()
+            }
+            return .success
+        }
+        
+        syncNowPlayingInfo()
+        appBecameActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.syncNowPlayingInfo()
+        }
+    }
+    
+    private func teardownRemoteTransportControls() {
+        if let appBecameActiveObserver {
+            NotificationCenter.default.removeObserver(appBecameActiveObserver)
+        }
+        appBecameActiveObserver = nil
+        let center = MPRemoteCommandCenter.shared()
+        center.playCommand.removeTarget(nil)
+        center.pauseCommand.removeTarget(nil)
+        center.togglePlayPauseCommand.removeTarget(nil)
+        center.nextTrackCommand.removeTarget(nil)
+        center.previousTrackCommand.removeTarget(nil)
+        let npc = MPNowPlayingInfoCenter.default()
+        npc.playbackState = .stopped
+        npc.nowPlayingInfo = nil
+    }
+    #endif
+    
+    private func syncNowPlayingInfo() {
+        #if os(macOS)
+        let npc = MPNowPlayingInfoCenter.default()
+        guard let track = currentTrack else {
+            npc.playbackState = .stopped
+            npc.nowPlayingInfo = nil
+            return
+        }
+        npc.nowPlayingInfo = [
+            MPMediaItemPropertyTitle: track.title,
+            MPMediaItemPropertyArtist: track.artist,
+            MPMediaItemPropertyAlbumTitle: track.album,
+            MPMediaItemPropertyPlaybackDuration: duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyMediaType: NSNumber(value: 1),
+        ]
+        npc.playbackState = isPlaying ? .playing : .paused
+        #endif
     }
     
     // MARK: - Auto-play functionality
@@ -319,6 +451,7 @@ extension AudioService: AVAudioPlayerDelegate {
             self.currentTime = 0
             self.updateTimerInterval()
             print("audioPlayerDidFinishPlaying")
+            self.syncNowPlayingInfo()
             
             // Auto-play next track if available
             if flag {
