@@ -106,58 +106,50 @@ struct CompactAudioPlayerView: View {
 
 struct CustomVolumeSlider: View {
     @Binding var value: Double
-    @State private var isDragging = false
     @State private var isHovered = false
+    
+    private func valueFromSliderLocation(x: CGFloat, width: CGFloat) -> Double {
+        let inset: CGFloat = 8
+        let trackWidth = max(width - 2 * inset, 1)
+        let clamped = max(0, min(1, (x - inset) / trackWidth))
+        return Double(clamped)
+    }
     
     var body: some View {
         GeometryReader { geometry in
+            let w = geometry.size.width
             ZStack(alignment: .leading) {
                 // Track
                 Rectangle()
                     .fill(Color.gray.opacity(0.3))
                     .frame(height: 4)
                 
-                // Filled track
+                // Filled track (matches thumb inset so click position aligns with fill)
                 Rectangle()
                     .fill(AppStyle.mainColor)
-                    .frame(width: geometry.size.width * CGFloat(value), height: 2)
+                    .frame(width: 8 + (w - 16) * CGFloat(value), height: 2)
                 
-                // Custom thumb
+                // Custom thumb (visual only; whole bar handles drag / click)
                 Circle()
                     .fill(AppStyle.mainColor)
                     .frame(width: 12, height: 12)
                     .scaleEffect(isHovered ? 1.2 : 1.0)
                     .animation(.easeInOut(duration: 0.2), value: isHovered)
                     .position(
-                        x: 8 + (geometry.size.width - 16) * CGFloat(value),
+                        x: 8 + (w - 16) * CGFloat(value),
                         y: geometry.size.height / 2
                     )
                     .animation(.easeInOut(duration: 0.2))
-                    .onHover { hovering in
-                        isHovered = hovering
-                    }
-                    .gesture(
-                        DragGesture()
-                            .onChanged { gesture in
-                                isDragging = true
-                                let newValue = max(0, min(1, gesture.location.x / geometry.size.width))
-                                value = Double(newValue)
-                            }
-                            .onEnded { _ in
-                                isDragging = false
-                            }
-                    )
+                    .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
+            .onHover { hovering in
+                isHovered = hovering
+            }
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { gesture in
-                        isDragging = true
-                        let newValue = max(0, min(1, gesture.location.x / geometry.size.width))
-                        value = Double(newValue)
-                    }
-                    .onEnded { _ in
-                        isDragging = false
+                        value = valueFromSliderLocation(x: gesture.location.x, width: w)
                     }
             )
         }
