@@ -1809,6 +1809,7 @@ struct TableWidthObserver: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         // Also try to set up observer here as a fallback
         if let tableView = findTableView(in: nsView) {
+            tableView.columnAutoresizingStyle = .noColumnAutoresizing
             context.coordinator.setupObserver(for: tableView)
         }
     }
@@ -1821,6 +1822,7 @@ struct TableWidthObserver: NSViewRepresentable {
            let contentView = window.contentView,
            let tableView = findTableView(in: contentView) {
             print("🔍 [TrackListView] Found NSTableView in window content view")
+            tableView.columnAutoresizingStyle = .noColumnAutoresizing
             context.coordinator.setupObserver(for: tableView)
             return
         }
@@ -1856,6 +1858,7 @@ struct TableWidthObserver: NSViewRepresentable {
         let onWidthChange: () -> Void
         private var tableView: NSTableView?
         private var timer: Timer?
+        private var hasAppliedInitialWidths = false
         
         init(columnWidths: Binding<[TrackColumn: CGFloat]>, onWidthChange: @escaping () -> Void) {
             self._columnWidths = columnWidths
@@ -1863,8 +1866,13 @@ struct TableWidthObserver: NSViewRepresentable {
         }
         
         func setupObserver(for tableView: NSTableView) {
-            print("🔍 [TrackListView] Setting up column width observer for NSTableView")
             self.tableView = tableView
+            
+            if !hasAppliedInitialWidths {
+                print("🔍 [TrackListView] Applying initial column widths to NSTableView")
+                hasAppliedInitialWidths = true
+                applyColumnWidths()
+            }
             
             // Start a timer to periodically check column widths - reduced frequency for better performance
             timer?.invalidate()
@@ -1873,8 +1881,40 @@ struct TableWidthObserver: NSViewRepresentable {
             }
         }
         
+        private func applyColumnWidths() {
+            guard let tableView = tableView else { return }
+            for column in tableView.tableColumns {
+                let trackColumn: TrackColumn? = {
+                    switch column.title {
+                    case "Title": return .title
+                    case "Artist": return .artist
+                    case "Album": return .album
+                    case "Duration": return .duration
+                    case "Rating": return .rating
+                    case "Type": return .type
+                    case "Date Added": return .dateAdded
+                    case "Album Artist": return .albumArtist
+                    case "Composer": return .composer
+                    case "Waveform": return .waveformData
+                    case "Tags": return .generalTags
+                    default: return nil
+                    }
+                }()
+                
+                if let trackColumn = trackColumn, let savedWidth = columnWidths[trackColumn] {
+                    // Only apply if it's significantly different to avoid unnecessary updates
+                    if abs(column.width - savedWidth) > 1.0 {
+                        column.width = savedWidth
+                    }
+                }
+            }
+        }
+        
         private func checkColumnWidths() {
             guard let tableView = tableView else { return }
+            
+            // Ensure auto-resizing remains disabled
+            tableView.columnAutoresizingStyle = .noColumnAutoresizing
             
             var updated = false
             
