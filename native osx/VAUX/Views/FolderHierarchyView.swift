@@ -9,7 +9,7 @@ struct FolderHierarchyView: View {
     @ObservedObject var playlistService: PlaylistService
     /// Opens the chosen playlist as the main content (same as selecting it in the sidebar).
     var onNavigateToPlaylist: ((Playlist) -> Void)?
-    @StateObject private var waveformServiceHolder = WaveformServiceHolder()
+    @EnvironmentObject var waveformServiceHolder: WaveformServiceHolder
     @StateObject private var metadataManager: TrackMetadataManager
 
     @State private var sortOrder = [KeyPathComparator(\FolderHierarchyTableRow.titleSort)]
@@ -551,4 +551,5 @@ private final class FolderHierarchySelectionView: NSView {
         searchService: SearchService(),
         playlistService: PlaylistService()
     )
+    .environmentObject(WaveformServiceHolder())
 }

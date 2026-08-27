@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
-   LastUpgradeVersion = "1620"
+   LastUpgradeVersion = "2630"
    version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
@@ -18,7 +18,7 @@
                BlueprintIdentifier = "9CBE85AE2E50BD3C008598EE"
                BuildableName = "VAUX.app"
                BlueprintName = "VAUX"
-               ReferencedContainer = "container:WAUX.xcodeproj">
+               ReferencedContainer = "container:VAUX.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -38,7 +38,7 @@
                BlueprintIdentifier = "9CBE85BF2E50BD3E008598EE"
                BuildableName = "VAUXTests.xctest"
                BlueprintName = "VAUXTests"
-               ReferencedContainer = "container:WAUX.xcodeproj">
+               ReferencedContainer = "container:VAUX.xcodeproj">
             </BuildableReference>
          </TestableReference>
          <TestableReference
@@ -49,13 +49,13 @@
                BlueprintIdentifier = "9CBE85C92E50BD3E008598EE"
                BuildableName = "VAUXUITests.xctest"
                BlueprintName = "VAUXUITests"
-               ReferencedContainer = "container:WAUX.xcodeproj">
+               ReferencedContainer = "container:VAUX.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
-      buildConfiguration = "Release"
+      buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       launchStyle = "0"
@@ -71,7 +71,7 @@
             BlueprintIdentifier = "9CBE85AE2E50BD3C008598EE"
             BuildableName = "VAUX.app"
             BlueprintName = "VAUX"
-            ReferencedContainer = "container:WAUX.xcodeproj">
+            ReferencedContainer = "container:VAUX.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -88,7 +88,7 @@
             BlueprintIdentifier = "9CBE85AE2E50BD3C008598EE"
             BuildableName = "VAUX.app"
             BlueprintName = "VAUX"
-            ReferencedContainer = "container:WAUX.xcodeproj">
+            ReferencedContainer = "container:VAUX.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

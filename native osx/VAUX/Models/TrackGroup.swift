@@ -101,6 +101,18 @@ enum TrackDisplayItem: Identifiable, Equatable {
     case individual(Track)
     case container(GroupedTrack)
     case groupMember(Track, groupId: String)
+
+    static func == (lhs: TrackDisplayItem, rhs: TrackDisplayItem) -> Bool {
+        guard lhs.id == rhs.id else { return false }
+        let a = lhs.track
+        let b = rhs.track
+        return a.waveformPointCount == b.waveformPointCount
+            && a.title == b.title
+            && a.artist == b.artist
+            && a.album == b.album
+            && a.rating == b.rating
+            && a.generalTags == b.generalTags
+    }
     
     var id: String {
         switch self {
@@ -177,6 +189,19 @@ enum TrackDisplayItem: Identifiable, Equatable {
             return true
         default:
             return false
+        }
+    }
+
+    func replacingTrack(_ updated: Track) -> TrackDisplayItem {
+        switch self {
+        case .individual(let track):
+            return track.id == updated.id ? .individual(updated) : self
+        case .groupMember(let track, let groupId):
+            return track.id == updated.id ? .groupMember(updated, groupId: groupId) : self
+        case .container(let grouped):
+            let allTracks = grouped.allTracks.map { $0.id == updated.id ? updated : $0 }
+            let mainTrack = grouped.mainTrack.id == updated.id ? updated : grouped.mainTrack
+            return .container(GroupedTrack(group: grouped.group, mainTrack: mainTrack, allTracks: allTracks))
         }
     }
 }

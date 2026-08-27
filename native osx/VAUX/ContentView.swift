@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var showFileChangesSheet = false
     @State private var fileChangesData: FileChangesData? = nil
     @State private var previousTracks: [Track] = []
+    @StateObject private var waveformServiceHolder = WaveformServiceHolder()
     @EnvironmentObject private var menuActionState: MenuActionState
     @EnvironmentObject private var restoreBackupMenuState: RestoreBackupMenuState
     
@@ -76,7 +77,13 @@ struct ContentView: View {
                     .padding(.bottom, 20)
                 }
             }
+
+            WaveformAnalysisOverlay(
+                collectionService: collectionService,
+                waveformServiceHolder: waveformServiceHolder
+            )
         }
+        .environmentObject(waveformServiceHolder)
         .frame(minWidth: 800, minHeight: 600)
         .fileImporter(
             isPresented: $showingFolderPicker,
@@ -176,6 +183,7 @@ struct ContentView: View {
             previousTracks = newTracks
         }
         .onAppear {
+            waveformServiceHolder.ensure(collectionService: collectionService)
             restoreBackupMenuState.refresh(collectionService: collectionService)
             if !hasAttemptedAutoLoad {
                 hasAttemptedAutoLoad = true
@@ -491,10 +499,12 @@ struct ContentView: View {
             // Trigger waveform processing for newly added tracks (if any)
             if !collectionService.pendingWaveformTrackIds.isEmpty {
                 print("[OpenFolder] Queuing waveform processing for \(collectionService.pendingWaveformTrackIds.count) tracks")
-                let waveformService = WaveformProcessingService(collectionService: collectionService)
+                await MainActor.run {
+                    waveformServiceHolder.ensure(collectionService: collectionService)
+                }
                 let idSet = Set(collectionService.pendingWaveformTrackIds)
                 for track in collectionService.tracks where track.id.map({ idSet.contains($0) }) == true {
-                    waveformService.analyzeIfMissing(track)
+                    waveformServiceHolder.service?.analyzeIfMissing(track)
                 }
                 collectionService.pendingWaveformTrackIds.removeAll()
                 print("[OpenFolder] Waveform queueing done")
@@ -556,9 +566,10 @@ struct ContentView: View {
             try await collectionService.clearAllWaveformData()
             print("[ContentView] ✅ Cleared all waveform data")
             
-            // Create waveform service and regenerate for all tracks
-            let waveformService = WaveformProcessingService(collectionService: collectionService)
-            
+            await MainActor.run {
+                waveformServiceHolder.ensure(collectionService: collectionService)
+            }
+
             // Process all tracks that have valid files
             let tracksToProcess = collectionService.tracks.filter { track in
                 !track.isUrl && track.waveformData == nil
@@ -567,7 +578,7 @@ struct ContentView: View {
             print("[ContentView] 📊 Regenerating waveforms for \(tracksToProcess.count) tracks")
             
             for track in tracksToProcess {
-                waveformService.analyzeIfMissing(track)
+                waveformServiceHolder.service?.analyzeIfMissing(track)
             }
             
             print("[ContentView] ✅ Waveform regeneration queued for all tracks")

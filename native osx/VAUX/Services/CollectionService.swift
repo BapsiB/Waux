@@ -47,10 +47,28 @@ class CollectionService: ObservableObject {
     }
     
     // MARK: - Properties
-    @Published var tracks: [Track] = []
+    private var _tracks: [Track] = []
+    private let tracksSubject = CurrentValueSubject<[Track], Never>([])
+    var tracks: [Track] {
+        get { _tracks }
+        set {
+            _tracks = newValue
+            tracksSubject.send(newValue)
+            refreshMissingWaveformCount()
+            objectWillChange.send()
+        }
+    }
+    var tracksPublisher: AnyPublisher<[Track], Never> {
+        tracksSubject.eraseToAnyPublisher()
+    }
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var globalTags: [TagDefinition] = []
+    /// Local tracks that still have no waveform (`nil`). Empty arrays are treated as processed (e.g. missing file).
+    private(set) var missingWaveformCount = 0
+    /// Lightweight per-track waveform completion. Does not republish the full `tracks` array.
+    let waveformDidUpdate = PassthroughSubject<Track, Never>()
+    weak var waveformStatus: WaveformStatusModel?
     var pendingWaveformTrackIds: [Int] = []
     
     private var database: OpaquePointer?
@@ -1612,7 +1630,6 @@ class CollectionService: ObservableObject {
     
     // MARK: - Path Resolution
     func resolveTrackPathForWaveform(_ track: Track) -> String {
-        
         // Ensure security access for file operations
         let securityAccess = ensureSecurityAccess()
         defer { if securityAccess { stopSecurityAccess() } }
@@ -1837,6 +1854,23 @@ class CollectionService: ObservableObject {
     func getTracksSortedByDateAddedOldestFirst() -> [Track] {
         return tracks.sorted { $0.dateAdded < $1.dateAdded }
     }
+
+    private func refreshMissingWaveformCount() {
+        let count = tracks.reduce(into: 0) { result, track in
+            if !track.isUrl, track.waveformData == nil {
+                result += 1
+            }
+        }
+        if missingWaveformCount != count {
+            missingWaveformCount = count
+            waveformStatus?.missingCount = count
+        }
+    }
+
+    func syncMissingWaveformCount() {
+        refreshMissingWaveformCount()
+        waveformStatus?.missingCount = missingWaveformCount
+    }
     
     // MARK: - Track Updates
     func updateTrackWaveformData(trackId: Int, waveformData: [Double]) async throws {
@@ -1916,17 +1950,17 @@ class CollectionService: ObservableObject {
                         print("[CollectionService] 🔎 Read-back prepare failed: \(err)")
                     }
 
-                    // Update the track in the local array on the main thread
+                    // Update the one track in place. Do not replace the whole `tracks` array:
+                    // that copy + @Published emission rebuilds the table (~100ms for large libraries).
                     Task { @MainActor in
                         print("[CollectionService] 🔄 Updating tracks array on main thread...")
-                        if let index = self.tracks.firstIndex(where: { $0.id == trackId }) {
-                            // Update track in place using withUpdates method
+                        if let index = self._tracks.firstIndex(where: { $0.id == trackId }) {
                             let updates = ["waveformData": waveformData as Any]
-                            self.tracks[index] = self.tracks[index].withUpdates(updates)
+                            self._tracks[index] = self._tracks[index].withUpdates(updates)
+                            let updated = self._tracks[index]
+                            self.refreshMissingWaveformCount()
+                            self.waveformDidUpdate.send(updated)
                             print("[CollectionService] ✅ Successfully updated tracks array for track \(trackId)")
-                            
-                            // Force a UI refresh
-                            self.objectWillChange.send()
                         } else {
                             print("[CollectionService] ⚠️ Track \(trackId) not found in tracks array")
                         }

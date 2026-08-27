@@ -7,18 +7,11 @@ struct InteractiveStarRating_New: View {
     @State private var hoveredStar: Int = 0
     @State private var isHovering: Bool = false
     
-    private var track: Track? {
-        metadataManager.getTrack(id: trackId)
-    }
-    
-    private var currentRating: Int {
-        track?.rating ?? 0
-    }
-    
     var body: some View {
+        let currentRating = metadataManager.getTrack(id: trackId)?.rating ?? 0
         HStack(spacing: 2) {
             ForEach(1...5, id: \.self) { star in
-                starButton(for: star)
+                starButton(for: star, currentRating: currentRating)
             }
         }
         .padding(.horizontal, 4)
@@ -37,13 +30,13 @@ struct InteractiveStarRating_New: View {
     }
     
     @ViewBuilder
-    private func starButton(for star: Int) -> some View {
+    private func starButton(for star: Int, currentRating: Int) -> some View {
         // Use Button instead of Image + onTapGesture for better click handling
         Button(action: {
             metadataManager.updateRating(for: trackId, rating: star)
         }) {
-            Image(systemName: starName(for: star))
-                .foregroundColor(starColor(for: star))
+            Image(systemName: starName(for: star, currentRating: currentRating))
+                .foregroundColor(starColor(for: star, currentRating: currentRating))
                 .font(.caption)
         }
         .buttonStyle(.plain)
@@ -64,7 +57,7 @@ struct InteractiveStarRating_New: View {
         .animation(.easeInOut(duration: 0.1), value: isHovering)
     }
     
-    private func starName(for star: Int) -> String {
+    private func starName(for star: Int, currentRating: Int) -> String {
         if isHovering && hoveredStar >= star {
             return "star.fill"
         } else if star <= currentRating {
@@ -74,7 +67,7 @@ struct InteractiveStarRating_New: View {
         }
     }
     
-    private func starColor(for star: Int) -> Color {
+    private func starColor(for star: Int, currentRating: Int) -> Color {
         if isHovering && hoveredStar >= star {
             return .orange
         } else if star <= currentRating {

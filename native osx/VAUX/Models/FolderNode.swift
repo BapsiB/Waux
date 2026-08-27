@@ -3,7 +3,7 @@ import SwiftUI
 
 // MARK: - Folder Node
 struct FolderNode: Identifiable, Hashable {
-    let id = UUID()
+    let id: UUID
     let name: String
     let path: String
     let isExpanded: Bool
@@ -11,13 +11,26 @@ struct FolderNode: Identifiable, Hashable {
     let tracks: [Track]
     let level: Int
     
-    init(name: String, path: String, isExpanded: Bool = false, children: [FolderNode] = [], tracks: [Track] = [], level: Int = 0) {
+    init(id: UUID = UUID(), name: String, path: String, isExpanded: Bool = false, children: [FolderNode] = [], tracks: [Track] = [], level: Int = 0) {
+        self.id = id
         self.name = name
         self.path = path
         self.isExpanded = isExpanded
         self.children = children
         self.tracks = tracks
         self.level = level
+    }
+
+    func replacingTrack(_ track: Track) -> FolderNode {
+        FolderNode(
+            id: id,
+            name: name,
+            path: path,
+            isExpanded: isExpanded,
+            children: children.map { $0.replacingTrack(track) },
+            tracks: tracks.map { $0.id == track.id ? track : $0 },
+            level: level
+        )
     }
     
     var hasChildren: Bool {
@@ -252,6 +265,10 @@ class FolderHierarchyManager: ObservableObject {
     
     func buildHierarchy(from tracks: [Track], rootPath: String? = nil) {
         rootFolders = FolderHierarchyBuilder.buildHierarchy(from: tracks, rootPath: rootPath)
+    }
+
+    func patchTrack(_ track: Track) {
+        rootFolders = rootFolders.map { $0.replacingTrack(track) }
     }
     
     func toggleExpansion(for folderPath: String) {

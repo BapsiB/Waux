@@ -19,8 +19,8 @@ struct FolderHierarchyTable: View {
     @FocusState var isTableFocused: Bool
     @ObservedObject var audioService: AudioService
     @ObservedObject var metadataManager: TrackMetadataManager
-    @ObservedObject var waveformServiceHolder: WaveformServiceHolder
-    @ObservedObject var collectionService: CollectionService
+    let waveformServiceHolder: WaveformServiceHolder
+    let collectionService: CollectionService
     @ObservedObject var folderManager: FolderHierarchyManager
     let onDoubleClickTrack: (Track) -> Void
     let onColumnWidthChange: () -> Void
@@ -218,9 +218,13 @@ struct FolderHierarchyTable: View {
                     highDetailWaveform: p.highDetailWaveform,
                     audioService: audioService,
                     waveformServiceHolder: waveformServiceHolder,
-                    collectionService: collectionService
+                    collectionService: collectionService,
+                    slot: waveformServiceHolder.waveformStore.slot(
+                        for: track.id ?? -1,
+                        seeding: track.waveformData
+                    )
                 )
-                .id("waveform-\(track.id ?? -1)-\(track.waveformPointCount)")
+                .id("waveform-\(track.id ?? -1)")
                 .frame(maxWidth: innerCap)
                 Spacer(minLength: 0)
             }

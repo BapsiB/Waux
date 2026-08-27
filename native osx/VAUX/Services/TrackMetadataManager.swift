@@ -7,8 +7,17 @@ import SwiftUI
 @MainActor
 class TrackMetadataManager: ObservableObject {
     // MARK: - Properties
-    @Published private(set) var tracks: [Track] = []
     @Published private(set) var isUpdating = false
+    private var _tracks: [Track] = []
+    private var tracksById: [Int: Track] = [:]
+    private(set) var tracks: [Track] {
+        get { _tracks }
+        set {
+            _tracks = newValue
+            rebuildTrackIndex()
+            objectWillChange.send()
+        }
+    }
     
     private let collectionService: CollectionService
     private var cancellables = Set<AnyCancellable>()
@@ -34,18 +43,26 @@ class TrackMetadataManager: ObservableObject {
     
     private func setupBindings() {
         // Single subscription to collection service tracks
-        collectionService.$tracks
+        collectionService.tracksPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newTracks in
                 self?.handleTracksUpdate(newTracks)
+            }
+            .store(in: &cancellables)
+
+        collectionService.waveformDidUpdate
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] track in
+                self?.patchTrackWaveform(track)
             }
             .store(in: &cancellables)
     }
     
     // MARK: - Track Access
     func getTrack(id: Int) -> Track? {
-        let baseTrack = tracks.first { $0.id == id }
-        guard let track = baseTrack else { return nil }
+        guard let track = tracksById[id] else {
+            return nil
+        }
         
         // Apply optimistic changes if any
         if let changes = optimisticChanges[id] {
@@ -114,7 +131,7 @@ class TrackMetadataManager: ObservableObject {
     func setTags(for trackId: Int, tags: [String]) {
         print("[TrackMetadataManager] Setting tags for track \(trackId): \(tags)")
         
-        guard let currentTrack = tracks.first(where: { $0.id == trackId }) else {
+        guard let currentTrack = tracksById[trackId] else {
             print("[TrackMetadataManager] Track \(trackId) not found")
             return
         }
@@ -156,7 +173,7 @@ class TrackMetadataManager: ObservableObject {
         
         // Check if title is being updated and handle file renaming
         if let newTitle = updates["title"] as? String,
-           let currentTrack = tracks.first(where: { $0.id == trackId }),
+           let currentTrack = tracksById[trackId],
            newTitle != currentTrack.title,
            !currentTrack.isUrl {
             
@@ -235,6 +252,24 @@ class TrackMetadataManager: ObservableObject {
         // Trigger UI update only if tracks actually changed
         objectWillChange.send()
     }
+
+    /// Apply a completed waveform without publishing the full track list (avoids table rebuilds).
+    private func patchTrackWaveform(_ track: Track) {
+        guard let id = track.id, let index = _tracks.firstIndex(where: { $0.id == id }) else { return }
+        _tracks[index] = track
+        tracksById[id] = track
+    }
+
+    private func rebuildTrackIndex() {
+        var index: [Int: Track] = [:]
+        index.reserveCapacity(_tracks.count)
+        for track in _tracks {
+            if let id = track.id {
+                index[id] = track
+            }
+        }
+        tracksById = index
+    }
     
     private func scheduleUpdate() {
         // Cancel existing timer
@@ -263,7 +298,7 @@ class TrackMetadataManager: ObservableObject {
             var ratingUpdates: [Int: Int] = [:]
             
             for (trackId, changes) in updates {
-                guard let track = tracks.first(where: { $0.id == trackId }) else { continue }
+                guard let track = tracksById[trackId] else { continue }
                 
                 // Calculate final tag state
                 var finalTags = Set(track.generalTags)

@@ -1,11 +1,122 @@
 import SwiftUI
+import Combine
 
 // MARK: - Waveform Service Holder
 
+final class WaveformStatusModel: ObservableObject {
+    @Published var missingCount = 0
+    @Published var analyzingCount = 0
+}
+
+final class TrackWaveformSlot: ObservableObject {
+    @Published var data: [Double]?
+}
+
+final class WaveformDataStore {
+    private var slots: [Int: TrackWaveformSlot] = [:]
+
+    func slot(for id: Int, seeding initial: [Double]? = nil) -> TrackWaveformSlot {
+        if let existing = slots[id] { return existing }
+        let slot = TrackWaveformSlot()
+        slot.data = initial
+        slots[id] = slot
+        return slot
+    }
+
+    func apply(trackId: Int, data: [Double]?) {
+        if let existing = slots[trackId] {
+            existing.data = data
+        } else {
+            let slot = TrackWaveformSlot()
+            slot.data = data
+            slots[trackId] = slot
+        }
+    }
+}
+
 class WaveformServiceHolder: ObservableObject {
     @Published var service: WaveformProcessingService?
+    let status = WaveformStatusModel()
+    let waveformStore = WaveformDataStore()
+    private var waveformCancellable: AnyCancellable?
+
+    var analyzingCount: Int {
+        status.analyzingCount
+    }
+
     func ensure(collectionService: CollectionService) {
-        if service == nil { service = WaveformProcessingService(collectionService: collectionService) }
+        guard service == nil else { return }
+        collectionService.waveformStatus = status
+        service = WaveformProcessingService(collectionService: collectionService, status: status)
+        collectionService.syncMissingWaveformCount()
+        service?.enqueueAllMissing()
+        waveformCancellable = collectionService.waveformDidUpdate
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] track in
+                guard let id = track.id else { return }
+                self?.waveformStore.apply(trackId: id, data: track.waveformData)
+            }
+    }
+}
+
+struct WaveformAnalysisStatusBadge: View {
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("analysing")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.secondary)
+            Text("\(count)")
+                .font(.system(size: 13, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundColor(.primary)
+            Text(count == 1 ? "track" : "tracks")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Analysing tracks")
+        .accessibilityValue("\(count) remaining")
+    }
+}
+
+struct WaveformAnalysisOverlay: View {
+    let collectionService: CollectionService
+    let waveformServiceHolder: WaveformServiceHolder
+
+    var body: some View {
+        WaveformAnalysisOverlayBadge(status: waveformServiceHolder.status)
+            .onAppear {
+                waveformServiceHolder.ensure(collectionService: collectionService)
+            }
+    }
+}
+
+private struct WaveformAnalysisOverlayBadge: View {
+    @ObservedObject var status: WaveformStatusModel
+
+    var body: some View {
+        let missingCount = status.missingCount
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                if missingCount > 0 {
+                    WaveformAnalysisStatusBadge(count: missingCount)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 16)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: missingCount)
+        .allowsHitTesting(false)
     }
 }
 
@@ -292,8 +403,9 @@ struct WaveformColumn: View {
     let isPlayingThisTrack: Bool
     let highDetailWaveform: Bool
     let audioService: AudioService
-    @ObservedObject var waveformServiceHolder: WaveformServiceHolder
-    @ObservedObject var collectionService: CollectionService
+    let waveformServiceHolder: WaveformServiceHolder
+    let collectionService: CollectionService
+    @ObservedObject var slot: TrackWaveformSlot
 
     /// Compute at the table level (single `AudioService` observation) and pass into each row so cells do not subscribe to timer-driven playback updates.
     static func playbackParameters(track: Track, audioService: AudioService) -> (progress: Double, isPlayingThisTrack: Bool, highDetailWaveform: Bool) {
@@ -307,12 +419,21 @@ struct WaveformColumn: View {
         let highDetailWaveform = isPlayingThisTrack
         return (progress, isPlayingThisTrack, highDetailWaveform)
     }
-    
+
+    private var resolvedWaveformData: [Double]? {
+        slot.data ?? track.waveformData
+    }
+
     var body: some View {
+        columnBodyContent()
+    }
+
+    @ViewBuilder
+    private func columnBodyContent() -> some View {
         Group {
-            if track.waveformData?.isEmpty == false {
+            if resolvedWaveformData?.isEmpty == false {
                 WaveformListCell(
-                    track: track,
+                    track: track.withUpdates(["waveformData": resolvedWaveformData as Any]),
                     playbackProgress: playbackProgress,
                     isPlayingThisTrack: isPlayingThisTrack,
                     highDetailWaveform: highDetailWaveform,
@@ -320,29 +441,10 @@ struct WaveformColumn: View {
                 )
                 .equatable()
             } else {
-                // Check if this track is currently being analyzed
-                let isCurrentlyAnalyzing = waveformServiceHolder.service?.analyzingTrackIds.contains(track.id ?? -1) ?? false
-                
-                if isCurrentlyAnalyzing {
-                    // Track is currently being analyzed - show progress
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Analyzing…")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                } else {
                     // Check if this track has empty waveform data (indicating missing file)
                     // Note: Empty waveform data could also indicate corrupted data that needs regeneration
                     if let waveformData = track.waveformData, waveformData.isEmpty {
-                        // For empty waveform data, we need to check if the file actually exists
-                        // If the file exists, it means the waveform data is corrupted and needs regeneration
-                        // If the file doesn't exist, then it's truly missing
-                        let resolvedPath = collectionService.resolveTrackPathForWaveform(track)
-                        let url = URL(fileURLWithPath: resolvedPath)
-                        let fileExists = FileManager.default.fileExists(atPath: url.path)
-                        
-                        if fileExists {
+                        if emptyWaveformFileExists() {
                             // File exists but waveform is empty/corrupted - trigger analysis
                             HStack(spacing: 6) {
                                 ProgressView().controlSize(.small)
@@ -351,7 +453,7 @@ struct WaveformColumn: View {
                                     .foregroundColor(.secondary)
                             }
                             .onAppear {
-                                print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (regenerating corrupted waveform; fileExists=\(fileExists))")
+                                print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (regenerating corrupted waveform; fileExists=true)")
                                 waveformServiceHolder.ensure(collectionService: collectionService)
                                 waveformServiceHolder.service?.analyzeIfMissing(track)
                             }
@@ -366,21 +468,23 @@ struct WaveformColumn: View {
                             }
                         }
                     } else {
+                        // Placeholder only: analysis is queued by WaveformProcessingService
+                        // for the whole collection, independent of which rows are on screen.
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
                             Text("Analyzing…")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        .onAppear {
-                            print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (no waveform present)")
-                            waveformServiceHolder.ensure(collectionService: collectionService)
-                            waveformServiceHolder.service?.analyzeIfMissing(track)
-                        }
                     }
-                }
             }
         }
+    }
+
+    private func emptyWaveformFileExists() -> Bool {
+        let resolvedPath = collectionService.resolveTrackPathForWaveform(track)
+        let url = URL(fileURLWithPath: resolvedPath)
+        return FileManager.default.fileExists(atPath: url.path)
     }
 }
 

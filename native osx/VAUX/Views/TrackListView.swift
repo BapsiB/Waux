@@ -91,8 +91,8 @@ struct TrackTable: View {
     @FocusState var isTableFocused: Bool
     @ObservedObject var audioService: AudioService
     @ObservedObject var metadataManager: TrackMetadataManager
-    @ObservedObject var waveformServiceHolder: WaveformServiceHolder
-    @ObservedObject var collectionService: CollectionService
+    let waveformServiceHolder: WaveformServiceHolder
+    let collectionService: CollectionService
     @ObservedObject var trackGroupService: TrackGroupService
     let onKeyPressBackspace: () -> Void
     let onKeyPressSpace: () -> Void
@@ -194,9 +194,13 @@ struct TrackTable: View {
             highDetailWaveform: p.highDetailWaveform,
             audioService: audioService,
             waveformServiceHolder: waveformServiceHolder,
-            collectionService: collectionService
+            collectionService: collectionService,
+            slot: waveformServiceHolder.waveformStore.slot(
+                for: displayItem.track.id ?? -1,
+                seeding: displayItem.track.waveformData
+            )
         )
-        .id("waveform-\(displayItem.track.id ?? -1)-\(displayItem.track.waveformPointCount)")
+        .id("waveform-\(displayItem.track.id ?? -1)")
         .help(tooltipForDisplayItem(displayItem))
         .background(backgroundForDisplayItem(displayItem))
     }
@@ -766,13 +770,14 @@ struct TrackListView: View {
     let onNavigateToPlaylist: ((Playlist) -> Void)?
     @Binding var isImportingNewFolder: Bool
     let initialLoadComplete: Bool
-    @StateObject private var waveformServiceHolder = WaveformServiceHolder()
+    @EnvironmentObject var waveformServiceHolder: WaveformServiceHolder
     @StateObject private var metadataManager: TrackMetadataManager
     @ObservedObject var trackGroupService: TrackGroupService
     @StateObject private var trackDisplayService: TrackDisplayService
     @State private var sortOrder = [KeyPathComparator(\TrackDisplayItem.track.title)]
     @State private var selectedDisplayItems = Set<TrackDisplayItem.ID>()
     @State private var displayItems: [TrackDisplayItem] = []
+    @State private var lastFilteredTrackIds: [Int] = []
     @State private var showingRatingError = false
     @State private var ratingErrorMessage = ""
     private static let defaultVisibleTrackColumns: Set<TrackColumn> = [.waveformData, .title, .artist, .album, .duration, .rating, .generalTags, .type, .dateAdded]
@@ -828,6 +833,15 @@ struct TrackListView: View {
         let filteredTracks = searchService.filterTracks(baseTracks)
         return filteredTracks
     }
+
+    /// IDs only so waveform payload updates do not Equatable-compare thousands of `Track` values.
+    private var filteredTrackIds: [Int] {
+        let baseTracks = tracksFilter ?? metadataManager.tracks
+        if searchService.searchText.isEmpty {
+            return baseTracks.compactMap(\.id)
+        }
+        return searchService.filterTracks(baseTracks).compactMap(\.id)
+    }
     
     var filteredDisplayItems: [TrackDisplayItem] {
         let tracks = filteredTracks
@@ -839,8 +853,9 @@ struct TrackListView: View {
     
     private func updateDisplayItems() {
         displayItems = filteredDisplayItems
+        lastFilteredTrackIds = filteredTrackIds
     }
-    
+
     /// Group-aware sorting that keeps group members together
     private func sortGroupAware(_ items: [TrackDisplayItem], using sortOrder: [KeyPathComparator<TrackDisplayItem>]) -> [TrackDisplayItem] {
         // Group items by their group association
@@ -964,7 +979,6 @@ struct TrackListView: View {
     }
     
     var body: some View {
-        
         VStack {
             TrackTable(
                 displayItems: displayItems,
@@ -1083,8 +1097,10 @@ struct TrackListView: View {
                 saveVisibleColumns()
             }
         }
-        .onChange(of: filteredTracks) { _ in
-            // Update display items when tracks change
+        .onChange(of: filteredTrackIds) { newIds in
+            if newIds == lastFilteredTrackIds {
+                return
+            }
             updateDisplayItems()
             
             // Preserve selection for display items that still exist
@@ -2002,6 +2018,7 @@ struct TableWidthObserver: NSViewRepresentable {
         playlistService: PlaylistService(),
         trackGroupService: trackGroupService
     )
+    .environmentObject(WaveformServiceHolder())
 }
 
 

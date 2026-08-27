@@ -62,6 +62,7 @@ struct InteractiveTagsView_New: View {
     }
     
     var body: some View {
+        let tags = metadataManager.getTrack(id: trackId)?.generalTags ?? []
         HStack(spacing: 6) {
             if tags.count <= 3 {
                 // Single line layout for 3 or fewer tags
