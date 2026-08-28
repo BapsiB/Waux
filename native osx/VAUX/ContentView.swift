@@ -19,7 +19,7 @@ struct ContentView: View {
     @State private var errorMessage = ""
     @State private var selectedItem: SelectableItem?
     @State private var playlistTracks: [Track] = []
-    @State private var isLoadingPlaylistTracks = false
+    @State private var isLoadingFolderTracks = false
     @State private var hasAttemptedAutoLoad = false
     @State private var isImportingNewFolder = false
     @State private var initialLoadComplete = false
@@ -50,15 +50,13 @@ struct ContentView: View {
                             trackGroupService: trackGroupService,
                             audioService: audioService,
                             playlistTracks: playlistTracks,
-                            isLoadingPlaylistTracks: isLoadingPlaylistTracks,
+                            isLoadingFolderTracks: isLoadingFolderTracks,
                             showingFolderPicker: $showingFolderPicker,
                             selectedItem: $selectedItem,
                             isImportingNewFolder: $isImportingNewFolder,
                             initialLoadComplete: initialLoadComplete,
                             onPlaylistTracksChanged: {
-                                if let item = selectedItem {
-                                    Task { await loadPlaylistTracks(for: item) }
-                                }
+                                reloadSelectedItemTracks()
                             }
                         )
                     }
@@ -161,22 +159,12 @@ struct ContentView: View {
             let newTrackIds = Set(newTracks.compactMap(\.id))
             let tracksAddedOrRemoved = oldTrackIds != newTrackIds
             
-            if tracksAddedOrRemoved, let item = selectedItem {
-                print("[ContentView] track structure changed, reloading playlist tracks for \(item.name)")
-                Task { await loadPlaylistTracks(for: item) }
-            } else if let item = selectedItem {
-                // For metadata-only changes, update playlist tracks in place
-                print("[ContentView] metadata changed, updating playlist tracks in place for \(item.name)")
-                Task { @MainActor in
-                    // Update existing playlist tracks with new metadata
-                    playlistTracks = playlistTracks.compactMap { playlistTrack in
-                        if let trackId = playlistTrack.id,
-                           let updatedTrack = newTracks.first(where: { $0.id == trackId }) {
-                            return updatedTrack
-                        }
-                        return playlistTrack
-                    }
-                }
+            if tracksAddedOrRemoved, selectedItem != nil {
+                print("[ContentView] track structure changed, reloading playlist tracks")
+                reloadSelectedItemTracks()
+            } else if selectedItem != nil {
+                print("[ContentView] metadata changed, updating playlist tracks in place")
+                playlistTracks = collectionService.tracks(ids: playlistTracks.compactMap(\.id))
             }
             
             // Update previous tracks for next comparison
@@ -217,9 +205,7 @@ struct ContentView: View {
                                 movedUpdates: moves
                             )
                             await playlistService.removeDeletedTrackIdsFromPlaylists(deletes)
-                            if let item = selectedItem {
-                                await loadPlaylistTracks(for: item)
-                            }
+                            reloadSelectedItemTracks()
                         } catch {
                             await MainActor.run {
                                 // Show error alert to user
@@ -293,54 +279,63 @@ struct ContentView: View {
     }
     
     private func handleSelectedItemChange(_ newItem: SelectableItem?) {
-        if let item = newItem {
-            Task {
-                await loadPlaylistTracks(for: item)
-            }
-        } else {
+        guard let item = newItem else {
             playlistTracks = []
+            isLoadingFolderTracks = false
+            return
+        }
+        switch item {
+        case .playlist:
+            isLoadingFolderTracks = false
+            applyResolvedTracks(for: item)
+        case .folder:
+            playlistTracks = []
+            isLoadingFolderTracks = true
+            Task { await loadFolderTracks(for: item) }
         }
     }
-    
-    private func loadPlaylistTracks(for item: SelectableItem) async {
-        await MainActor.run {
-            isLoadingPlaylistTracks = true
+
+    private func reloadSelectedItemTracks() {
+        guard let item = selectedItem else {
+            playlistTracks = []
+            return
         }
-        
+        switch item {
+        case .playlist:
+            applyResolvedTracks(for: item)
+        case .folder:
+            Task { await loadFolderTracks(for: item) }
+        }
+    }
+
+    private func playlistTrackIds(for playlist: Playlist) -> [Int] {
+        if let fresh = playlistService.playlists.first(where: { $0.id == playlist.id }) {
+            return fresh.trackIds
+        }
+        return playlist.trackIds
+    }
+
+    private func applyResolvedTracks(for item: SelectableItem) {
+        guard case .playlist(let playlist) = item else { return }
+        let trackIds = playlistTrackIds(for: playlist)
+        playlistTracks = collectionService.tracks(ids: trackIds)
+    }
+
+    private func loadFolderTracks(for item: SelectableItem) async {
+        guard case .folder(let folder) = item else { return }
         do {
-            let trackIds: [Int]
-            let itemName: String
-            
-            switch item {
-            case .playlist(let playlist):
-                // Prefer in-memory playlist from service so reloads reflect adds/removes without re-selecting.
-                if let fresh = playlistService.playlists.first(where: { $0.id == playlist.id }) {
-                    trackIds = fresh.trackIds
-                } else {
-                    trackIds = playlist.trackIds
-                }
-                itemName = playlist.name
-            case .folder(let folder):
-                trackIds = try await playlistService.getFolderTrackIds(folderId: folder.id)
-                itemName = folder.name
-            }
-            
-            print("Loading \(item.isFolder ? "folder" : "playlist"): \(itemName)")
-            print("Item has \(trackIds.count) track ids")
-            print("Collection has \(collectionService.tracks.count) tracks")
-            
+            let trackIds = try await playlistService.getFolderTrackIds(folderId: folder.id)
             let sortedTracks = collectionService.tracks(ids: trackIds)
-            
-            print("Final sorted tracks count: \(sortedTracks.count)")
-            
             await MainActor.run {
+                guard selectedItem?.id == item.id else { return }
                 playlistTracks = sortedTracks
-                isLoadingPlaylistTracks = false
+                isLoadingFolderTracks = false
             }
         } catch {
             await MainActor.run {
+                guard selectedItem?.id == item.id else { return }
                 playlistTracks = []
-                isLoadingPlaylistTracks = false
+                isLoadingFolderTracks = false
                 errorMessage = "Failed to load playlist tracks: \(error.localizedDescription)"
                 showingError = true
             }

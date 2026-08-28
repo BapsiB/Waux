@@ -6,7 +6,7 @@ struct MainContentArea: View {
     @ObservedObject var trackGroupService: TrackGroupService
     @ObservedObject var audioService: AudioService
     let playlistTracks: [Track]
-    let isLoadingPlaylistTracks: Bool
+    let isLoadingFolderTracks: Bool
     @Binding var showingFolderPicker: Bool
     @Binding var selectedItem: SelectableItem?
     @Binding var isImportingNewFolder: Bool
@@ -32,61 +32,17 @@ struct MainContentArea: View {
             if collectionService.isLoading {
                 ProgressView("Loading collection...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let item = selectedItem {
-                // Show playlist tracks
-                VStack(spacing: 0) {
-                    // Header with title, audio player, and search
-                    headerView(title: item.name, showCloseButton: true) {
-                        selectedItem = nil
-                    }
-                    
-                    if isLoadingPlaylistTracks {
-                        ProgressView("Loading playlist tracks...")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if !playlistTracks.isEmpty {
-                        TrackListView(
-                            collectionService: collectionService,
-                            audioService: audioService,
-                            tracksFilter: playlistTracks,
-                            searchService: searchService,
-                            playlistService: playlistService,
-                            trackGroupService: trackGroupService,
-                            loadedPlaylistId: {
-                                if case .playlist(let p) = selectedItem { return p.id }
-                                return nil
-                            }(),
-                            onPlaylistTracksChanged: onPlaylistTracksChanged,
-                            onNavigateToPlaylist: { playlist in
-                                selectedItem = .playlist(playlist)
-                            },
-                            isImportingNewFolder: $isImportingNewFolder,
-                            initialLoadComplete: initialLoadComplete
-                        )
-                    } else {
-                        // Empty playlist content
-                        VStack(spacing: 20) {
-                            Image(systemName: "music.note.list")
-                                .font(.system(size: 64))
-                                .foregroundColor(.blue)
-                            
-                            Text("Empty Playlist")
-                                .font(.largeTitle)
-                                .fontWeight(.bold)
-                            
-                            Text("This playlist contains no tracks")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
             } else if activeCollection != nil {
-                // Show all tracks when no playlist is selected
                 VStack(spacing: 0) {
-                    // Header with title, audio player, search, and view toggle
-                    headerView(title: "All Tracks", showCloseButton: false, showViewToggle: true)
-                    
-                    if showFolderView {
+                    if let item = selectedItem {
+                        headerView(title: item.name, showCloseButton: true) {
+                            selectedItem = nil
+                        }
+                    } else {
+                        headerView(title: "All Tracks", showCloseButton: false, showViewToggle: true)
+                    }
+
+                    if selectedItem == nil && showFolderView {
                         FolderHierarchyView(
                             collectionService: collectionService,
                             audioService: audioService,
@@ -98,18 +54,31 @@ struct MainContentArea: View {
                             }
                         )
                     } else {
-                        TrackListView(
-                            collectionService: collectionService,
-                            audioService: audioService,
-                            searchService: searchService,
-                            playlistService: playlistService,
-                            trackGroupService: trackGroupService,
-                            onNavigateToPlaylist: { playlist in
-                                selectedItem = .playlist(playlist)
-                            },
-                            isImportingNewFolder: $isImportingNewFolder,
-                            initialLoadComplete: initialLoadComplete
-                        )
+                        ZStack {
+                            TrackListView(
+                                collectionService: collectionService,
+                                audioService: audioService,
+                                tracksFilter: selectedItem == nil ? nil : playlistTracks,
+                                searchService: searchService,
+                                playlistService: playlistService,
+                                trackGroupService: trackGroupService,
+                                loadedPlaylistId: {
+                                    if case .playlist(let p) = selectedItem { return p.id }
+                                    return nil
+                                }(),
+                                onPlaylistTracksChanged: onPlaylistTracksChanged,
+                                onNavigateToPlaylist: { playlist in
+                                    selectedItem = .playlist(playlist)
+                                },
+                                isImportingNewFolder: $isImportingNewFolder,
+                                initialLoadComplete: initialLoadComplete
+                            )
+                            .id("main-track-list")
+
+                            if selectedItem != nil && playlistTracks.isEmpty && !isLoadingFolderTracks {
+                                emptyPlaylistOverlay
+                            }
+                        }
                     }
                 }
             } else {
@@ -178,6 +147,24 @@ struct MainContentArea: View {
         }
     }
     
+    private var emptyPlaylistOverlay: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "music.note.list")
+                .font(.system(size: 64))
+                .foregroundColor(.blue)
+
+            Text("Empty Playlist")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+
+            Text("This playlist contains no tracks")
+                .font(.title2)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.windowBackgroundColor))
+    }
+
     @ViewBuilder
     private func headerView(title: String, showCloseButton: Bool = false, showViewToggle: Bool = false, onClose: (() -> Void)? = nil) -> some View {
         HStack(alignment: .center, spacing: 16) {

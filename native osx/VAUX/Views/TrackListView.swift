@@ -856,6 +856,16 @@ struct TrackListView: View {
         lastFilteredTrackIds = filteredTrackIds
     }
 
+    /// Prefer cached rows when the ID list is unchanged so waveform/playback
+    /// redraws do not regroup. When the filter changes, compute immediately so
+    /// the table does not paint one frame of the previous playlist.
+    private var resolvedDisplayItems: [TrackDisplayItem] {
+        if filteredTrackIds == lastFilteredTrackIds {
+            return displayItems
+        }
+        return filteredDisplayItems
+    }
+
     /// Group-aware sorting that keeps group members together
     private func sortGroupAware(_ items: [TrackDisplayItem], using sortOrder: [KeyPathComparator<TrackDisplayItem>]) -> [TrackDisplayItem] {
         // Group items by their group association
@@ -979,9 +989,10 @@ struct TrackListView: View {
     }
     
     var body: some View {
+        let items = resolvedDisplayItems
         VStack {
             TrackTable(
-                displayItems: displayItems,
+                displayItems: items,
                 selectedTracks: $selectedDisplayItems,
                 sortOrder: $sortOrder,
                 visibleColumns: $visibleColumns,
@@ -1009,7 +1020,7 @@ struct TrackListView: View {
         .background(
             TableSelectionHandler(
                 selectedDisplayItems: $selectedDisplayItems,
-                displayItems: displayItems,
+                displayItems: items,
                 onRowDoubleClick: { track in
                     print("Double-clicked track: \(track.title)")
                     print("Track path: \(track.path)")
