@@ -322,60 +322,26 @@ struct ContentView: View {
             print("Item has \(trackPaths.count) track paths")
             print("Collection has \(collectionService.tracks.count) tracks")
             
-            // Debug: Print first few track paths
-            if !trackPaths.isEmpty {
-                print("First 3 track paths:")
-                for (index, path) in trackPaths.prefix(3).enumerated() {
-                    print("  \(index): \(path)")
+            // Index once, then resolve each playlist path (exact path, then filename).
+            var byPath: [String: Track] = [:]
+            byPath.reserveCapacity(collectionService.tracks.count)
+            var byFilename: [String: Track] = [:]
+            byFilename.reserveCapacity(collectionService.tracks.count)
+            for track in collectionService.tracks {
+                byPath[track.path] = track
+                let name = Self.fileNameOfPath(track.path)
+                if byFilename[name] == nil {
+                    byFilename[name] = track
                 }
             }
             
-            // Debug: Print first few collection track paths
-            if !collectionService.tracks.isEmpty {
-                print("First 3 collection track paths:")
-                for (index, track) in collectionService.tracks.prefix(3).enumerated() {
-                    print("  \(index): \(track.path)")
-                }
-            }
-            
-            // Get tracks that match the track paths
-            // Try exact match first
-            var tracks = collectionService.tracks.filter { track in
-                trackPaths.contains(track.path)
-            }
-            
-            print("Found \(tracks.count) exact matching tracks")
-            
-            // If no exact matches, try filename matching
-            if tracks.isEmpty {
-                tracks = collectionService.tracks.filter { track in
-                    trackPaths.contains { playlistPath in
-                        let trackFilename = URL(fileURLWithPath: track.path).lastPathComponent
-                        let playlistFilename = URL(fileURLWithPath: playlistPath).lastPathComponent
-                        return trackFilename == playlistFilename
-                    }
-                }
-                print("Found \(tracks.count) filename matching tracks")
-            }
-            
-            // If still no matches, try normalized path matching
-            if tracks.isEmpty {
-                tracks = collectionService.tracks.filter { track in
-                    trackPaths.contains { playlistPath in
-                        let normalizedTrackPath = URL(fileURLWithPath: track.path).standardized.path
-                        let normalizedPlaylistPath = URL(fileURLWithPath: playlistPath).standardized.path
-                        return normalizedTrackPath == normalizedPlaylistPath
-                    }
-                }
-                print("Found \(tracks.count) normalized matching tracks")
-            }
-            
-            // Sort tracks according to track order
-            let sortedTracks = trackPaths.compactMap { trackPath in
-                tracks.first { track in
-                    track.path == trackPath || 
-                    URL(fileURLWithPath: track.path).standardized.path == URL(fileURLWithPath: trackPath).standardized.path ||
-                    URL(fileURLWithPath: track.path).lastPathComponent == URL(fileURLWithPath: trackPath).lastPathComponent
+            var sortedTracks: [Track] = []
+            sortedTracks.reserveCapacity(trackPaths.count)
+            for path in trackPaths {
+                if let track = byPath[path] {
+                    sortedTracks.append(track)
+                } else if let track = byFilename[Self.fileNameOfPath(path)] {
+                    sortedTracks.append(track)
                 }
             }
             
@@ -556,6 +522,13 @@ struct ContentView: View {
         } catch {
             print("🔍 [ContentView] Scan failed: \(error)")
         }
+    }
+    
+    private static func fileNameOfPath(_ path: String) -> String {
+        if let slash = path.lastIndex(of: "/") {
+            return String(path[path.index(after: slash)...])
+        }
+        return path
     }
     
     private func regenerateAllWaveforms() async {
