@@ -216,6 +216,10 @@ struct ContentView: View {
                                 deletedTrackIds: deletes,
                                 movedUpdates: moves
                             )
+                            await playlistService.removeDeletedTrackIdsFromPlaylists(deletes)
+                            if let item = selectedItem {
+                                await loadPlaylistTracks(for: item)
+                            }
                         } catch {
                             await MainActor.run {
                                 // Show error alert to user
@@ -248,6 +252,9 @@ struct ContentView: View {
             )
             trackGroupService.setDatabase(collectionService.getDatabase(), databaseQueue: collectionService.databaseQueue)
             try await collectionService.loadAllTracks()
+            await MainActor.run {
+                waveformServiceHolder.waveformStore.invalidateAll()
+            }
             try await playlistService.loadFolders()
             try await playlistService.loadPlaylists()
             try await trackGroupService.loadGroups()
@@ -301,49 +308,28 @@ struct ContentView: View {
         }
         
         do {
-            let trackPaths: [String]
+            let trackIds: [Int]
             let itemName: String
             
             switch item {
             case .playlist(let playlist):
                 // Prefer in-memory playlist from service so reloads reflect adds/removes without re-selecting.
                 if let fresh = playlistService.playlists.first(where: { $0.id == playlist.id }) {
-                    trackPaths = fresh.trackPaths
+                    trackIds = fresh.trackIds
                 } else {
-                    trackPaths = playlist.trackPaths
+                    trackIds = playlist.trackIds
                 }
                 itemName = playlist.name
             case .folder(let folder):
-                trackPaths = try await playlistService.getFolderTrackPaths(folderId: folder.id)
+                trackIds = try await playlistService.getFolderTrackIds(folderId: folder.id)
                 itemName = folder.name
             }
             
             print("Loading \(item.isFolder ? "folder" : "playlist"): \(itemName)")
-            print("Item has \(trackPaths.count) track paths")
+            print("Item has \(trackIds.count) track ids")
             print("Collection has \(collectionService.tracks.count) tracks")
             
-            // Index once, then resolve each playlist path (exact path, then filename).
-            var byPath: [String: Track] = [:]
-            byPath.reserveCapacity(collectionService.tracks.count)
-            var byFilename: [String: Track] = [:]
-            byFilename.reserveCapacity(collectionService.tracks.count)
-            for track in collectionService.tracks {
-                byPath[track.path] = track
-                let name = Self.fileNameOfPath(track.path)
-                if byFilename[name] == nil {
-                    byFilename[name] = track
-                }
-            }
-            
-            var sortedTracks: [Track] = []
-            sortedTracks.reserveCapacity(trackPaths.count)
-            for path in trackPaths {
-                if let track = byPath[path] {
-                    sortedTracks.append(track)
-                } else if let track = byFilename[Self.fileNameOfPath(path)] {
-                    sortedTracks.append(track)
-                }
-            }
+            let sortedTracks = collectionService.tracks(ids: trackIds)
             
             print("Final sorted tracks count: \(sortedTracks.count)")
             
@@ -446,6 +432,9 @@ struct ContentView: View {
             // Load tracks, folders, then playlists sequentially to avoid concurrent access to the same SQLite connection
             print("[OpenFolder] Loading tracks...")
             try await collectionService.loadAllTracks()
+            await MainActor.run {
+                waveformServiceHolder.waveformStore.invalidateAll()
+            }
             print("[OpenFolder] Tracks loaded: \(collectionService.tracks.count)")
             try await playlistService.loadFolders()
             print("[OpenFolder] Folders loaded: \(playlistService.folders.count)")
@@ -524,13 +513,6 @@ struct ContentView: View {
         }
     }
     
-    private static func fileNameOfPath(_ path: String) -> String {
-        if let slash = path.lastIndex(of: "/") {
-            return String(path[path.index(after: slash)...])
-        }
-        return path
-    }
-    
     private func regenerateAllWaveforms() async {
         print("[ContentView] Starting waveform regeneration for all tracks")
         
@@ -541,11 +523,11 @@ struct ContentView: View {
             
             await MainActor.run {
                 waveformServiceHolder.ensure(collectionService: collectionService)
+                waveformServiceHolder.waveformStore.invalidateAll()
             }
 
-            // Process all tracks that have valid files
             let tracksToProcess = collectionService.tracks.filter { track in
-                !track.isUrl && track.waveformData == nil
+                track.needsWaveformAnalysis
             }
             
             print("[ContentView] 📊 Regenerating waveforms for \(tracksToProcess.count) tracks")

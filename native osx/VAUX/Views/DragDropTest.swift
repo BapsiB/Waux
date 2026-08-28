@@ -53,7 +53,7 @@ struct DragDropTest: View {
         let playlist1 = Playlist(
             id: "playlist1",
             name: "Playlist 1",
-            trackPaths: [],
+            trackIds: [],
             folderId: nil
         )
         

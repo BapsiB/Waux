@@ -242,8 +242,8 @@ struct FolderHierarchyView: View {
             Button("Edit Tags…") { showTagEditor = true }
             Button("Edit Metadata…") { showMetadataEditor = true }
             if let onNavigateToPlaylist {
-                let paths = trackList.map(\.path)
-                let playlistsWithSelection = playlistService.playlistsContainingAllTracks(absoluteTrackPaths: paths)
+                let ids = trackList.compactMap(\.id)
+                let playlistsWithSelection = playlistService.playlistsContainingAllTracks(trackIds: ids)
                 Menu("Open in Playlist") {
                     if playlistsWithSelection.isEmpty {
                         Button("No playlists") {}
@@ -301,6 +301,7 @@ struct FolderHierarchyView: View {
                     }
                 }
                 await collectionService.removeTracksFromMemory(trackIds: deletedIds)
+                playlistService.removeDeletedTrackIdsFromPlaylists(deletedIds)
                 await MainActor.run {
                     tracksToDelete = []
                     selectedRowIds.removeAll()

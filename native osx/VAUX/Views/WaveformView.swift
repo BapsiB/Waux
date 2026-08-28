@@ -14,22 +14,79 @@ final class TrackWaveformSlot: ObservableObject {
 
 final class WaveformDataStore {
     private var slots: [Int: TrackWaveformSlot] = [:]
+    private var queuedIds: Set<Int> = []
+    private var resolvedIds: Set<Int> = []
+    private var flushTask: Task<Void, Never>?
+    weak var collectionService: CollectionService?
 
-    func slot(for id: Int, seeding initial: [Double]? = nil) -> TrackWaveformSlot {
-        if let existing = slots[id] { return existing }
+    func slot(for id: Int, loadIfNeeded: Bool = true) -> TrackWaveformSlot {
+        if let existing = slots[id] {
+            if loadIfNeeded { enqueueLoad(id) }
+            return existing
+        }
         let slot = TrackWaveformSlot()
-        slot.data = initial
         slots[id] = slot
+        if loadIfNeeded {
+            enqueueLoad(id)
+        }
         return slot
     }
 
     func apply(trackId: Int, data: [Double]?) {
+        resolvedIds.insert(trackId)
+        queuedIds.remove(trackId)
         if let existing = slots[trackId] {
             existing.data = data
         } else {
             let slot = TrackWaveformSlot()
             slot.data = data
             slots[trackId] = slot
+        }
+    }
+
+    func invalidate(trackId: Int) {
+        resolvedIds.remove(trackId)
+        slots[trackId]?.data = nil
+    }
+
+    func invalidateAll() {
+        flushTask?.cancel()
+        flushTask = nil
+        resolvedIds.removeAll()
+        queuedIds.removeAll()
+        for slot in slots.values {
+            slot.data = nil
+        }
+    }
+
+    private func enqueueLoad(_ id: Int) {
+        guard id >= 0, !resolvedIds.contains(id) else { return }
+        queuedIds.insert(id)
+        scheduleFlush()
+    }
+
+    private func scheduleFlush() {
+        guard flushTask == nil else { return }
+        flushTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            guard !Task.isCancelled else { return }
+            self.flushTask = nil
+            await self.flush()
+        }
+    }
+
+    @MainActor
+    private func flush() async {
+        guard let collectionService else { return }
+        let ids = queuedIds.filter { !resolvedIds.contains($0) }
+        queuedIds.removeAll()
+        guard !ids.isEmpty else { return }
+        let loaded = await collectionService.loadWaveformBins(ids: Array(ids))
+        for id in ids {
+            resolvedIds.insert(id)
+            if let bins = loaded[id] {
+                apply(trackId: id, data: bins)
+            }
         }
     }
 }
@@ -45,6 +102,7 @@ class WaveformServiceHolder: ObservableObject {
     }
 
     func ensure(collectionService: CollectionService) {
+        waveformStore.collectionService = collectionService
         guard service == nil else { return }
         collectionService.waveformStatus = status
         service = WaveformProcessingService(collectionService: collectionService, status: status)
@@ -52,9 +110,8 @@ class WaveformServiceHolder: ObservableObject {
         service?.enqueueAllMissing()
         waveformCancellable = collectionService.waveformDidUpdate
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] track in
-                guard let id = track.id else { return }
-                self?.waveformStore.apply(trackId: id, data: track.waveformData)
+            .sink { [weak self] update in
+                self?.waveformStore.apply(trackId: update.trackId, data: update.bins)
             }
     }
 }
@@ -305,6 +362,7 @@ struct WaveformView: View {
 /// Play/pause + waveform for a track row. `Equatable` so SwiftUI skips redundant redraws when only other rows' playback state changes.
 private struct WaveformListCell: View, Equatable {
     let track: Track
+    let waveformData: [Double]
     let playbackProgress: Double
     let isPlayingThisTrack: Bool
     let highDetailWaveform: Bool
@@ -312,7 +370,7 @@ private struct WaveformListCell: View, Equatable {
 
     static func == (lhs: WaveformListCell, rhs: WaveformListCell) -> Bool {
         guard lhs.track.id == rhs.track.id else { return false }
-        guard lhs.track.waveformPointCount == rhs.track.waveformPointCount else { return false }
+        guard lhs.waveformData.count == rhs.waveformData.count else { return false }
         guard lhs.track.timeMarkers.count == rhs.track.timeMarkers.count else { return false }
         guard lhs.isPlayingThisTrack == rhs.isPlayingThisTrack else { return false }
         guard lhs.highDetailWaveform == rhs.highDetailWaveform else { return false }
@@ -333,7 +391,7 @@ private struct WaveformListCell: View, Equatable {
 
             WaveformView(
                 highDetail: highDetailWaveform,
-                waveformData: track.waveformData ?? [],
+                waveformData: waveformData,
                 progress: playbackProgress,
                 markers: track.timeMarkers,
                 durationMs: track.duration,
@@ -421,7 +479,7 @@ struct WaveformColumn: View {
     }
 
     private var resolvedWaveformData: [Double]? {
-        slot.data ?? track.waveformData
+        slot.data
     }
 
     var body: some View {
@@ -431,52 +489,44 @@ struct WaveformColumn: View {
     @ViewBuilder
     private func columnBodyContent() -> some View {
         Group {
-            if resolvedWaveformData?.isEmpty == false {
+            if let data = resolvedWaveformData, !data.isEmpty {
                 WaveformListCell(
-                    track: track.withUpdates(["waveformData": resolvedWaveformData as Any]),
+                    track: track,
+                    waveformData: data,
                     playbackProgress: playbackProgress,
                     isPlayingThisTrack: isPlayingThisTrack,
                     highDetailWaveform: highDetailWaveform,
                     audioService: audioService
                 )
                 .equatable()
-            } else {
-                    // Check if this track has empty waveform data (indicating missing file)
-                    // Note: Empty waveform data could also indicate corrupted data that needs regeneration
-                    if let waveformData = track.waveformData, waveformData.isEmpty {
-                        if emptyWaveformFileExists() {
-                            // File exists but waveform is empty/corrupted - trigger analysis
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text("Analyzing…")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .onAppear {
-                                print("[TrackListView] Waveform cell appeared for track \(track.id ?? -1): \(track.title) (regenerating corrupted waveform; fileExists=true)")
-                                waveformServiceHolder.ensure(collectionService: collectionService)
-                                waveformServiceHolder.service?.analyzeIfMissing(track)
-                            }
-                        } else {
-                            // File truly missing
-                            HStack(spacing: 6) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .foregroundColor(.orange)
-                                Text("File missing")
-                                    .font(.caption)
-                                    .foregroundColor(.orange)
-                            }
-                        }
-                    } else {
-                        // Placeholder only: analysis is queued by WaveformProcessingService
-                        // for the whole collection, independent of which rows are on screen.
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Analyzing…")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+            } else if track.waveformStatus == .empty || resolvedWaveformData?.isEmpty == true {
+                if emptyWaveformFileExists() {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Analyzing…")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
+                    .onAppear {
+                        waveformServiceHolder.ensure(collectionService: collectionService)
+                        waveformServiceHolder.service?.analyzeIfMissing(track)
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text("File missing")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                }
+            } else {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Analyzing…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
         }
     }

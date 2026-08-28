@@ -232,7 +232,7 @@ struct GroupedTrack: Identifiable, Equatable {
     var isUrl: Bool { mainTrack.isUrl }
     var duration: Int { mainTrack.duration }
     var timeMarkers: [TimeMarker] { mainTrack.timeMarkers }
-    var waveformData: [Double]? { mainTrack.waveformData }
+    var waveformStatus: WaveformStatus { mainTrack.waveformStatus }
     var rating: Int { mainTrack.rating }
     var comment: String { mainTrack.comment }
     var generalTags: [String] { mainTrack.generalTags }

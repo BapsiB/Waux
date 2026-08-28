@@ -197,7 +197,7 @@ struct TrackTable: View {
             collectionService: collectionService,
             slot: waveformServiceHolder.waveformStore.slot(
                 for: displayItem.track.id ?? -1,
-                seeding: displayItem.track.waveformData
+                loadIfNeeded: displayItem.track.waveformStatus == .ready
             )
         )
         .id("waveform-\(displayItem.track.id ?? -1)")
@@ -1422,12 +1422,16 @@ struct TrackListView: View {
     
     private func removeSelectedTracksFromPlaylist(tracks: [Track]) {
         guard let playlistId = loadedPlaylistId else { return }
-        var seenPaths = Set<String>()
-        let uniqueTracks = tracks.filter { seenPaths.insert($0.path).inserted }
+        var seenIds = Set<Int>()
+        let uniqueTracks = tracks.filter { track in
+            guard let id = track.id else { return false }
+            return seenIds.insert(id).inserted
+        }
         Task {
             do {
                 for track in uniqueTracks {
-                    try await playlistService.removeTrackFromPlaylist(playlistId: playlistId, absoluteTrackPath: track.path)
+                    guard let trackId = track.id else { continue }
+                    try await playlistService.removeTrackFromPlaylist(playlistId: playlistId, trackId: trackId)
                 }
                 await MainActor.run {
                     selectedDisplayItems.removeAll()
@@ -1460,6 +1464,7 @@ struct TrackListView: View {
                 }
                 
                 await collectionService.removeTracksFromMemory(trackIds: deletedIds)
+                playlistService.removeDeletedTrackIdsFromPlaylists(deletedIds)
                 
                 // Clear selection and tracks to delete
                 await MainActor.run {
@@ -1513,12 +1518,13 @@ struct TrackListView: View {
                         isUrl: track.isUrl,
                         duration: track.duration,
                         timeMarkers: track.timeMarkers,
-                        waveformData: nil, // Clear waveform data to trigger analysis
+                        waveformStatus: .missing,
                         rating: track.rating,
                         comment: track.comment,
                         generalTags: track.generalTags,
                         dateAdded: track.dateAdded
                     )
+                    waveformServiceHolder.waveformStore.invalidate(trackId: trackId)
                     waveformServiceHolder.service?.analyzeIfMissing(refreshedTrack)
                     print("🔄 Triggered waveform analysis for refreshed track: \(track.title)")
                 }
@@ -1557,8 +1563,8 @@ struct TrackListView: View {
             }
             if let onNavigateToPlaylist {
                 let selectedItems = displayItems.filter { selectedDisplayItems.contains($0.id) }
-                let paths = selectedItems.map(\.track.path)
-                let playlistsWithSelection = playlistService.playlistsContainingAllTracks(absoluteTrackPaths: paths)
+                let ids = selectedItems.compactMap(\.track.id)
+                let playlistsWithSelection = playlistService.playlistsContainingAllTracks(trackIds: ids)
                 Menu("Open in Playlist") {
                     if playlistsWithSelection.isEmpty {
                         Button("No playlists") {}

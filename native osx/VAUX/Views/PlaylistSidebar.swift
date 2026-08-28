@@ -785,7 +785,7 @@ struct ExportPlaylistSheet: View {
                     .font(.body)
                     .foregroundColor(.secondary)
                 
-                Text("\(playlist.trackPaths.count) tracks")
+                Text("\(playlist.trackIds.count) tracks")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -1173,11 +1173,11 @@ struct FolderItemView: View {
     private func loadFolderInfo() {
         Task {
             do {
-                let trackPaths = try await playlistService.getFolderTrackPaths(folderId: folder.id)
+                let trackIds = try await playlistService.getFolderTrackIds(folderId: folder.id)
                 let duration = try await playlistService.getFolderDuration(folderId: folder.id)
                 
                 await MainActor.run {
-                    self.folderTrackCount = trackPaths.count
+                    self.folderTrackCount = trackIds.count
                     self.folderDuration = duration
                 }
             } catch {
@@ -1225,7 +1225,10 @@ struct PlaylistItemView: View {
                     .lineLimit(1)
                 
                 HStack {
-                    
+                    Text("\(playlist.trackIds.count) tracks")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     if playlist.duration > 0 {
                         Text("•")
                             .font(.caption)
@@ -1337,9 +1340,8 @@ struct CSVExportDocument: FileDocument {
         // The actual CSV generation with full metadata is handled in PlaylistService.exportPlaylistCSV
         var csv = "Title,Artist,Album,Album Artist,Composer,Genre,Year,Track Number,Disc Number,BPM,Relative Path,Duration,Rating,Comment,Tags,Date Added\n"
         
-        for trackPath in playlist.trackPaths {
-            let escapedPath = trackPath.replacingOccurrences(of: "\"", with: "\"\"")
-            csv += "\"\(escapedPath)\",,,,,,,,,,,,,,\n"
+        for trackId in playlist.trackIds {
+            csv += "\"\(trackId)\",,,,,,,,,,,,,,\n"
         }
         
         return csv

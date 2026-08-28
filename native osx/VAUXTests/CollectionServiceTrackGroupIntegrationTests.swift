@@ -28,8 +28,8 @@ struct CollectionServiceTrackGroupIntegrationTests {
             INSERT INTO music (
                 id, title, artist, album, albumArtist, composer, genre, year, 
                 trackNumber, discNumber, bpm, path, isUrl, duration, 
-                timeMarkers, waveformData, rating, comment, generalTags, dateAdded
-            ) VALUES (?, ?, ?, ?, '', '', '', NULL, NULL, NULL, NULL, ?, 0, ?, '[]', NULL, 0, '', '[]', ?)
+                timeMarkers, rating, comment, generalTags, dateAdded
+            ) VALUES (?, ?, ?, ?, '', '', '', NULL, NULL, NULL, NULL, ?, 0, ?, '[]', 0, '', '[]', ?)
         """
         
         var statement: OpaquePointer?

@@ -145,7 +145,7 @@ struct PlaylistRowView: View {
                     .lineLimit(1)
                 
                 HStack {
-                    Text("\(playlist.trackPaths.count) tracks")
+                    Text("\(playlist.trackIds.count) tracks")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     

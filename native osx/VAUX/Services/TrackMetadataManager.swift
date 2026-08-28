@@ -52,8 +52,8 @@ class TrackMetadataManager: ObservableObject {
 
         collectionService.waveformDidUpdate
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] track in
-                self?.patchTrackWaveform(track)
+            .sink { [weak self] update in
+                self?.patchTrackWaveform(trackId: update.trackId, bins: update.bins)
             }
             .store(in: &cancellables)
     }
@@ -254,10 +254,12 @@ class TrackMetadataManager: ObservableObject {
     }
 
     /// Apply a completed waveform without publishing the full track list (avoids table rebuilds).
-    private func patchTrackWaveform(_ track: Track) {
-        guard let id = track.id, let index = _tracks.firstIndex(where: { $0.id == id }) else { return }
-        _tracks[index] = track
-        tracksById[id] = track
+    private func patchTrackWaveform(trackId: Int, bins: [Double]) {
+        guard let index = _tracks.firstIndex(where: { $0.id == trackId }) else { return }
+        let status: WaveformStatus = bins.isEmpty ? .empty : .ready
+        let updated = _tracks[index].withWaveformStatus(status)
+        _tracks[index] = updated
+        tracksById[trackId] = updated
     }
 
     private func rebuildTrackIndex() {
@@ -374,7 +376,7 @@ class TrackMetadataManager: ObservableObject {
             isUrl: track.isUrl,
             duration: track.duration,
             timeMarkers: track.timeMarkers,
-            waveformData: track.waveformData,
+            waveformStatus: track.waveformStatus,
             rating: finalRating,
             comment: updatedComment,
             generalTags: updatedGeneralTags

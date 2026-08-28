@@ -36,10 +36,10 @@ class WaveformProcessingService: ObservableObject {
             print("[Waveform] Track has no ID, ignoring: \(track.title)")
             return
         }
-        let hasWaveform = track.waveformData != nil && !(track.waveformData?.isEmpty ?? true)
-        print("[Waveform] Analyze gate for track \(id): waveformPresent=\(track.waveformData != nil), waveformEmpty=\(track.waveformData?.isEmpty ?? true), willAnalyze=\(!hasWaveform)")
+        let hasWaveform = track.waveformStatus == .ready
+        print("[Waveform] Analyze gate for track \(id): status=\(track.waveformStatus), willAnalyze=\(!hasWaveform)")
         guard !hasWaveform else {
-            print("[Waveform] Track \(id) already has valid waveform data (\(track.waveformData?.count ?? 0) bins), skipping")
+            print("[Waveform] Track \(id) already has waveform data, skipping")
             return
         }
         guard !track.isUrl else {
@@ -55,7 +55,7 @@ class WaveformProcessingService: ObservableObject {
     func enqueueAllMissing() {
         guard !isShuttingDown else { return }
         let missing = collectionService.tracks.filter { track in
-            !track.isUrl && track.waveformData == nil && track.id != nil
+            track.needsWaveformAnalysis && track.id != nil
         }
         if !missing.isEmpty {
             print("[Waveform] Scanning collection for missing waveforms: \(missing.count) of \(collectionService.tracks.count)")
@@ -109,7 +109,7 @@ class WaveformProcessingService: ObservableObject {
             return
         }
 
-        let hasWaveform = track.waveformData != nil && !(track.waveformData?.isEmpty ?? true)
+        let hasWaveform = track.waveformStatus == .ready
         if hasWaveform {
             processingQueue.async { [weak self] in self?.processNextLocked() }
             return
@@ -194,7 +194,7 @@ class WaveformProcessingService: ObservableObject {
         print("[Waveform] ✅ File exists for track \(trackId): \(url.path)")
 
         do {
-            let data = try generateWaveform(fromFileAt: url, targetBins: 1024)
+            let data = try generateWaveform(fromFileAt: url, targetBins: WaveformCodec.binCount)
             
             if !data.isEmpty, let id = track.id {
                 saveWaveformSync(trackId: id, waveformData: data, successLog: "Successfully saved waveform data for track \(id)")

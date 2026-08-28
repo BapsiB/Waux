@@ -238,7 +238,6 @@ class GroupNamingTests: XCTestCase {
             isUrl: false,
             duration: 180000,
             timeMarkers: [],
-            waveformData: nil,
             rating: 0,
             comment: "",
             generalTags: [],

@@ -10,7 +10,7 @@ import ID3TagEditor
 
 class CollectionService: ObservableObject {
     // MARK: - Constants
-    private let databaseVersion = 7
+    private let databaseVersion = 8
     private let tableMusic = "music"
     private let tablePlaylists = "playlists"
     private let tablePlaylistTracks = "playlist_tracks"
@@ -18,6 +18,7 @@ class CollectionService: ObservableObject {
     private let tableUiSettings = "ui_settings"
     private let tableTrackGroups = "track_groups"
     private let tableTrackGroupMembers = "track_group_members"
+    private let tableWaveforms = "waveforms"
     
     // Column names for music table
     private let columnId = "id"
@@ -41,22 +42,69 @@ class CollectionService: ObservableObject {
     private let columnGeneralTags = "generalTags"
     private let columnDateAdded = "dateAdded"
     
-    // Explicit column selection to guarantee order across different DB schemas
+    // Explicit column selection to guarantee order across different DB schemas.
+    // Waveform samples live in `waveforms`; this list is metadata only.
     private var selectTrackColumns: String {
-        "\(columnId), \(columnTitle), \(columnArtist), \(columnAlbum), \(columnAlbumArtist), \(columnComposer), \(columnGenre), \(columnYear), \(columnTrackNumber), \(columnDiscNumber), \(columnBpm), \(columnPath), \(columnIsUrl), \(columnDuration), \(columnTimeMarkers), \(columnWaveformData), \(columnRating), \(columnComment), \(columnGeneralTags), \(columnDateAdded)"
+        let t = tableMusic
+        return "\(t).\(columnId), \(t).\(columnTitle), \(t).\(columnArtist), \(t).\(columnAlbum), \(t).\(columnAlbumArtist), \(t).\(columnComposer), \(t).\(columnGenre), \(t).\(columnYear), \(t).\(columnTrackNumber), \(t).\(columnDiscNumber), \(t).\(columnBpm), \(t).\(columnPath), \(t).\(columnIsUrl), \(t).\(columnDuration), \(t).\(columnTimeMarkers), \(t).\(columnRating), \(t).\(columnComment), \(t).\(columnGeneralTags), \(t).\(columnDateAdded)"
     }
+
+    private var selectTracksFromMusicSQL: String {
+        """
+        SELECT \(selectTrackColumns),
+               CASE WHEN w.track_id IS NULL THEN 0 WHEN w.bin_count = 0 THEN 1 ELSE 2 END
+        FROM \(tableMusic)
+        LEFT JOIN \(tableWaveforms) w ON w.track_id = \(tableMusic).\(columnId)
+        """
+    }
+
+    private let iso8601DateFormatter = ISO8601DateFormatter()
     
     // MARK: - Properties
     private var _tracks: [Track] = []
+    private var tracksById: [Int: Track] = [:]
     private let tracksSubject = CurrentValueSubject<[Track], Never>([])
     var tracks: [Track] {
         get { _tracks }
         set {
             _tracks = newValue
+            rebuildTracksById()
             tracksSubject.send(newValue)
             refreshMissingWaveformCount()
             objectWillChange.send()
         }
+    }
+
+    /// Ordered lookup of in-memory tracks by `music.id`. Missing ids are skipped.
+    func tracks(ids: [Int]) -> [Track] {
+        ids.compactMap { tracksById[$0] }
+    }
+
+    func track(id: Int) -> Track? {
+        tracksById[id]
+    }
+
+    private func rebuildTracksById() {
+        var index: [Int: Track] = [:]
+        index.reserveCapacity(_tracks.count)
+        for track in _tracks {
+            if let id = track.id {
+                index[id] = track
+            }
+        }
+        tracksById = index
+    }
+
+    func makePlaylistPathLookup() -> PlaylistPathLookup {
+        let pairs = _tracks.compactMap { track -> (id: Int, path: String)? in
+            guard let id = track.id else { return nil }
+            return (id, track.path)
+        }
+        return PlaylistPathLookup(
+            idAndPaths: pairs,
+            collectionRootPath: activeCollectionDefinition?.rootPath,
+            databasePath: activeCollectionDefinition?.dbPath
+        )
     }
     var tracksPublisher: AnyPublisher<[Track], Never> {
         tracksSubject.eraseToAnyPublisher()
@@ -67,7 +115,7 @@ class CollectionService: ObservableObject {
     /// Local tracks that still have no waveform (`nil`). Empty arrays are treated as processed (e.g. missing file).
     private(set) var missingWaveformCount = 0
     /// Lightweight per-track waveform completion. Does not republish the full `tracks` array.
-    let waveformDidUpdate = PassthroughSubject<Track, Never>()
+    let waveformDidUpdate = PassthroughSubject<(trackId: Int, bins: [Double]), Never>()
     weak var waveformStatus: WaveformStatusModel?
     var pendingWaveformTrackIds: [Int] = []
     
@@ -336,6 +384,10 @@ class CollectionService: ObservableObject {
         
         // Check if track groups tables exist and create them if needed
         try migrateTrackGroupsTables()
+
+        try migratePlaylistTracksToTrackIds()
+
+        try migrateWaveformsTable()
     }
     
     /// Creates performance indexes for track group operations
@@ -443,6 +495,336 @@ class CollectionService: ObservableObject {
         }
     }
 
+    private func playlistTracksCreateSQL(tableName: String, ifNotExists: Bool) -> String {
+        let exists = ifNotExists ? "IF NOT EXISTS " : ""
+        return """
+        CREATE TABLE \(exists)\(tableName) (
+            playlist_id TEXT NOT NULL,
+            track_id INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (playlist_id, track_id),
+            FOREIGN KEY (playlist_id) REFERENCES \(tablePlaylists)(id) ON DELETE CASCADE,
+            FOREIGN KEY (track_id) REFERENCES \(tableMusic)(id) ON DELETE CASCADE
+        )
+        """
+    }
+
+    private func createPlaylistTracksIndex(db: OpaquePointer) throws {
+        let sql = "CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_id ON \(tablePlaylistTracks)(playlist_id, sort_order)"
+        if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            print("⚠️ Failed to create playlist_tracks index: \(errorMessage)")
+        }
+    }
+
+    /// Idempotent: no-op once `playlist_tracks` has no `track_path` column.
+    private func migratePlaylistTracksToTrackIds() throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+
+        if !sqliteTableExists(tablePlaylistTracks, db: db) {
+            print("🔧 Creating playlist_tracks table with track_id membership...")
+            try execSQL(playlistTracksCreateSQL(tableName: tablePlaylistTracks, ifNotExists: true), db: db)
+            try createPlaylistTracksIndex(db: db)
+            return
+        }
+
+        let columns = sqliteColumnNames(table: tablePlaylistTracks, db: db)
+        if !columns.contains("track_path") {
+            try createPlaylistTracksIndex(db: db)
+            return
+        }
+
+        print("🔧 Migrating playlist_tracks from track_path to track_id...")
+
+        let musicRows = try loadMusicIdPaths(db: db)
+        let lookup = PlaylistPathLookup(
+            idAndPaths: musicRows,
+            collectionRootPath: activeCollectionDefinition?.rootPath,
+            databasePath: activeCollectionDefinition?.dbPath
+        )
+        let validPlaylistIds = try loadPlaylistIds(db: db)
+        let oldRows = try loadLegacyPlaylistTrackPathRows(db: db)
+
+        struct MembershipKey: Hashable {
+            let playlistId: String
+            let trackId: Int
+        }
+        var kept: [MembershipKey: Int] = [:]
+        var skipped = 0
+        for row in oldRows {
+            if !validPlaylistIds.contains(row.playlistId) {
+                skipped += 1
+                print("⚠️ Dropping playlist_tracks row for missing playlist \(row.playlistId)")
+                continue
+            }
+            guard let trackId = lookup.resolve(row.trackPath) else {
+                skipped += 1
+                print("⚠️ Could not resolve playlist track path to music.id, dropping: \(row.trackPath)")
+                continue
+            }
+            let key = MembershipKey(playlistId: row.playlistId, trackId: trackId)
+            if let existingOrder = kept[key] {
+                if row.sortOrder < existingOrder {
+                    kept[key] = row.sortOrder
+                }
+            } else {
+                kept[key] = row.sortOrder
+            }
+        }
+
+        let newTable = "playlist_tracks_new"
+        sqlite3_exec(db, "PRAGMA foreign_keys = OFF", nil, nil, nil)
+        if sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) != SQLITE_OK {
+            sqlite3_exec(db, "PRAGMA foreign_keys = ON", nil, nil, nil)
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Failed to begin playlist_tracks migration: \(errorMessage)")
+        }
+        var committed = false
+        defer {
+            if !committed {
+                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            }
+            sqlite3_exec(db, "PRAGMA foreign_keys = ON", nil, nil, nil)
+        }
+
+        _ = sqlite3_exec(db, "DROP TABLE IF EXISTS \(newTable)", nil, nil, nil)
+        try execSQL(playlistTracksCreateSQL(tableName: newTable, ifNotExists: false), db: db)
+
+        let insertSQL = "INSERT INTO \(newTable) (playlist_id, track_id, sort_order) VALUES (?, ?, ?)"
+        var insertStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Failed to prepare playlist_tracks insert: \(errorMessage)")
+        }
+        defer { sqlite3_finalize(insertStmt) }
+
+        let sortedKeys = kept.keys.sorted { lhs, rhs in
+            if lhs.playlistId != rhs.playlistId { return lhs.playlistId < rhs.playlistId }
+            return (kept[lhs] ?? 0) < (kept[rhs] ?? 0)
+        }
+        for key in sortedKeys {
+            let sortOrder = kept[key] ?? 0
+            sqlite3_reset(insertStmt)
+            sqlite3_clear_bindings(insertStmt)
+            sqlite3_bind_text(insertStmt, 1, key.playlistId, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int64(insertStmt, 2, Int64(key.trackId))
+            sqlite3_bind_int(insertStmt, 3, Int32(sortOrder))
+            guard sqlite3_step(insertStmt) == SQLITE_DONE else {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw CollectionError.queryFailed(message: "Failed to insert migrated playlist track: \(errorMessage)")
+            }
+        }
+
+        try execSQL("DROP TABLE \(tablePlaylistTracks)", db: db)
+        try execSQL("ALTER TABLE \(newTable) RENAME TO \(tablePlaylistTracks)", db: db)
+        try createPlaylistTracksIndex(db: db)
+
+        if sqlite3_exec(db, "COMMIT", nil, nil, nil) != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Failed to commit playlist_tracks migration: \(errorMessage)")
+        }
+        committed = true
+        print("✅ Migrated playlist_tracks to track_id (\(kept.count) rows kept, \(skipped) dropped)")
+    }
+
+    private func waveformsCreateSQL() -> String {
+        """
+        CREATE TABLE IF NOT EXISTS \(tableWaveforms) (
+            track_id INTEGER PRIMARY KEY,
+            bins BLOB NOT NULL,
+            bin_count INTEGER NOT NULL,
+            version INTEGER NOT NULL
+        )
+        """
+    }
+
+    /// Creates `waveforms` and copies legacy JSON `music.waveformData` into Float32 blobs (256 bins).
+    private func migrateWaveformsTable() throws {
+        guard let db = database else { throw CollectionError.databaseNotOpen }
+
+        try execSQL(waveformsCreateSQL(), db: db)
+
+        let musicExists = sqliteTableExists(tableMusic, db: db)
+        guard musicExists else { return }
+
+        let columns = sqliteColumnNames(table: tableMusic, db: db)
+        guard columns.contains(columnWaveformData) else { return }
+
+        let selectSQL = """
+            SELECT m.\(columnId), m.\(columnWaveformData)
+            FROM \(tableMusic) m
+            LEFT JOIN \(tableWaveforms) w ON w.track_id = m.\(columnId)
+            WHERE w.track_id IS NULL
+              AND m.\(columnWaveformData) IS NOT NULL
+              AND length(m.\(columnWaveformData)) > 0
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, selectSQL, -1, &statement, nil) == SQLITE_OK else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: "Waveform migration select failed: \(errorMessage)")
+        }
+        defer { sqlite3_finalize(statement) }
+
+        try execSQL("BEGIN", db: db)
+        var migrated = 0
+        do {
+            let upsertSQL = """
+                INSERT INTO \(tableWaveforms) (track_id, bins, bin_count, version)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(track_id) DO UPDATE SET
+                    bins = excluded.bins,
+                    bin_count = excluded.bin_count,
+                    version = excluded.version
+                """
+            var upsert: OpaquePointer?
+            guard sqlite3_prepare_v2(db, upsertSQL, -1, &upsert, nil) == SQLITE_OK else {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw CollectionError.queryFailed(message: "Waveform migration upsert failed: \(errorMessage)")
+            }
+            defer { sqlite3_finalize(upsert) }
+
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let trackId = Int(sqlite3_column_int64(statement, 0))
+                guard sqlite3_column_type(statement, 1) != SQLITE_NULL,
+                      let jsonPtr = sqlite3_column_text(statement, 1) else { continue }
+                let json = String(cString: jsonPtr)
+                let legacy = parseLegacyWaveformJSON(json)
+                let bins: [Double]
+                if legacy.isEmpty {
+                    bins = []
+                } else {
+                    bins = WaveformCodec.downsample(legacy, to: WaveformCodec.binCount)
+                }
+                let blob = WaveformCodec.encode(bins)
+                sqlite3_reset(upsert)
+                sqlite3_clear_bindings(upsert)
+                sqlite3_bind_int(upsert, 1, Int32(trackId))
+                blob.withUnsafeBytes { raw in
+                    sqlite3_bind_blob(upsert, 2, raw.baseAddress, Int32(blob.count), SQLITE_TRANSIENT)
+                }
+                sqlite3_bind_int(upsert, 3, Int32(bins.count))
+                sqlite3_bind_int(upsert, 4, Int32(WaveformCodec.blobVersion))
+                if sqlite3_step(upsert) != SQLITE_DONE {
+                    let errorMessage = String(cString: sqlite3_errmsg(db))
+                    throw CollectionError.queryFailed(message: "Waveform migration insert failed: \(errorMessage)")
+                }
+                migrated += 1
+                if migrated % 500 == 0 {
+                    print("🔧 Migrated \(migrated) waveform rows to binary store…")
+                }
+            }
+
+            if migrated > 0 {
+                try execSQL("UPDATE \(tableMusic) SET \(columnWaveformData) = NULL WHERE \(columnWaveformData) IS NOT NULL", db: db)
+            }
+            try execSQL("COMMIT", db: db)
+        } catch {
+            _ = sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw error
+        }
+
+        if migrated > 0 {
+            print("✅ Migrated \(migrated) waveforms from JSON to \(WaveformCodec.binCount)-bin blobs")
+        }
+    }
+
+    private func parseLegacyWaveformJSON(_ jsonString: String) -> [Double] {
+        let trimmed = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "null" else { return [] }
+        guard let data = trimmed.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([Double].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    private func sqliteTableExists(_ name: String, db: OpaquePointer) -> Bool {
+        let sql = "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, name, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
+    private func sqliteColumnNames(table: String, db: OpaquePointer) -> Set<String> {
+        let sql = "PRAGMA table_info(\(table))"
+        var statement: OpaquePointer?
+        var names = Set<String>()
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return names }
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let namePtr = sqlite3_column_text(statement, 1) {
+                names.insert(String(cString: namePtr))
+            }
+        }
+        return names
+    }
+
+    private func execSQL(_ sql: String, db: OpaquePointer) throws {
+        if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+    }
+
+    private func loadMusicIdPaths(db: OpaquePointer) throws -> [(id: Int, path: String)] {
+        let sql = "SELECT \(columnId), \(columnPath) FROM \(tableMusic)"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        defer { sqlite3_finalize(statement) }
+        var rows: [(id: Int, path: String)] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let id = Int(sqlite3_column_int64(statement, 0))
+            let path = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+            rows.append((id, path))
+        }
+        return rows
+    }
+
+    private func loadPlaylistIds(db: OpaquePointer) throws -> Set<String> {
+        guard sqliteTableExists(tablePlaylists, db: db) else { return [] }
+        let sql = "SELECT id FROM \(tablePlaylists)"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        defer { sqlite3_finalize(statement) }
+        var ids = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let ptr = sqlite3_column_text(statement, 0) {
+                ids.insert(String(cString: ptr))
+            }
+        }
+        return ids
+    }
+
+    private func loadLegacyPlaylistTrackPathRows(db: OpaquePointer) throws -> [(playlistId: String, trackPath: String, sortOrder: Int)] {
+        let sql = """
+            SELECT playlist_id, track_path, sort_order
+            FROM \(tablePlaylistTracks)
+            ORDER BY playlist_id, sort_order ASC
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw CollectionError.queryFailed(message: errorMessage)
+        }
+        defer { sqlite3_finalize(statement) }
+        var rows: [(playlistId: String, trackPath: String, sortOrder: Int)] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let playlistId = sqlite3_column_text(statement, 0).map { String(cString: $0) } ?? ""
+            let trackPath = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+            let sortOrder = Int(sqlite3_column_int(statement, 2))
+            rows.append((playlistId, trackPath, sortOrder))
+        }
+        return rows
+    }
+
     // MARK: - Database Creation (for new local collections)
     /// Creates a new local database file at the given path with the required schema if it doesn't already exist.
     func createNewLocalDatabase(at dbPath: String) throws {
@@ -492,7 +874,6 @@ class CollectionService: ObservableObject {
             isUrl INTEGER NOT NULL DEFAULT 0,
             duration INTEGER,
             timeMarkers TEXT,
-            waveformData TEXT,
             rating INTEGER DEFAULT 0,
             comment TEXT,
             generalTags TEXT,
@@ -507,13 +888,7 @@ class CollectionService: ObservableObject {
         )
         """
 
-        let createPlaylistTracksSQL = """
-        CREATE TABLE IF NOT EXISTS \(tablePlaylistTracks) (
-            playlist_id TEXT NOT NULL,
-            track_path TEXT NOT NULL,
-            sort_order INTEGER NOT NULL DEFAULT 0
-        )
-        """
+        let createPlaylistTracksSQL = playlistTracksCreateSQL(tableName: tablePlaylistTracks, ifNotExists: true)
 
         let createLocalRootsSQL = """
         CREATE TABLE IF NOT EXISTS \(tableLocalRoots) (
@@ -542,7 +917,9 @@ class CollectionService: ObservableObject {
         )
         """
 
-        let statements = [createMusicSQL, createPlaylistsSQL, createPlaylistTracksSQL, createLocalRootsSQL, createTrackGroupsSQL, createTrackGroupMembersSQL]
+        let createWaveformsSQL = waveformsCreateSQL()
+
+        let statements = [createMusicSQL, createPlaylistsSQL, createPlaylistTracksSQL, createLocalRootsSQL, createTrackGroupsSQL, createTrackGroupMembersSQL, createWaveformsSQL]
         for sql in statements {
             print("[DBCreate] Executing SQL: \(sql.replacingOccurrences(of: "\n", with: " "))")
             if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
@@ -550,6 +927,7 @@ class CollectionService: ObservableObject {
                 throw CollectionError.queryFailed(message: "Schema creation failed: \(err)")
             }
         }
+        try createPlaylistTracksIndex(db: db)
 
         // Ensure ui_settings exists
         try ensureUiSettingsTable()
@@ -663,7 +1041,7 @@ class CollectionService: ObservableObject {
                         self.isLoading = true
                     }
                     
-                    let query = "SELECT \(self.selectTrackColumns) FROM \(self.tableMusic)"
+                    let query = self.selectTracksFromMusicSQL
                     print("🔍 Executing query: \(query)")
                     var statement: OpaquePointer?
                     
@@ -688,77 +1066,19 @@ class CollectionService: ObservableObject {
                             let resolvedTrack = self.resolveTrackPath(track)
                             loadedTracks.append(resolvedTrack)
                         } catch {
-                            // Enhanced error logging for failed track parsing
                             let id = Int(sqlite3_column_int(statement, 0))
                             let title = String(cString: sqlite3_column_text(statement, 1))
                             let artist = String(cString: sqlite3_column_text(statement, 2))
                             let album = String(cString: sqlite3_column_text(statement, 3))
-                            
-                            // Get raw data for problematic fields
                             var rawData = "ID: \(id), Title: '\(title)', Artist: '\(artist)', Album: '\(album)'"
                             
-                            // Check for problematic generalTags data
-                            if sqlite3_column_type(statement, 18) != SQLITE_NULL {
-                                let tagsData = String(cString: sqlite3_column_text(statement, 18))
+                            if sqlite3_column_type(statement, 17) != SQLITE_NULL {
+                                let tagsData = String(cString: sqlite3_column_text(statement, 17))
                                 rawData += ", Tags: '\(tagsData)'"
-                                
-                                // Try to identify encoding issues in tags
-                                if let data = tagsData.data(using: .utf8) {
-                                    do {
-                                        let decoder = JSONDecoder()
-                                        let _ = try decoder.decode([String].self, from: data)
-                                        print("🔍 Tags JSON is valid for track \(id)")
-                                    } catch {
-                                        print("🚨 JSON decode error for track \(id) tags: \(error)")
-                                        print("🚨 Raw tags data: '\(tagsData)'")
-                                        print("🚨 Data length: \(data.count) bytes")
-                                        
-                                        // Try different encodings
-                                        if let dataUTF16 = tagsData.data(using: .utf16) {
-                                            print("🚨 UTF-16 data length: \(dataUTF16.count) bytes")
-                                        }
-                                        if let dataASCII = tagsData.data(using: .ascii) {
-                                            print("🚨 ASCII data length: \(dataASCII.count) bytes")
-                                        }
-                                    }
-                                } else {
-                                    print("🚨 Cannot convert tags data to UTF-8 for track \(id)")
-                                    print("🚨 Raw tags string: '\(tagsData)'")
-                                }
                             }
-                            
-                            // Check for problematic timeMarkers data
                             if sqlite3_column_type(statement, 14) != SQLITE_NULL {
                                 let markersData = String(cString: sqlite3_column_text(statement, 14))
                                 rawData += ", Markers: '\(markersData)'"
-                                
-                                if let data = markersData.data(using: .utf8) {
-                                    do {
-                                        let decoder = JSONDecoder()
-                                        let _ = try decoder.decode([TimeMarker].self, from: data)
-                                        print("🔍 Markers JSON is valid for track \(id)")
-                                    } catch {
-                                        print("🚨 JSON decode error for track \(id) markers: \(error)")
-                                        print("🚨 Raw markers data: '\(markersData)'")
-                                    }
-                                }
-                            }
-                            
-                            // Check for problematic waveformData
-                            if sqlite3_column_type(statement, 15) != SQLITE_NULL {
-                                let waveformData = String(cString: sqlite3_column_text(statement, 15))
-                                rawData += ", Waveform: '\(waveformData.prefix(100))...'"
-                                
-                                if let data = waveformData.data(using: .utf8) {
-                                    do {
-                                        let decoder = JSONDecoder()
-                                        let _ = try decoder.decode([Double].self, from: data)
-                                        print("🔍 Waveform JSON is valid for track \(id)")
-                                    } catch {
-                                        print("🚨 JSON decode error for track \(id) waveform: \(error)")
-                                        print("🚨 Raw waveform data (first 200 chars): '\(waveformData.prefix(200))'")
-                                    }
-                                }
                             }
                             
                             failedTracks.append((id: id, title: title, error: error.localizedDescription, rawData: rawData))
@@ -767,25 +1087,21 @@ class CollectionService: ObservableObject {
                         }
                     }
                     
-                    // Log summary of failed tracks
                     if !failedTracks.isEmpty {
                         print("🚨 DATABASE LOADING ERRORS SUMMARY:")
                         print("🚨 Total tracks processed: \(rowCount)")
                         print("🚨 Successfully loaded: \(loadedTracks.count)")
                         print("🚨 Failed to load: \(failedTracks.count)")
-                        print("🚨 Failed tracks details:")
                         for failed in failedTracks {
                             print("   - ID: \(failed.id), Title: '\(failed.title)'")
                             print("     Error: \(failed.error)")
                             print("     Raw data: \(failed.rawData)")
-                            print("")
                         }
                     }
                     
-
-                    
+                    let sortedTracks = loadedTracks.sorted()
                     DispatchQueue.main.async {
-                        self.tracks = loadedTracks.sorted()
+                        self.tracks = sortedTracks
                         self.isLoading = false
                     }
                     
@@ -958,8 +1274,8 @@ class CollectionService: ObservableObject {
                     // Explicit INSERT with all relevant columns to ensure correct mapping
                     let insertSQL = """
                         INSERT INTO \(self.tableMusic) (
-                            \(self.columnTitle), \(self.columnArtist), \(self.columnAlbum), \(self.columnAlbumArtist), \(self.columnComposer), \(self.columnGenre), \(self.columnYear), \(self.columnTrackNumber), \(self.columnDiscNumber), \(self.columnBpm), \(self.columnPath), \(self.columnIsUrl), \(self.columnDuration), \(self.columnTimeMarkers), \(self.columnWaveformData), \(self.columnRating), \(self.columnComment), \(self.columnGeneralTags), \(self.columnDateAdded)
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '[]', NULL, 0, '', '[]', ?)
+                            \(self.columnTitle), \(self.columnArtist), \(self.columnAlbum), \(self.columnAlbumArtist), \(self.columnComposer), \(self.columnGenre), \(self.columnYear), \(self.columnTrackNumber), \(self.columnDiscNumber), \(self.columnBpm), \(self.columnPath), \(self.columnIsUrl), \(self.columnDuration), \(self.columnTimeMarkers), \(self.columnRating), \(self.columnComment), \(self.columnGeneralTags), \(self.columnDateAdded)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '[]', 0, '', '[]', ?)
                     """
                     print("🔍 [CollectionService] addLocalFile - SQL: \(insertSQL)")
                     var stmt: OpaquePointer?
@@ -1087,7 +1403,7 @@ class CollectionService: ObservableObject {
                         isUrl: false,
                         duration: durationMs,
                         timeMarkers: [],
-                        waveformData: nil,
+                        waveformStatus: .missing,
                         rating: 0,
                         comment: "",
                         generalTags: [],
@@ -1192,6 +1508,7 @@ class CollectionService: ObservableObject {
         
         // Clean up track group relationships before deleting the track
         try cleanupTrackGroupRelationships(trackId: id)
+        deleteWaveformRow(trackId: id, db: db)
         
         var stmt: OpaquePointer?
         let sql = "DELETE FROM \(tableMusic) WHERE \(columnId) = ?"
@@ -1328,50 +1645,18 @@ class CollectionService: ObservableObject {
             timeMarkers = []
         }
         
-        // Parse waveform data with enhanced error handling
-        let waveformData: [Double]?
-        if sqlite3_column_type(statement, 15) != SQLITE_NULL {
-            let waveformJson = String(cString: sqlite3_column_text(statement, 15))
-            do {
-                waveformData = try parseWaveformData(from: waveformJson)
-            } catch {
-                print("🚨 Failed to parse waveform data for track \(id): \(error)")
-                print("🚨 Raw waveform data (first 200 chars): '\(waveformJson.prefix(200))'")
-                throw CollectionError.invalidData
-            }
-        } else {
-            waveformData = nil
-        }
-        
-        let rating = Int(sqlite3_column_int(statement, 16))
-        let comment = sqlite3_column_type(statement, 17) != SQLITE_NULL ? String(cString: sqlite3_column_text(statement, 17)) : ""
+        let rating = Int(sqlite3_column_int(statement, 15))
+        let comment = sqlite3_column_type(statement, 16) != SQLITE_NULL ? String(cString: sqlite3_column_text(statement, 16)) : ""
         
         // Parse general tags with enhanced error handling
         let generalTags: [String]
-        if sqlite3_column_type(statement, 18) != SQLITE_NULL {
-            let tagsJson = String(cString: sqlite3_column_text(statement, 18))
+        if sqlite3_column_type(statement, 17) != SQLITE_NULL {
+            let tagsJson = String(cString: sqlite3_column_text(statement, 17))
             do {
                 generalTags = try parseGeneralTags(from: tagsJson)
             } catch {
                 print("🚨 Failed to parse general tags for track \(id): \(error)")
                 print("🚨 Raw tags data: '\(tagsJson)'")
-                print("🚨 Tags data length: \(tagsJson.count) characters")
-                
-                // Try to identify the specific encoding issue
-                if let data = tagsJson.data(using: .utf8) {
-                    print("🚨 UTF-8 data length: \(data.count) bytes")
-                } else {
-                    print("🚨 Cannot convert tags to UTF-8 data")
-                }
-                
-                // Try alternative encodings
-                if let dataUTF16 = tagsJson.data(using: .utf16) {
-                    print("🚨 UTF-16 data length: \(dataUTF16.count) bytes")
-                }
-                if let dataASCII = tagsJson.data(using: .ascii) {
-                    print("🚨 ASCII data length: \(dataASCII.count) bytes")
-                }
-                
                 throw CollectionError.invalidData
             }
         } else {
@@ -1380,18 +1665,18 @@ class CollectionService: ObservableObject {
         
         // Parse dateAdded with fallback to a reasonable default date for existing tracks
         let dateAdded: Date
-        if sqlite3_column_type(statement, 19) != SQLITE_NULL {
-            let dateString = String(cString: sqlite3_column_text(statement, 19))
-            if let parsedDate = ISO8601DateFormatter().date(from: dateString) {
+        if sqlite3_column_type(statement, 18) != SQLITE_NULL {
+            let dateString = String(cString: sqlite3_column_text(statement, 18))
+            if let parsedDate = iso8601DateFormatter.date(from: dateString) {
                 dateAdded = parsedDate
             } else {
-                // Use a fallback date instead of current date to avoid showing current time
-                dateAdded = Date().addingTimeInterval(-86400 * 30) // 30 days ago as fallback
+                dateAdded = Date().addingTimeInterval(-86400 * 30)
             }
         } else {
-            // Use a fallback date instead of current date to avoid showing current time
-            dateAdded = Date().addingTimeInterval(-86400 * 30) // 30 days ago as fallback
+            dateAdded = Date().addingTimeInterval(-86400 * 30)
         }
+
+        let waveformStatus = WaveformStatus(rawValue: Int(sqlite3_column_int(statement, 19))) ?? .missing
         
         return Track(
             id: id,
@@ -1409,7 +1694,7 @@ class CollectionService: ObservableObject {
             isUrl: isUrl,
             duration: duration,
             timeMarkers: timeMarkers,
-            waveformData: waveformData,
+            waveformStatus: waveformStatus,
             rating: rating,
             comment: comment,
             generalTags: generalTags,
@@ -1469,81 +1754,6 @@ class CollectionService: ObservableObject {
             }
             
             throw error
-        }
-    }
-    
-    private func parseWaveformData(from jsonString: String) throws -> [Double] {
-        // Handle edge cases first
-        let trimmedString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // If empty or just whitespace, return empty array
-        if trimmedString.isEmpty {
-            print("🔧 Empty waveform data, returning empty array")
-            return []
-        }
-        
-        // Check if the data looks like it might be corrupted (contains non-JSON text)
-        if trimmedString.contains("Unknown") || trimmedString.contains(".mp3") || trimmedString.contains("music") {
-             print("🚨 Waveform data appears to be corrupted (contains metadata text)")
-            print("🚨 Corrupted data (first 200 chars): '\(trimmedString.prefix(200))'")
-            // Try to recover by extracting the JSON array substring
-            if let startIdx = trimmedString.firstIndex(of: "["), let endIdx = trimmedString.lastIndex(of: "]"), startIdx < endIdx {
-                let jsonSlice = String(trimmedString[startIdx...endIdx])
-                if let data = jsonSlice.data(using: .utf8), let decoded = try? JSONDecoder().decode([Double].self, from: data) {
-                    print("🔧 Recovered waveform array from corrupted field (length=\(decoded.count))")
-                    return decoded
-                } else {
-                    print("🚨 Failed to recover waveform array from corrupted field")
-                }
-            }
-            // Fall back to empty array to trigger regeneration
-            return []
-        }
-        
-        // Clean up control characters that might be present
-        let cleanedString = trimmedString.filter { char in
-            // Allow printable characters, spaces, and common JSON characters
-            // ASCII values 32-126 are printable characters
-            if let asciiValue = char.asciiValue {
-                return asciiValue >= 32 && asciiValue <= 126
-            }
-            return false
-        }
-        
-        if cleanedString != trimmedString {
-            print("🔧 Cleaned waveform data from '\(trimmedString.prefix(100))' to '\(cleanedString.prefix(100))'")
-        }
-        
-        // If after cleaning we have an empty string, return empty array
-        if cleanedString.isEmpty {
-            print("🔧 Waveform data became empty after cleaning, returning empty array")
-            return []
-        }
-        
-        guard let data = cleanedString.data(using: .utf8) else {
-            print("🚨 Cannot convert cleaned waveform JSON string to UTF-8 data")
-            print("🚨 Original string (first 200 chars): '\(jsonString.prefix(200))'")
-            print("🚨 Cleaned string (first 200 chars): '\(cleanedString.prefix(200))'")
-            throw CollectionError.invalidData
-        }
-        
-        let decoder = JSONDecoder()
-        do {
-            return try decoder.decode([Double].self, from: data)
-        } catch {
-            print("🚨 JSON decode error for waveform data: \(error)")
-            print("🚨 Original JSON string (first 200 chars): '\(jsonString.prefix(200))'")
-            print("🚨 Cleaned JSON string (first 200 chars): '\(cleanedString.prefix(200))'")
-            print("🚨 Data length: \(data.count) bytes")
-            
-            // Try to identify the specific JSON parsing issue
-            if let jsonObject = try? JSONSerialization.jsonObject(with: data) {
-                print("🚨 JSON is valid but not an array: \(type(of: jsonObject))")
-            }
-            
-            // Instead of throwing an error, return empty array for corrupted data
-            print("🔧 Returning empty array for corrupted waveform data")
-            return []
         }
     }
     
@@ -1757,7 +1967,7 @@ class CollectionService: ObservableObject {
             isUrl: track.isUrl,
             duration: track.duration,
             timeMarkers: track.timeMarkers,
-            waveformData: track.waveformData,
+            waveformStatus: track.waveformStatus,
             rating: track.rating,
             comment: track.comment,
             generalTags: track.generalTags,
@@ -1814,9 +2024,9 @@ class CollectionService: ObservableObject {
         let wildcardQuery = "%\(lowercaseQuery)%"
         
         let query = """
-            SELECT \(selectTrackColumns) FROM \(tableMusic)
-            WHERE LOWER(title) LIKE ? OR LOWER(artist) LIKE ? OR LOWER(album) LIKE ? OR LOWER(comment) LIKE ?
-        """
+            \(selectTracksFromMusicSQL)
+            WHERE LOWER(\(tableMusic).title) LIKE ? OR LOWER(\(tableMusic).artist) LIKE ? OR LOWER(\(tableMusic).album) LIKE ? OR LOWER(\(tableMusic).comment) LIKE ?
+            """
         
         var statement: OpaquePointer?
         let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
@@ -1857,7 +2067,7 @@ class CollectionService: ObservableObject {
 
     private func refreshMissingWaveformCount() {
         let count = tracks.reduce(into: 0) { result, track in
-            if !track.isUrl, track.waveformData == nil {
+            if track.needsWaveformAnalysis {
                 result += 1
             }
         }
@@ -1879,90 +2089,30 @@ class CollectionService: ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             databaseQueue.async {
                 do {
-                    // Ensure security access for database operations
                     let securityAccess = self.ensureSecurityAccess()
                     defer { if securityAccess { self.stopSecurityAccess() } }
                     
-                    guard let db = self.database else { 
-                        print("[CollectionService] ❌ Database not open")
+                    guard let db = self.database else {
                         continuation.resume(throwing: CollectionError.databaseNotOpen)
                         return
                     }
-                    if self.isReadOnlyMode { 
-                        print("[CollectionService] ❌ Database in read-only mode")
+                    if self.isReadOnlyMode {
                         continuation.resume(throwing: CollectionError.queryFailed(message: "Cannot update waveform in read-only mode."))
                         return
                     }
 
-                    print("[CollectionService] 🔧 Setting journal mode to DELETE")
-                    _ = sqlite3_exec(db, "PRAGMA journal_mode = DELETE", nil, nil, nil)
+                    try self.upsertWaveformBlob(trackId: trackId, bins: waveformData, db: db)
+                    let status: WaveformStatus = waveformData.isEmpty ? .empty : .ready
 
-                    let encoder = JSONEncoder()
-                    let data = try encoder.encode(waveformData)
-                    let json = String(data: data, encoding: .utf8) ?? "[]"
-                    print("[CollectionService] 📝 Encoded waveform data to JSON, length: \(json.count)")
-
-                    let sql = "UPDATE \(self.tableMusic) SET \(self.columnWaveformData) = ? WHERE \(self.columnId) = ?"
-                    print("[CollectionService] 🔍 Executing SQL: \(sql)")
-                    
-                    var statement: OpaquePointer?
-                    let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
-                    defer { sqlite3_finalize(statement) }
-                    if result != SQLITE_OK { 
-                        let errorMsg = String(cString: sqlite3_errmsg(db))
-                        print("[CollectionService] ❌ SQL prepare failed: \(errorMsg)")
-                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMsg))
-                        return
-                    }
-                    
-                    print("[CollectionService] 🔗 Binding parameters...")
-                    sqlite3_bind_text(statement, 1, json, -1, self.SQLITE_TRANSIENT)
-                    sqlite3_bind_int(statement, 2, Int32(trackId))
-                    
-                    print("[CollectionService] ▶️ Executing statement...")
-                    let stepResult = sqlite3_step(statement)
-                    if stepResult != SQLITE_DONE {
-                        let errorMsg = String(cString: sqlite3_errmsg(db))
-                        print("[CollectionService] ❌ SQL execution failed: \(errorMsg)")
-                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMsg))
-                        return
-                    }
-                    print("[CollectionService] ✅ SQL execution successful")
-
-                    // Verify what was written by reading back the value
-                    let verifySQL = "SELECT \(self.columnWaveformData) FROM \(self.tableMusic) WHERE \(self.columnId) = ?"
-                    var verifyStmt: OpaquePointer?
-                    if sqlite3_prepare_v2(db, verifySQL, -1, &verifyStmt, nil) == SQLITE_OK {
-                        sqlite3_bind_int(verifyStmt, 1, Int32(trackId))
-                        if sqlite3_step(verifyStmt) == SQLITE_ROW {
-                            if let ptr = sqlite3_column_text(verifyStmt, 0) {
-                                let saved = String(cString: ptr)
-                                print("[CollectionService] 🔎 Read-back waveform JSON length=\(saved.count), prefix='\(saved.prefix(80))'")
-                            } else {
-                                print("[CollectionService] 🔎 Read-back waveform JSON is NULL")
-                            }
-                        } else {
-                            print("[CollectionService] 🔎 Read-back step failed for track \(trackId)")
-                        }
-                        sqlite3_finalize(verifyStmt)
-                    } else {
-                        let err = String(cString: sqlite3_errmsg(db))
-                        print("[CollectionService] 🔎 Read-back prepare failed: \(err)")
-                    }
-
-                    // Update the one track in place. Do not replace the whole `tracks` array:
-                    // that copy + @Published emission rebuilds the table (~100ms for large libraries).
                     Task { @MainActor in
-                        print("[CollectionService] 🔄 Updating tracks array on main thread...")
                         if let index = self._tracks.firstIndex(where: { $0.id == trackId }) {
-                            let updates = ["waveformData": waveformData as Any]
-                            self._tracks[index] = self._tracks[index].withUpdates(updates)
-                            let updated = self._tracks[index]
+                            let updated = self._tracks[index].withWaveformStatus(status)
+                            self._tracks[index] = updated
+                            if let id = updated.id {
+                                self.tracksById[id] = updated
+                            }
                             self.refreshMissingWaveformCount()
-                            self.waveformDidUpdate.send(updated)
-                            print("[CollectionService] ✅ Successfully updated tracks array for track \(trackId)")
-                        } else {
-                            print("[CollectionService] ⚠️ Track \(trackId) not found in tracks array")
+                            self.waveformDidUpdate.send((trackId, waveformData))
                         }
                     }
                     
@@ -1973,6 +2123,85 @@ class CollectionService: ObservableObject {
             }
         }
     }
+
+    /// Loads packed waveform samples for the given track ids. Missing rows are omitted.
+    func loadWaveformBins(ids: [Int]) async -> [Int: [Double]] {
+        let unique = Array(Set(ids.filter { $0 >= 0 }))
+        guard !unique.isEmpty else { return [:] }
+        return await withCheckedContinuation { continuation in
+            databaseQueue.async {
+                continuation.resume(returning: self.fetchWaveformBinsSync(ids: unique))
+            }
+        }
+    }
+
+    private func fetchWaveformBinsSync(ids: [Int]) -> [Int: [Double]] {
+        guard let db = database, !ids.isEmpty else { return [:] }
+        var result: [Int: [Double]] = [:]
+        let chunkSize = 80
+        var start = 0
+        while start < ids.count {
+            let end = min(start + chunkSize, ids.count)
+            let chunk = Array(ids[start..<end])
+            let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            let sql = "SELECT track_id, bins FROM \(tableWaveforms) WHERE track_id IN (\(placeholders))"
+            var statement: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK {
+                defer { sqlite3_finalize(statement) }
+                for (index, id) in chunk.enumerated() {
+                    sqlite3_bind_int(statement, Int32(index + 1), Int32(id))
+                }
+                while sqlite3_step(statement) == SQLITE_ROW {
+                    let trackId = Int(sqlite3_column_int64(statement, 0))
+                    let byteCount = Int(sqlite3_column_bytes(statement, 1))
+                    if byteCount > 0, let ptr = sqlite3_column_blob(statement, 1) {
+                        let data = Data(bytes: ptr, count: byteCount)
+                        result[trackId] = WaveformCodec.decode(data)
+                    } else {
+                        result[trackId] = []
+                    }
+                }
+            }
+            start = end
+        }
+        return result
+    }
+
+    private func upsertWaveformBlob(trackId: Int, bins: [Double], db: OpaquePointer) throws {
+        let blob = WaveformCodec.encode(bins)
+        let sql = """
+            INSERT INTO \(tableWaveforms) (track_id, bins, bin_count, version)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(track_id) DO UPDATE SET
+                bins = excluded.bins,
+                bin_count = excluded.bin_count,
+                version = excluded.version
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw CollectionError.queryFailed(message: String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int(statement, 1, Int32(trackId))
+        blob.withUnsafeBytes { raw in
+            sqlite3_bind_blob(statement, 2, raw.baseAddress, Int32(blob.count), SQLITE_TRANSIENT)
+        }
+        sqlite3_bind_int(statement, 3, Int32(bins.count))
+        sqlite3_bind_int(statement, 4, Int32(WaveformCodec.blobVersion))
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw CollectionError.queryFailed(message: String(cString: sqlite3_errmsg(db)))
+        }
+    }
+
+    private func deleteWaveformRow(trackId: Int, db: OpaquePointer) {
+        var statement: OpaquePointer?
+        let sql = "DELETE FROM \(tableWaveforms) WHERE track_id = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int(statement, 1, Int32(trackId))
+        _ = sqlite3_step(statement)
+    }
+
     func updateTrackRating(trackId: Int, newRating: Int) async throws {
         return try await withCheckedThrowingContinuation { continuation in
             databaseQueue.async {
@@ -2420,7 +2649,7 @@ class CollectionService: ObservableObject {
                     }
                     // Test: Reload the specific track to see if it's corrupted
                     print("[Tags] Testing track reload after update...")
-                    let testQuery = "SELECT * FROM \(self.tableMusic) WHERE \(self.columnId) = ?"
+                    let testQuery = "\(self.selectTracksFromMusicSQL) WHERE \(self.tableMusic).\(self.columnId) = ?"
                     var testStatement: OpaquePointer?
                     if sqlite3_prepare_v2(db, testQuery, -1, &testStatement, nil) == SQLITE_OK {
                         defer { sqlite3_finalize(testStatement) }
@@ -2602,8 +2831,7 @@ class CollectionService: ObservableObject {
         let fixSQL = """
             UPDATE \(self.tableMusic) 
             SET \(self.columnGeneralTags) = '[]',
-                \(self.columnTimeMarkers) = '[]',
-                \(self.columnWaveformData) = NULL
+                \(self.columnTimeMarkers) = '[]'
             WHERE \(self.columnId) = ?
         """
         
@@ -2622,6 +2850,7 @@ class CollectionService: ObservableObject {
             let errorMessage = String(cString: sqlite3_errmsg(db))
             throw CollectionError.queryFailed(message: errorMessage)
         }
+        deleteWaveformRow(trackId: trackId, db: db)
         
         print("✅ Successfully fixed metadata for track \(trackId)")
         
@@ -2645,7 +2874,7 @@ class CollectionService: ObservableObject {
                     isUrl: self.tracks[index].isUrl,
                     duration: self.tracks[index].duration,
                     timeMarkers: [],
-                    waveformData: nil,
+                    waveformStatus: .missing,
                     rating: self.tracks[index].rating,
                     comment: self.tracks[index].comment,
                     generalTags: [],
@@ -2674,11 +2903,10 @@ class CollectionService: ObservableObject {
                     
                     // Find tracks with problematic metadata
                     let problematicQuery = """
-                        SELECT \(self.columnId), \(self.columnTitle), \(self.columnGeneralTags), \(self.columnTimeMarkers), \(self.columnWaveformData)
+                        SELECT \(self.columnId), \(self.columnTitle), \(self.columnGeneralTags), \(self.columnTimeMarkers)
                         FROM \(self.tableMusic)
                         WHERE (\(self.columnGeneralTags) IS NOT NULL AND \(self.columnGeneralTags) != '[]' AND \(self.columnGeneralTags) != '')
                            OR (\(self.columnTimeMarkers) IS NOT NULL AND \(self.columnTimeMarkers) != '[]' AND \(self.columnTimeMarkers) != '')
-                           OR (\(self.columnWaveformData) IS NOT NULL AND \(self.columnWaveformData) != '[]' AND \(self.columnWaveformData) != '')
                     """
                     
                     var statement: OpaquePointer?
@@ -2719,15 +2947,6 @@ class CollectionService: ObservableObject {
                             }
                         }
                         
-                        // Check waveformData
-                        if sqlite3_column_type(statement, 4) != SQLITE_NULL {
-                            let waveformData = String(cString: sqlite3_column_text(statement, 4))
-                            if waveformData.isEmpty || waveformData.contains(where: { !$0.isASCII || $0.asciiValue ?? 0 < 32 }) {
-                                needsFix = true
-                                fixFields.append("waveformData")
-                            }
-                        }
-                        
                         if needsFix {
                             print("🔧 Auto-fixing track \(trackId) (\(title)) - corrupted fields: \(fixFields)")
                             try self.fixCorruptedTrackMetadataSync(trackId: trackId)
@@ -2756,7 +2975,7 @@ class CollectionService: ObservableObject {
                     
                     print("🔍 Scanning database for corrupted tracks...")
                     
-                    let query = "SELECT \(self.columnId), \(self.columnTitle), \(self.columnArtist), \(self.columnGeneralTags), \(self.columnTimeMarkers), \(self.columnWaveformData) FROM \(self.tableMusic)"
+                    let query = "SELECT \(self.columnId), \(self.columnTitle), \(self.columnArtist), \(self.columnGeneralTags), \(self.columnTimeMarkers) FROM \(self.tableMusic)"
                     var statement: OpaquePointer?
                     
                     let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
@@ -2804,20 +3023,6 @@ class CollectionService: ObservableObject {
                             }
                         }
                         
-                        // Check waveformData
-                        if sqlite3_column_type(statement, 5) != SQLITE_NULL {
-                            let waveformData = String(cString: sqlite3_column_text(statement, 5))
-                            if let data = waveformData.data(using: .utf8) {
-                                do {
-                                    let _ = try JSONDecoder().decode([Double].self, from: data)
-                                } catch {
-                                    issues.append("Corrupted waveformData JSON")
-                                }
-                            } else {
-                                issues.append("Invalid waveformData encoding")
-                            }
-                        }
-                        
                         if !issues.isEmpty {
                             corruptedTracks.append((id: id, title: "\(title) - \(artist)", issues: issues))
                         }
@@ -2847,26 +3052,7 @@ class CollectionService: ObservableObject {
                     }
                     
                     print("🔧 Fixing corrupted waveform data for track \(trackId)")
-                    
-                    let sql = "UPDATE \(self.tableMusic) SET \(self.columnWaveformData) = NULL WHERE \(self.columnId) = ?"
-                    var statement: OpaquePointer?
-                    
-                    let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
-                    defer { sqlite3_finalize(statement) }
-                    
-                    if result != SQLITE_OK {
-                        let errorMessage = String(cString: sqlite3_errmsg(db))
-                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
-                        return
-                    }
-                    
-                    sqlite3_bind_int(statement, 1, Int32(trackId))
-                    
-                    if sqlite3_step(statement) != SQLITE_DONE {
-                        let errorMessage = String(cString: sqlite3_errmsg(db))
-                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
-                        return
-                    }
+                    self.deleteWaveformRow(trackId: trackId, db: db)
                     
                     print("✅ Successfully fixed waveform data for track \(trackId)")
                     
@@ -2890,7 +3076,7 @@ class CollectionService: ObservableObject {
                                 isUrl: self.tracks[index].isUrl,
                                 duration: self.tracks[index].duration,
                                 timeMarkers: self.tracks[index].timeMarkers,
-                                waveformData: nil,
+                                waveformStatus: .missing,
                                 rating: self.tracks[index].rating,
                                 comment: self.tracks[index].comment,
                                 generalTags: self.tracks[index].generalTags,
@@ -2924,19 +3110,7 @@ class CollectionService: ObservableObject {
                     
                     print("🧹 Clearing all waveform data to regenerate with time-based mapping...")
                     
-                    let sql = "UPDATE \(self.tableMusic) SET \(self.columnWaveformData) = NULL"
-                    var statement: OpaquePointer?
-                    
-                    let result = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
-                    defer { sqlite3_finalize(statement) }
-                    
-                    if result != SQLITE_OK {
-                        let errorMessage = String(cString: sqlite3_errmsg(db))
-                        continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
-                        return
-                    }
-                    
-                    if sqlite3_step(statement) != SQLITE_DONE {
+                    if sqlite3_exec(db, "DELETE FROM \(self.tableWaveforms)", nil, nil, nil) != SQLITE_OK {
                         let errorMessage = String(cString: sqlite3_errmsg(db))
                         continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
                         return
@@ -2965,7 +3139,7 @@ class CollectionService: ObservableObject {
                                 isUrl: self.tracks[i].isUrl,
                                 duration: self.tracks[i].duration,
                                 timeMarkers: self.tracks[i].timeMarkers,
-                                waveformData: nil,
+                                waveformStatus: .missing,
                                 rating: self.tracks[i].rating,
                                 comment: self.tracks[i].comment,
                                 generalTags: self.tracks[i].generalTags,
@@ -3162,7 +3336,7 @@ class CollectionService: ObservableObject {
             isUrl: base.isUrl,
             duration: base.duration,
             timeMarkers: base.timeMarkers,
-            waveformData: base.waveformData,
+            waveformStatus: base.waveformStatus,
             rating: base.rating,
             comment: base.comment,
             generalTags: base.generalTags,
@@ -3598,7 +3772,7 @@ class CollectionService: ObservableObject {
                         isUrl: isUrl,
                         duration: Int(sqlite3_column_int(statement, 13)), // columnDuration
                         timeMarkers: [], // We'll keep existing markers
-                        waveformData: nil, // Will be cleared
+                        waveformStatus: .missing, // Will be cleared
                         rating: Int(sqlite3_column_int(statement, 16)), // columnRating
                         comment: sqlite3_column_type(statement, 17) != SQLITE_NULL ? String(cString: sqlite3_column_text(statement, 17)) : "", // columnComment
                         generalTags: [], // We'll keep existing tags
@@ -3633,8 +3807,7 @@ class CollectionService: ObservableObject {
                             \(self.columnTrackNumber) = ?,
                             \(self.columnDiscNumber) = ?,
                             \(self.columnBpm) = ?,
-                            \(self.columnDuration) = ?,
-                            \(self.columnWaveformData) = NULL
+                            \(self.columnDuration) = ?
                         WHERE \(self.columnId) = ?
                     """
                     
@@ -3680,6 +3853,7 @@ class CollectionService: ObservableObject {
                         continuation.resume(throwing: CollectionError.queryFailed(message: errorMessage))
                         return
                     }
+                    self.deleteWaveformRow(trackId: trackId, db: db)
                     
                     print("✅ [CollectionService] Refreshed track data for ID \(trackId): duration=\(durationMs)ms")
                     
@@ -3710,7 +3884,7 @@ class CollectionService: ObservableObject {
                     isUrl: self.tracks[index].isUrl,
                     duration: self.tracks[index].duration, // Will be updated when tracks reload
                     timeMarkers: self.tracks[index].timeMarkers,
-                    waveformData: nil, // Clear waveform data to show "Analyzing..."
+                    waveformStatus: .missing, // Clear waveform data to show "Analyzing..."
                     rating: self.tracks[index].rating,
                     comment: self.tracks[index].comment,
                     generalTags: self.tracks[index].generalTags,
@@ -4219,7 +4393,7 @@ class CollectionService: ObservableObject {
         }
     }
     
-    /// Sets `waveformData` to NULL for all tracks in a standalone DB file (minimizes backup size).
+    /// Drops waveform samples from a standalone DB file (minimizes backup size).
     private func stripWaveformColumnInDatabaseFile(at path: String) throws {
         var db: OpaquePointer?
         let clean = path.replacingOccurrences(of: "\\", with: "/")
@@ -4227,10 +4401,14 @@ class CollectionService: ObservableObject {
             throw CollectionError.backupOperationFailed(reason: "Could not open backup to strip waveforms.")
         }
         defer { sqlite3_close(handle) }
-        let sql = "UPDATE \(tableMusic) SET \(columnWaveformData) = NULL"
-        if sqlite3_exec(handle, sql, nil, nil, nil) != SQLITE_OK {
-            let err = String(cString: sqlite3_errmsg(handle))
-            throw CollectionError.backupOperationFailed(reason: "Strip waveforms failed: \(err)")
+        _ = sqlite3_exec(handle, "DELETE FROM \(tableWaveforms)", nil, nil, nil)
+        let columns = sqliteColumnNames(table: tableMusic, db: handle)
+        if columns.contains(columnWaveformData) {
+            let sql = "UPDATE \(tableMusic) SET \(columnWaveformData) = NULL"
+            if sqlite3_exec(handle, sql, nil, nil, nil) != SQLITE_OK {
+                let err = String(cString: sqlite3_errmsg(handle))
+                throw CollectionError.backupOperationFailed(reason: "Strip waveforms failed: \(err)")
+            }
         }
     }
     
@@ -4249,10 +4427,20 @@ class CollectionService: ObservableObject {
         }
     }
     
-    private func exportWaveformPayloadsByPathFromLiveDatabase() throws -> [String: String] {
+    private struct WaveformBackupPayload {
+        let bins: Data
+        let binCount: Int
+        let version: Int
+    }
+
+    private func exportWaveformPayloadsByPathFromLiveDatabase() throws -> [String: WaveformBackupPayload] {
         guard let db = database else { throw CollectionError.databaseNotOpen }
-        var result: [String: String] = [:]
-        let sql = "SELECT \(columnPath), \(columnWaveformData) FROM \(tableMusic) WHERE \(columnWaveformData) IS NOT NULL AND length(\(columnWaveformData)) > 2"
+        var result: [String: WaveformBackupPayload] = [:]
+        let sql = """
+            SELECT m.\(columnPath), w.bins, w.bin_count, w.version
+            FROM \(tableWaveforms) w
+            JOIN \(tableMusic) m ON m.\(columnId) = w.track_id
+            """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw CollectionError.queryFailed(message: String(cString: sqlite3_errmsg(db)))
@@ -4261,17 +4449,23 @@ class CollectionService: ObservableObject {
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let pathPtr = sqlite3_column_text(stmt, 0) else { continue }
             let path = String(cString: pathPtr)
-            if sqlite3_column_type(stmt, 1) == SQLITE_NULL { continue }
-            guard let wfPtr = sqlite3_column_text(stmt, 1) else { continue }
-            let json = String(cString: wfPtr)
-            if !json.isEmpty {
-                result[path] = json
+            let byteCount = Int(sqlite3_column_bytes(stmt, 1))
+            let data: Data
+            if byteCount > 0, let ptr = sqlite3_column_blob(stmt, 1) {
+                data = Data(bytes: ptr, count: byteCount)
+            } else {
+                data = Data()
             }
+            result[path] = WaveformBackupPayload(
+                bins: data,
+                binCount: Int(sqlite3_column_int(stmt, 2)),
+                version: Int(sqlite3_column_int(stmt, 3))
+            )
         }
         return result
     }
     
-    private func applyWaveformPayloads(_ payloads: [String: String], toDatabaseAt path: String) throws {
+    private func applyWaveformPayloads(_ payloads: [String: WaveformBackupPayload], toDatabaseAt path: String) throws {
         guard !payloads.isEmpty else { return }
         var db: OpaquePointer?
         let clean = path.replacingOccurrences(of: "\\", with: "/")
@@ -4279,17 +4473,29 @@ class CollectionService: ObservableObject {
             throw CollectionError.backupOperationFailed(reason: "Could not open restored copy for waveform merge.")
         }
         defer { sqlite3_close(handle) }
-        let sql = "UPDATE \(tableMusic) SET \(columnWaveformData) = ? WHERE \(columnPath) = ?"
+        _ = sqlite3_exec(handle, waveformsCreateSQL(), nil, nil, nil)
+        let sql = """
+            INSERT INTO \(tableWaveforms) (track_id, bins, bin_count, version)
+            SELECT \(columnId), ?, ?, ? FROM \(tableMusic) WHERE \(columnPath) = ?
+            ON CONFLICT(track_id) DO UPDATE SET
+                bins = excluded.bins,
+                bin_count = excluded.bin_count,
+                version = excluded.version
+            """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(handle, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw CollectionError.backupOperationFailed(reason: String(cString: sqlite3_errmsg(handle)))
         }
         defer { sqlite3_finalize(stmt) }
-        for (pathKey, json) in payloads {
+        for (pathKey, payload) in payloads {
             sqlite3_reset(stmt)
             sqlite3_clear_bindings(stmt)
-            sqlite3_bind_text(stmt, 1, json, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(stmt, 2, pathKey, -1, SQLITE_TRANSIENT)
+            payload.bins.withUnsafeBytes { raw in
+                sqlite3_bind_blob(stmt, 1, raw.baseAddress, Int32(payload.bins.count), SQLITE_TRANSIENT)
+            }
+            sqlite3_bind_int(stmt, 2, Int32(payload.binCount))
+            sqlite3_bind_int(stmt, 3, Int32(payload.version))
+            sqlite3_bind_text(stmt, 4, pathKey, -1, SQLITE_TRANSIENT)
             _ = sqlite3_step(stmt)
         }
     }
@@ -4313,7 +4519,7 @@ class CollectionService: ObservableObject {
         guard FileManager.default.fileExists(atPath: backupFileURL.path) else {
             throw CollectionError.backupOperationFailed(reason: "Backup file not found.")
         }
-        let waveformPayloads = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[String: String], Error>) in
+        let waveformPayloads = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[String: WaveformBackupPayload], Error>) in
             databaseQueue.async {
                 do {
                     let map = try self.exportWaveformPayloadsByPathFromLiveDatabase()

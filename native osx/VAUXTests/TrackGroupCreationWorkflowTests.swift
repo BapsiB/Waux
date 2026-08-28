@@ -150,7 +150,6 @@ class TrackGroupCreationWorkflowTests: XCTestCase {
                 isUrl: isUrl == 1,
                 duration: duration,
                 timeMarkers: [],
-                waveformData: nil,
                 rating: 0,
                 comment: "",
                 generalTags: [],

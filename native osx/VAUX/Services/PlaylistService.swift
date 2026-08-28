@@ -16,8 +16,9 @@ class PlaylistService: ObservableObject {
     
     // Column names - playlist_tracks table
     private let columnPlaylistTracksPlaylistId = "playlist_id"
-    private let columnPlaylistTracksTrackPath = "track_path"
+    private let columnPlaylistTracksTrackId = "track_id"
     private let columnPlaylistTracksSortOrder = "sort_order"
+    private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     
     // Column names - playlist_folders table
     private let columnPlaylistFoldersId = "id"
@@ -233,7 +234,8 @@ class PlaylistService: ObservableObject {
             }
             
             var loadedPlaylists: [Playlist] = []
-            
+            let tracksByPlaylist = try self.loadAllPlaylistTrackIdsSync(db: db)
+
             while sqlite3_step(statement) == SQLITE_ROW {
                 let playlistId = String(cString: sqlite3_column_text(statement, 0))
                 let playlistName = String(cString: sqlite3_column_text(statement, 1))
@@ -245,13 +247,10 @@ class PlaylistService: ObservableObject {
                     folderId = nil
                 }
                 
-                // Fetch tracks for this playlist
-                let trackPaths = try self.loadPlaylistTracksSync(playlistId: playlistId, db: db)
-                
                 let playlist = Playlist(
                     id: playlistId,
                     name: playlistName,
-                    trackPaths: trackPaths,
+                    trackIds: tracksByPlaylist[playlistId] ?? [],
                     folderId: folderId
                 )
                 loadedPlaylists.append(playlist)
@@ -269,105 +268,83 @@ class PlaylistService: ObservableObject {
         }
     }
     
-    /// Raw `track_path` values as stored in SQLite (used for DELETE that must match exactly).
-    private func fetchRawPlaylistTrackPathsSync(playlistId: String, db: OpaquePointer) throws -> [String] {
+    private func loadAllPlaylistTrackIdsSync(db: OpaquePointer) throws -> [String: [Int]] {
         let query = """
-            SELECT \(columnPlaylistTracksTrackPath) 
-            FROM \(tablePlaylistTracks) 
-            WHERE \(columnPlaylistTracksPlaylistId) = ? 
+            SELECT \(columnPlaylistTracksPlaylistId), \(columnPlaylistTracksTrackId)
+            FROM \(tablePlaylistTracks)
+            ORDER BY \(columnPlaylistTracksPlaylistId), \(columnPlaylistTracksSortOrder) ASC
+        """
+        var statement: OpaquePointer?
+        let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
+        defer { sqlite3_finalize(statement) }
+
+        if result != SQLITE_OK {
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            throw PlaylistError.queryFailed(message: errorMessage)
+        }
+
+        var tracksByPlaylist: [String: [Int]] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let playlistId = String(cString: sqlite3_column_text(statement, 0))
+            let trackId = Int(sqlite3_column_int64(statement, 1))
+            tracksByPlaylist[playlistId, default: []].append(trackId)
+        }
+        return tracksByPlaylist
+    }
+
+    /// Ordered `music.id` values for a playlist.
+    private func loadPlaylistTrackIdsSync(playlistId: String, db: OpaquePointer) throws -> [Int] {
+        let query = """
+            SELECT \(columnPlaylistTracksTrackId)
+            FROM \(tablePlaylistTracks)
+            WHERE \(columnPlaylistTracksPlaylistId) = ?
             ORDER BY \(columnPlaylistTracksSortOrder) ASC
         """
         var statement: OpaquePointer?
         let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
         defer { sqlite3_finalize(statement) }
-        
+
         if result != SQLITE_OK {
             let errorMessage = String(cString: sqlite3_errmsg(db))
             throw PlaylistError.queryFailed(message: errorMessage)
         }
-        
-        sqlite3_bind_text(statement, 1, (playlistId as NSString).utf8String, -1, nil)
-        
-        var rawPaths: [String] = []
+
+        sqlite3_bind_text(statement, 1, playlistId, -1, SQLITE_TRANSIENT)
+
+        var ids: [Int] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            rawPaths.append(String(cString: sqlite3_column_text(statement, 0)))
+            ids.append(Int(sqlite3_column_int64(statement, 0)))
         }
-        return rawPaths
+        return ids
     }
-    
-    /// Same resolution as when loading playlist tracks for the UI (keep in sync with removal matching).
-    private func resolveStoredPathForPlaylistDisplay(_ storedPath: String, activeCollection: CollectionDefinition) -> String {
-        if activeCollection.type == .shared,
-           activeCollection.rootPath != nil,
-           URL(string: storedPath)?.scheme == nil {
-            // Tracks outside the shared root are stored as absolute paths; do not prefix the collection root.
-            if storedPath.hasPrefix("/") {
-                return storedPath
-            }
-            return (activeCollection.rootPath! as NSString).appendingPathComponent(storedPath)
-        }
-        return storedPath
+
+    /// Playlists that contain this track.
+    func playlistsContaining(trackId: Int) -> [Playlist] {
+        playlists.filter { $0.trackIds.contains(trackId) }.sorted { $0.name < $1.name }
     }
-    
-    /// Whether two paths refer to the same file (handles `/private` prefix, symlinks, Unicode normalization).
-    private func playlistRemovalPathsMatch(_ a: String, _ b: String) -> Bool {
-        if a == b { return true }
-        let u1 = URL(fileURLWithPath: a).resolvingSymlinksInPath().standardizedFileURL
-        let u2 = URL(fileURLWithPath: b).resolvingSymlinksInPath().standardizedFileURL
-        if u1.path == u2.path { return true }
-        return u1.path.precomposedStringWithCanonicalMapping == u2.path.precomposedStringWithCanonicalMapping
-    }
-    
-    /// Playlists that list this file (same path matching as add/remove; uses in-memory `playlists`).
-    func playlistsContaining(absoluteTrackPath: String) -> [Playlist] {
-        playlists.filter { pl in
-            pl.trackPaths.contains { path in
-                playlistRemovalPathsMatch(path, absoluteTrackPath)
-            }
-        }.sorted { $0.name < $1.name }
-    }
-    
-    /// Playlists that contain every listed file (intersection). Empty `paths` yields no playlists.
-    func playlistsContainingAllTracks(absoluteTrackPaths: [String]) -> [Playlist] {
-        guard !absoluteTrackPaths.isEmpty else { return [] }
+
+    /// Playlists that contain every listed track. Empty `ids` yields no playlists.
+    func playlistsContainingAllTracks(trackIds: [Int]) -> [Playlist] {
+        guard !trackIds.isEmpty else { return [] }
         return playlists.filter { pl in
-            absoluteTrackPaths.allSatisfy { absPath in
-                pl.trackPaths.contains { path in
-                    playlistRemovalPathsMatch(path, absPath)
-                }
-            }
+            trackIds.allSatisfy { pl.trackIds.contains($0) }
         }.sorted { $0.name < $1.name }
     }
-    
-    /// True if the playlist already lists this file (uses the same path resolution as removal).
-    private func playlistAlreadyContainsAbsoluteTrack(playlistId: String, absoluteTrackPath: String, db: OpaquePointer) throws -> Bool {
-        guard let activeCollection = activeCollectionDefinition else { return false }
-        let rawPaths = try fetchRawPlaylistTrackPathsSync(playlistId: playlistId, db: db)
-        for raw in rawPaths {
-            let resolved = resolveStoredPathForPlaylistDisplay(raw, activeCollection: activeCollection)
-            if playlistRemovalPathsMatch(resolved, absoluteTrackPath) {
-                return true
+
+    /// Drop deleted collection tracks from in-memory playlists. SQLite CASCADE already removed the rows.
+    @MainActor
+    func removeDeletedTrackIdsFromPlaylists(_ trackIds: [Int]) {
+        guard !trackIds.isEmpty else { return }
+        let idSet = Set(trackIds)
+        for index in playlists.indices {
+            let before = playlists[index].trackIds.count
+            playlists[index].trackIds.removeAll { idSet.contains($0) }
+            if playlists[index].trackIds.count != before {
+                playlists[index].dateModified = Date()
             }
         }
-        return false
     }
-    
-    private func loadPlaylistTracksSync(playlistId: String, db: OpaquePointer) throws -> [String] {
-        guard let activeCollection = activeCollectionDefinition else {
-            return []
-        }
-        let rawPaths = try fetchRawPlaylistTrackPathsSync(playlistId: playlistId, db: db)
-        return rawPaths.map { resolveStoredPathForPlaylistDisplay($0, activeCollection: activeCollection) }
-    }
-    
-    private func loadPlaylistTracks(playlistId: String) async throws -> [String] {
-        return try await withDatabaseQueue {
-            let db = try self.getDatabaseConnection()
-            let trackPaths = try self.loadPlaylistTracksSync(playlistId: playlistId, db: db)
-            return trackPaths
-        }
-    }
-    
+
     func createPlaylist(name: String, folderId: String? = nil) async throws -> Playlist {
         guard let _ = activeCollectionDefinition else {
             throw PlaylistError.noActiveCollection
@@ -461,182 +438,181 @@ class PlaylistService: ObservableObject {
         }
     }
     
-    func addTrackToPlaylist(playlistId: String, absoluteTrackPath: String) async throws -> Bool {
-        guard let activeCollection = activeCollectionDefinition else {
+    func addTrackToPlaylist(playlistId: String, trackId: Int) async throws -> Bool {
+        let result = try await addTracksToPlaylist(playlistId: playlistId, trackIds: [trackId])
+        return result.newTracks > 0
+    }
+
+    /// Resolves each path to `music.id` at the boundary (drag-drop). Unknown files are skipped.
+    func addTracksToPlaylist(playlistId: String, trackPaths: [String]) async throws -> (newTracks: Int, duplicateTracks: Int) {
+        guard let collectionService else {
             throw PlaylistError.noActiveCollection
         }
-        
+        let lookup = collectionService.makePlaylistPathLookup()
+        var trackIds: [Int] = []
+        trackIds.reserveCapacity(trackPaths.count)
+        for path in trackPaths {
+            if let id = lookup.resolve(path) {
+                trackIds.append(id)
+            } else {
+                print("Skipping playlist add for path not in collection: \(path)")
+            }
+        }
+        return try await addTracksToPlaylist(playlistId: playlistId, trackIds: trackIds)
+    }
+
+    func addTracksToPlaylist(playlistId: String, trackIds: [Int]) async throws -> (newTracks: Int, duplicateTracks: Int) {
+        guard activeCollectionDefinition != nil else {
+            throw PlaylistError.noActiveCollection
+        }
+        if trackIds.isEmpty {
+            return (0, 0)
+        }
+
         return try await withDatabaseQueue {
             let db = try self.getDatabaseConnection()
-            
-            if try self.playlistAlreadyContainsAbsoluteTrack(playlistId: playlistId, absoluteTrackPath: absoluteTrackPath, db: db) {
-                print("Track '\(absoluteTrackPath)' already in playlist '\(playlistId)' (resolved match)")
-                return false
-            }
-            
-            var pathToAdd = absoluteTrackPath
-            
-            // Convert to relative path if it's a shared collection and the path is within its root
-            if activeCollection.type == .shared,
-               activeCollection.rootPath != nil,
-               URL(string: absoluteTrackPath)?.scheme == nil {
-                let absoluteURL = URL(fileURLWithPath: absoluteTrackPath)
-                let rootURL = URL(fileURLWithPath: activeCollection.rootPath!)
-                
-                if absoluteURL.path.hasPrefix(rootURL.path) {
-                    pathToAdd = String(absoluteURL.path.dropFirst(rootURL.path.count + 1))
-                } else {
-                    print("Warning: Track path '\(absoluteTrackPath)' is not within shared root '\(activeCollection.rootPath!)'. Storing absolute path in playlist.")
-                    pathToAdd = absoluteTrackPath
-                }
-            }
-            
-            // Get sort order
+            var newCount = 0
+            var duplicateCount = 0
+
             let countQuery = "SELECT COUNT(*) FROM \(self.tablePlaylistTracks) WHERE \(self.columnPlaylistTracksPlaylistId) = ?"
             var countStatement: OpaquePointer?
-            
-            let countResult = sqlite3_prepare_v2(db, countQuery, -1, &countStatement, nil)
+            let countPrepare = sqlite3_prepare_v2(db, countQuery, -1, &countStatement, nil)
             defer { sqlite3_finalize(countStatement) }
-            
             var sortOrder = 0
-            if countResult == SQLITE_OK {
-                sqlite3_bind_text(countStatement, 1, (playlistId as NSString).utf8String, -1, nil)
+            if countPrepare == SQLITE_OK {
+                sqlite3_bind_text(countStatement, 1, playlistId, -1, self.SQLITE_TRANSIENT)
                 if sqlite3_step(countStatement) == SQLITE_ROW {
                     sortOrder = Int(sqlite3_column_int(countStatement, 0))
                 }
             }
-            
-            // Insert track
+
+            let existsQuery = """
+                SELECT 1 FROM \(self.tablePlaylistTracks)
+                WHERE \(self.columnPlaylistTracksPlaylistId) = ? AND \(self.columnPlaylistTracksTrackId) = ?
+            """
+            var existsStatement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, existsQuery, -1, &existsStatement, nil) == SQLITE_OK else {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw PlaylistError.queryFailed(message: errorMessage)
+            }
+            defer { sqlite3_finalize(existsStatement) }
+
+            let musicExistsQuery = "SELECT 1 FROM music WHERE id = ?"
+            var musicExistsStatement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, musicExistsQuery, -1, &musicExistsStatement, nil) == SQLITE_OK else {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw PlaylistError.queryFailed(message: errorMessage)
+            }
+            defer { sqlite3_finalize(musicExistsStatement) }
+
             let insertQuery = """
-                INSERT INTO \(self.tablePlaylistTracks) 
-                (\(self.columnPlaylistTracksPlaylistId), \(self.columnPlaylistTracksTrackPath), \(self.columnPlaylistTracksSortOrder)) 
+                INSERT INTO \(self.tablePlaylistTracks)
+                (\(self.columnPlaylistTracksPlaylistId), \(self.columnPlaylistTracksTrackId), \(self.columnPlaylistTracksSortOrder))
                 VALUES (?, ?, ?)
             """
             var insertStatement: OpaquePointer?
-            
-            let insertResult = sqlite3_prepare_v2(db, insertQuery, -1, &insertStatement, nil)
+            guard sqlite3_prepare_v2(db, insertQuery, -1, &insertStatement, nil) == SQLITE_OK else {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw PlaylistError.queryFailed(message: errorMessage)
+            }
             defer { sqlite3_finalize(insertStatement) }
-            
-            if insertResult != SQLITE_OK {
-                let errorMessage = String(cString: sqlite3_errmsg(db))
-                throw PlaylistError.queryFailed(message: errorMessage)
+
+            var addedIds: [Int] = []
+            var seenThisBatch = Set<Int>()
+
+            for trackId in trackIds {
+                if seenThisBatch.contains(trackId) {
+                    duplicateCount += 1
+                    continue
+                }
+                seenThisBatch.insert(trackId)
+
+                sqlite3_reset(musicExistsStatement)
+                sqlite3_clear_bindings(musicExistsStatement)
+                sqlite3_bind_int64(musicExistsStatement, 1, Int64(trackId))
+                if sqlite3_step(musicExistsStatement) != SQLITE_ROW {
+                    print("Skipping playlist add for unknown music.id \(trackId)")
+                    continue
+                }
+
+                sqlite3_reset(existsStatement)
+                sqlite3_clear_bindings(existsStatement)
+                sqlite3_bind_text(existsStatement, 1, playlistId, -1, self.SQLITE_TRANSIENT)
+                sqlite3_bind_int64(existsStatement, 2, Int64(trackId))
+                if sqlite3_step(existsStatement) == SQLITE_ROW {
+                    duplicateCount += 1
+                    continue
+                }
+
+                sqlite3_reset(insertStatement)
+                sqlite3_clear_bindings(insertStatement)
+                sqlite3_bind_text(insertStatement, 1, playlistId, -1, self.SQLITE_TRANSIENT)
+                sqlite3_bind_int64(insertStatement, 2, Int64(trackId))
+                sqlite3_bind_int(insertStatement, 3, Int32(sortOrder))
+                let stepResult = sqlite3_step(insertStatement)
+                if stepResult != SQLITE_DONE {
+                    let errorMessage = String(cString: sqlite3_errmsg(db))
+                    throw PlaylistError.queryFailed(message: errorMessage)
+                }
+                sortOrder += 1
+                newCount += 1
+                addedIds.append(trackId)
             }
-            
-            sqlite3_bind_text(insertStatement, 1, (playlistId as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(insertStatement, 2, (pathToAdd as NSString).utf8String, -1, nil)
-            sqlite3_bind_int(insertStatement, 3, Int32(sortOrder))
-            
-            let stepResult = sqlite3_step(insertStatement)
-            if stepResult != SQLITE_DONE {
-                let errorMessage = String(cString: sqlite3_errmsg(db))
-                throw PlaylistError.queryFailed(message: errorMessage)
-            }
-            
-            // Update local playlist
-            let finalPathToAdd = pathToAdd
+
             await MainActor.run {
                 if let index = self.playlists.firstIndex(where: { $0.id == playlistId }) {
-                    self.playlists[index].addTrack(finalPathToAdd)
+                    for id in addedIds {
+                        self.playlists[index].addTrack(id)
+                    }
                 }
             }
-            
-            print("Added track '\(pathToAdd)' to playlist '\(playlistId)'")
-            return true // Track was new
+
+            print("Added \(newCount) tracks to playlist '\(playlistId)' (\(duplicateCount) duplicates)")
+            return (newTracks: newCount, duplicateTracks: duplicateCount)
         }
     }
-    
-    func addTracksToPlaylist(playlistId: String, trackPaths: [String]) async throws -> (newTracks: Int, duplicateTracks: Int) {
-        var newCount = 0
-        var duplicateCount = 0
-        
-        for trackPath in trackPaths {
-            do {
-                let wasNew = try await addTrackToPlaylist(playlistId: playlistId, absoluteTrackPath: trackPath)
-                if wasNew {
-                    newCount += 1
-                } else {
-                    duplicateCount += 1
-                }
-            } catch {
-                // Log error but continue with other tracks
-                print("Failed to add track '\(trackPath)': \(error)")
-                throw error
-            }
-        }
-        
-        return (newTracks: newCount, duplicateTracks: duplicateCount)
-    }
-    
-    func removeTrackFromPlaylist(playlistId: String, absoluteTrackPath: String) async throws {
-        guard let activeCollection = activeCollectionDefinition else {
+
+    func removeTrackFromPlaylist(playlistId: String, trackId: Int) async throws {
+        guard activeCollectionDefinition != nil else {
             throw PlaylistError.noActiveCollection
         }
-        
+
         return try await withDatabaseQueue {
             let db = try self.getDatabaseConnection()
-            
-            // Find the exact `track_path` row in SQLite (stored string may differ from `track.path`:
-            // relative vs absolute, /private/var vs /var, Unicode normalization, etc.). A plain DELETE
-            // with a recomputed path often matches 0 rows while sqlite3_step still returns SQLITE_DONE.
-            let rawPaths = try self.fetchRawPlaylistTrackPathsSync(playlistId: playlistId, db: db)
-            guard let rawToDelete = rawPaths.first(where: { raw in
-                let resolved = self.resolveStoredPathForPlaylistDisplay(raw, activeCollection: activeCollection)
-                return self.playlistRemovalPathsMatch(resolved, absoluteTrackPath)
-            }) else {
-                // Already removed (duplicate remove in one batch, double keypress, or racing reload).
-                await MainActor.run {
-                    self.syncInMemoryPlaylistRemove(playlistId: playlistId, absoluteTrackPath: absoluteTrackPath)
-                }
-                return ()
-            }
-            
             let query = """
-                DELETE FROM \(self.tablePlaylistTracks) 
-                WHERE \(self.columnPlaylistTracksPlaylistId) = ? AND \(self.columnPlaylistTracksTrackPath) = ?
+                DELETE FROM \(self.tablePlaylistTracks)
+                WHERE \(self.columnPlaylistTracksPlaylistId) = ? AND \(self.columnPlaylistTracksTrackId) = ?
             """
             var statement: OpaquePointer?
-            
             let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
             defer { sqlite3_finalize(statement) }
-            
+
             if result != SQLITE_OK {
                 let errorMessage = String(cString: sqlite3_errmsg(db))
                 throw PlaylistError.queryFailed(message: errorMessage)
             }
-            
-            sqlite3_bind_text(statement, 1, (playlistId as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(statement, 2, (rawToDelete as NSString).utf8String, -1, nil)
-            
+
+            sqlite3_bind_text(statement, 1, playlistId, -1, self.SQLITE_TRANSIENT)
+            sqlite3_bind_int64(statement, 2, Int64(trackId))
+
             let deleteResult = sqlite3_step(statement)
             if deleteResult != SQLITE_DONE {
                 let errorMessage = String(cString: sqlite3_errmsg(db))
                 throw PlaylistError.queryFailed(message: errorMessage)
             }
-            
-            let changed = Int(sqlite3_changes(db))
-            if changed == 0 {
-                await MainActor.run {
-                    self.syncInMemoryPlaylistRemove(playlistId: playlistId, absoluteTrackPath: absoluteTrackPath)
-                }
-                return ()
-            }
-            
+
             await MainActor.run {
-                self.syncInMemoryPlaylistRemove(playlistId: playlistId, absoluteTrackPath: absoluteTrackPath)
+                self.syncInMemoryPlaylistRemove(playlistId: playlistId, trackId: trackId)
             }
-            
-            print("Removed track (raw DB path: '\(rawToDelete)') from playlist '\(playlistId)'")
+
+            print("Removed track id \(trackId) from playlist '\(playlistId)'")
             return ()
         }
     }
-    
-    private func syncInMemoryPlaylistRemove(playlistId: String, absoluteTrackPath: String) {
+
+    private func syncInMemoryPlaylistRemove(playlistId: String, trackId: Int) {
         guard let index = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
-        var pl = playlists[index]
-        pl.trackPaths.removeAll { existing in
-            playlistRemovalPathsMatch(existing, absoluteTrackPath)
-        }
-        playlists[index] = pl
+        playlists[index].removeTrack(trackId)
     }
     
     func renamePlaylist(playlistId: String, newName: String) async throws {
@@ -728,226 +704,121 @@ class PlaylistService: ObservableObject {
                 throw PlaylistError.queryFailed(message: errorMessage)
             }
             
-            // Get all tracks from the original playlist
-            let tracksQuery = "SELECT \(self.columnPlaylistTracksTrackPath), \(self.columnPlaylistTracksSortOrder) FROM \(self.tablePlaylistTracks) WHERE \(self.columnPlaylistTracksPlaylistId) = ? ORDER BY \(self.columnPlaylistTracksSortOrder)"
-            var tracksStatement: OpaquePointer?
-            
-            let tracksResult = sqlite3_prepare_v2(db, tracksQuery, -1, &tracksStatement, nil)
-            defer { sqlite3_finalize(tracksStatement) }
-            
-            if tracksResult != SQLITE_OK {
+            let copyQuery = """
+                INSERT INTO \(self.tablePlaylistTracks)
+                (\(self.columnPlaylistTracksPlaylistId), \(self.columnPlaylistTracksTrackId), \(self.columnPlaylistTracksSortOrder))
+                SELECT ?, \(self.columnPlaylistTracksTrackId), \(self.columnPlaylistTracksSortOrder)
+                FROM \(self.tablePlaylistTracks)
+                WHERE \(self.columnPlaylistTracksPlaylistId) = ?
+            """
+            var copyStatement: OpaquePointer?
+            let copyResult = sqlite3_prepare_v2(db, copyQuery, -1, &copyStatement, nil)
+            defer { sqlite3_finalize(copyStatement) }
+
+            if copyResult != SQLITE_OK {
                 let errorMessage = String(cString: sqlite3_errmsg(db))
                 throw PlaylistError.queryFailed(message: errorMessage)
             }
-            
-            sqlite3_bind_text(tracksStatement, 1, (playlistId as NSString).utf8String, -1, nil)
-            
-            var trackPaths: [String] = []
-            while sqlite3_step(tracksStatement) == SQLITE_ROW {
-                if let trackPathPtr = sqlite3_column_text(tracksStatement, 0) {
-                    let trackPath = String(cString: trackPathPtr)
-                    trackPaths.append(trackPath)
-                }
+
+            sqlite3_bind_text(copyStatement, 1, newPlaylistId, -1, self.SQLITE_TRANSIENT)
+            sqlite3_bind_text(copyStatement, 2, playlistId, -1, self.SQLITE_TRANSIENT)
+
+            let copyStepResult = sqlite3_step(copyStatement)
+            if copyStepResult != SQLITE_DONE {
+                let errorMessage = String(cString: sqlite3_errmsg(db))
+                throw PlaylistError.queryFailed(message: errorMessage)
             }
-            
-            // Copy all tracks to the new playlist
-            for (index, trackPath) in trackPaths.enumerated() {
-                let copyQuery = """
-                    INSERT INTO \(self.tablePlaylistTracks) 
-                    (\(self.columnPlaylistTracksPlaylistId), \(self.columnPlaylistTracksTrackPath), \(self.columnPlaylistTracksSortOrder)) 
-                    VALUES (?, ?, ?)
-                """
-                var copyStatement: OpaquePointer?
-                
-                let copyResult = sqlite3_prepare_v2(db, copyQuery, -1, &copyStatement, nil)
-                defer { sqlite3_finalize(copyStatement) }
-                
-                if copyResult != SQLITE_OK {
-                    let errorMessage = String(cString: sqlite3_errmsg(db))
-                    throw PlaylistError.queryFailed(message: errorMessage)
-                }
-                
-                sqlite3_bind_text(copyStatement, 1, (newPlaylistId as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(copyStatement, 2, (trackPath as NSString).utf8String, -1, nil)
-                sqlite3_bind_int(copyStatement, 3, Int32(index))
-                
-                let copyStepResult = sqlite3_step(copyStatement)
-                if copyStepResult != SQLITE_DONE {
-                    let errorMessage = String(cString: sqlite3_errmsg(db))
-                    throw PlaylistError.queryFailed(message: errorMessage)
-                }
-            }
-            
-            // Create the new playlist object with the same folder ID as the original
-            let newPlaylist = Playlist(id: newPlaylistId, name: trimmedName, trackPaths: trackPaths, folderId: originalFolderId)
-            
-            // Update local playlists
+
+            let trackIds = try self.loadPlaylistTrackIdsSync(playlistId: newPlaylistId, db: db)
+            let newPlaylist = Playlist(id: newPlaylistId, name: trimmedName, trackIds: trackIds, folderId: originalFolderId)
+
             await MainActor.run {
                 self.playlists.append(newPlaylist)
                 self.playlists.sort { $0.name < $1.name }
             }
-            
-            print("Duplicated playlist '\(playlistId)' to '\(newPlaylistId)' with \(trackPaths.count) tracks")
+
+            print("Duplicated playlist '\(playlistId)' to '\(newPlaylistId)' with \(trackIds.count) tracks")
             return newPlaylist
         }
     }
-    
+
     func exportPlaylistFiles(playlistId: String, destinationURL: URL) async throws {
-        guard let activeCollection = activeCollectionDefinition else {
+        guard activeCollectionDefinition != nil,
+              let collectionService else {
             throw PlaylistError.noActiveCollection
         }
-        
+
         return try await withDatabaseQueue {
             let db = try self.getDatabaseConnection()
-            
-            // Get all tracks from the playlist
-            let tracksQuery = "SELECT \(self.columnPlaylistTracksTrackPath) FROM \(self.tablePlaylistTracks) WHERE \(self.columnPlaylistTracksPlaylistId) = ? ORDER BY \(self.columnPlaylistTracksSortOrder)"
-            var tracksStatement: OpaquePointer?
-            
-            let tracksResult = sqlite3_prepare_v2(db, tracksQuery, -1, &tracksStatement, nil)
-            defer { sqlite3_finalize(tracksStatement) }
-            
-            if tracksResult != SQLITE_OK {
-                let errorMessage = String(cString: sqlite3_errmsg(db))
-                throw PlaylistError.queryFailed(message: errorMessage)
-            }
-            
-            sqlite3_bind_text(tracksStatement, 1, (playlistId as NSString).utf8String, -1, nil)
-            
-            var trackPaths: [String] = []
-            while sqlite3_step(tracksStatement) == SQLITE_ROW {
-                if let trackPathPtr = sqlite3_column_text(tracksStatement, 0) {
-                    let trackPath = String(cString: trackPathPtr)
-                    trackPaths.append(trackPath)
-                }
-            }
-            
-            // Convert relative paths to absolute paths
+            let trackIds = try self.loadPlaylistTrackIdsSync(playlistId: playlistId, db: db)
+            let playlistTracks = collectionService.tracks(ids: trackIds)
+
             var absolutePaths: [String] = []
-            for trackPath in trackPaths {
-                let absolutePath = self.convertToAbsolutePath(trackPath, activeCollection: activeCollection)
-                if FileManager.default.fileExists(atPath: absolutePath) {
-                    absolutePaths.append(absolutePath)
+            for track in playlistTracks {
+                if FileManager.default.fileExists(atPath: track.path) {
+                    absolutePaths.append(track.path)
                 } else {
-                    print("Warning: File not found at path: \(absolutePath)")
+                    print("Warning: File not found at path: \(track.path)")
                 }
             }
-            
-            // Copy files to destination
+
             let fileManager = FileManager.default
             for absolutePath in absolutePaths {
                 let sourceURL = URL(fileURLWithPath: absolutePath)
                 let destinationFileURL = destinationURL.appendingPathComponent(sourceURL.lastPathComponent)
-                
+
                 do {
                     try fileManager.copyItem(at: sourceURL, to: destinationFileURL)
                     print("Copied file: \(sourceURL.lastPathComponent)")
                 } catch {
                     print("Error copying file \(sourceURL.lastPathComponent): \(error)")
-                    // Continue with other files even if one fails
                 }
             }
-            
+
             print("Exported \(absolutePaths.count) files to: \(destinationURL.path)")
         }
     }
-    
+
     func exportPlaylistCSV(playlistId: String, destinationURL: URL) async throws {
         guard let activeCollection = activeCollectionDefinition,
-              let collectionService = collectionService else {
+              let collectionService else {
             throw PlaylistError.noActiveCollection
         }
-        
+
         return try await withDatabaseQueue {
             let db = try self.getDatabaseConnection()
-            
-            // Get all tracks from the playlist
-            let tracksQuery = "SELECT \(self.columnPlaylistTracksTrackPath), \(self.columnPlaylistTracksSortOrder) FROM \(self.tablePlaylistTracks) WHERE \(self.columnPlaylistTracksPlaylistId) = ? ORDER BY \(self.columnPlaylistTracksSortOrder)"
-            var tracksStatement: OpaquePointer?
-            
-            let tracksResult = sqlite3_prepare_v2(db, tracksQuery, -1, &tracksStatement, nil)
-            defer { sqlite3_finalize(tracksStatement) }
-            
-            if tracksResult != SQLITE_OK {
-                let errorMessage = String(cString: sqlite3_errmsg(db))
-                throw PlaylistError.queryFailed(message: errorMessage)
-            }
-            
-            sqlite3_bind_text(tracksStatement, 1, (playlistId as NSString).utf8String, -1, nil)
-            
-            var trackPaths: [String] = []
-            while sqlite3_step(tracksStatement) == SQLITE_ROW {
-                if let trackPathPtr = sqlite3_column_text(tracksStatement, 0) {
-                    let trackPath = String(cString: trackPathPtr)
-                    trackPaths.append(trackPath)
-                }
-            }
-            
-            // Get tracks from the collection service using the paths
-            let allTracks = collectionService.tracks
-            var playlistTracks: [Track] = []
-            
-            for trackPath in trackPaths {
-                if let track = allTracks.first(where: { $0.path == trackPath }) {
-                    playlistTracks.append(track)
-                }
-            }
-            
+            let trackIds = try self.loadPlaylistTrackIdsSync(playlistId: playlistId, db: db)
+            let playlistTracks = collectionService.tracks(ids: trackIds)
+
             var csvContent = "Title,Artist,Album,Album Artist,Composer,Genre,Year,Track Number,Disc Number,BPM,Relative Path,Duration,Rating,Comment,Tags,Date Added\n"
-            
+
             for track in playlistTracks {
-                // Format duration as MM:SS
                 let durationMinutes = track.duration / 60000
                 let durationSeconds = (track.duration % 60000) / 1000
                 let formattedDuration = String(format: "%d:%02d", durationMinutes, durationSeconds)
-                
-                // Format date added
+
                 let dateFormatter = DateFormatter()
                 dateFormatter.dateStyle = .medium
                 dateFormatter.timeStyle = .short
                 let formattedDateAdded = dateFormatter.string(from: track.dateAdded)
-                
-                // Escape CSV values
+
                 let escapedTitle = track.title.replacingOccurrences(of: "\"", with: "\"\"")
                 let escapedArtist = track.artist.replacingOccurrences(of: "\"", with: "\"\"")
                 let escapedAlbum = track.album.replacingOccurrences(of: "\"", with: "\"\"")
                 let escapedAlbumArtist = (track.albumArtist ?? "").replacingOccurrences(of: "\"", with: "\"\"")
                 let escapedComposer = (track.composer ?? "").replacingOccurrences(of: "\"", with: "\"\"")
                 let escapedGenre = (track.genre ?? "").replacingOccurrences(of: "\"", with: "\"\"")
-                // Convert absolute path to relative path
                 let relativePath = self.convertToRelativePath(track.path, activeCollection: activeCollection)
                 let escapedTrackPath = relativePath.replacingOccurrences(of: "\"", with: "\"\"")
                 let escapedComment = track.comment.replacingOccurrences(of: "\"", with: "\"\"")
                 let escapedGeneralTags = track.generalTags.joined(separator: ", ").replacingOccurrences(of: "\"", with: "\"\"")
                 let escapedDateAdded = formattedDateAdded.replacingOccurrences(of: "\"", with: "\"\"")
-                
+
                 csvContent += "\"\(escapedTitle)\",\"\(escapedArtist)\",\"\(escapedAlbum)\",\"\(escapedAlbumArtist)\",\"\(escapedComposer)\",\"\(escapedGenre)\",\"\(track.year ?? 0)\",\"\(track.trackNumber ?? 0)\",\"\(track.discNumber ?? 0)\",\"\(track.bpm ?? 0)\",\"\(escapedTrackPath)\",\"\(formattedDuration)\",\"\(track.rating)\",\"\(escapedComment)\",\"\(escapedGeneralTags)\",\"\(escapedDateAdded)\"\n"
             }
-            
-            // Write CSV to file
+
             try csvContent.write(to: destinationURL, atomically: true, encoding: .utf8)
             print("Exported CSV to: \(destinationURL.path)")
-        }
-    }
-    
-    private func convertToAbsolutePath(_ relativePath: String, activeCollection: CollectionDefinition) -> String {
-        switch activeCollection.type {
-        case .shared:
-            if let rootPath = activeCollection.rootPath {
-                return (rootPath as NSString).appendingPathComponent(relativePath)
-            } else {
-                return relativePath
-            }
-        case .local:
-            // For local collections, the path might already be absolute
-            if relativePath.hasPrefix("/") {
-                return relativePath
-            } else {
-                // Try to resolve relative to database location
-                let dbURL = URL(fileURLWithPath: activeCollection.dbPath)
-                let dbDir = dbURL.deletingLastPathComponent()
-                return dbDir.appendingPathComponent(relativePath).path
-            }
         }
     }
     
@@ -1567,97 +1438,80 @@ class PlaylistService: ObservableObject {
     
     // MARK: - Folder as Playlist Support
     
-    /// Get all track paths from all playlists within a folder (recursively)
-    func getFolderTrackPaths(folderId: String) async throws -> [String] {
+    /// Get all track ids from all playlists within a folder (recursively)
+    func getFolderTrackIds(folderId: String) async throws -> [Int] {
         return try await withDatabaseQueue {
-            try self.getFolderTrackPathsSync(folderId: folderId)
+            try self.getFolderTrackIdsSync(folderId: folderId)
         }
     }
-    
-    /// Synchronous helper method to get folder track paths (used within database queue context)
-    private func getFolderTrackPathsSync(folderId: String) throws -> [String] {
+
+    private func getFolderTrackIdsSync(folderId: String) throws -> [Int] {
         print("🔍 Inside database queue for folder: \(folderId) on thread: \(Thread.current)")
         let db = try self.getDatabaseConnection()
-        
-        // Use a single recursive CTE query to get all track paths from the folder and its descendants
+
         let query = """
             WITH RECURSIVE folder_hierarchy AS (
-                -- Base case: start with the specified folder
                 SELECT \(self.columnPlaylistFoldersId) as folder_id
                 FROM \(self.tablePlaylistFolders)
                 WHERE \(self.columnPlaylistFoldersId) = ?
-                
+
                 UNION ALL
-                
-                -- Recursive case: get all child folders
+
                 SELECT f.\(self.columnPlaylistFoldersId) as folder_id
                 FROM \(self.tablePlaylistFolders) f
                 INNER JOIN folder_hierarchy fh ON f.\(self.columnPlaylistFoldersParentId) = fh.folder_id
             )
-            SELECT pt.\(self.columnPlaylistTracksTrackPath)
+            SELECT pt.\(self.columnPlaylistTracksTrackId)
             FROM \(self.tablePlaylistTracks) pt
             JOIN \(self.tablePlaylists) p ON pt.\(self.columnPlaylistTracksPlaylistId) = p.\(self.columnPlaylistsId)
             JOIN folder_hierarchy fh ON p.\(self.columnPlaylistsFolderId) = fh.folder_id
             ORDER BY pt.\(self.columnPlaylistTracksSortOrder)
         """
-        
+
         print("🔍 About to prepare statement for folder: \(folderId)")
         var statement: OpaquePointer?
         let result = sqlite3_prepare_v2(db, query, -1, &statement, nil)
         defer { sqlite3_finalize(statement) }
-        
+
         if result != SQLITE_OK {
             let errorMessage = String(cString: sqlite3_errmsg(db))
             print("❌ SQLite prepare failed: \(errorMessage)")
             throw PlaylistError.queryFailed(message: errorMessage)
         }
-        
+
         print("🔍 Statement prepared successfully for folder: \(folderId)")
-        sqlite3_bind_text(statement, 1, (folderId as NSString).utf8String, -1, nil)
-        
-        var trackPaths: [String] = []
+        sqlite3_bind_text(statement, 1, folderId, -1, self.SQLITE_TRANSIENT)
+
+        var trackIds: [Int] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            if let trackPathPtr = sqlite3_column_text(statement, 0) {
-                let trackPath = String(cString: trackPathPtr)
-                trackPaths.append(trackPath)
-            }
+            trackIds.append(Int(sqlite3_column_int64(statement, 0)))
         }
-        
-        print("🔍 Found \(trackPaths.count) tracks for folder: \(folderId)")
-        return trackPaths
+
+        print("🔍 Found \(trackIds.count) tracks for folder: \(folderId)")
+        return trackIds
     }
-    
+
     /// Get the total duration of all tracks in a folder
     func getFolderDuration(folderId: String) async throws -> TimeInterval {
-        let trackPaths = try await getFolderTrackPaths(folderId: folderId)
-        
-        // We need to get the duration from the collection service
-        guard let collectionService = collectionService else {
+        let trackIds = try await getFolderTrackIds(folderId: folderId)
+
+        guard let collectionService else {
             return 0
         }
-        
+
         var totalDuration: TimeInterval = 0
-        
-        for trackPath in trackPaths {
-            if let track = collectionService.tracks.first(where: { $0.path == trackPath }) {
-                totalDuration += Double(track.duration)
-            }
+        for track in collectionService.tracks(ids: trackIds) {
+            totalDuration += Double(track.duration)
         }
-        
+
         return totalDuration
     }
-    
-    /// Get a SelectableItem for a folder with computed track paths and duration
+
+    /// Get a SelectableItem for a folder with computed track ids and duration
     func getSelectableItem(for folder: PlaylistFolder) async throws -> SelectableItem {
-        let trackPaths = try await getFolderTrackPaths(folderId: folder.id)
-        let duration = try await getFolderDuration(folderId: folder.id)
-        
-        // Create a temporary folder with computed properties
-        var folderWithTracks = folder
-        // Note: We can't directly modify the trackPaths and duration properties
-        // since they're computed properties. The UI will need to use the service methods.
-        
-        return .folder(folderWithTracks)
+        _ = try await getFolderTrackIds(folderId: folder.id)
+        _ = try await getFolderDuration(folderId: folder.id)
+        return .folder(folder)
     }
     
     /// Get a SelectableItem for a playlist

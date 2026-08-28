@@ -3,15 +3,15 @@ import Foundation
 struct Playlist: Identifiable, Codable, Hashable {
     let id: String
     var name: String
-    var trackPaths: [String]
+    var trackIds: [Int]
     let dateCreated: Date
     var dateModified: Date
     var folderId: String? // nil for root level playlists
     
-    init(id: String = UUID().uuidString, name: String, trackPaths: [String] = [], folderId: String? = nil) {
+    init(id: String = UUID().uuidString, name: String, trackIds: [Int] = [], folderId: String? = nil) {
         self.id = id
+        self.trackIds = trackIds
         self.name = name
-        self.trackPaths = trackPaths
         self.dateCreated = Date()
         self.dateModified = Date()
         self.folderId = folderId
@@ -30,24 +30,24 @@ struct Playlist: Identifiable, Codable, Hashable {
         return String(format: "%d:%02d", minutes, seconds)
     }
     
-    mutating func addTrack(_ trackPath: String) {
-        if !trackPaths.contains(trackPath) {
-            trackPaths.append(trackPath)
+    mutating func addTrack(_ trackId: Int) {
+        if !trackIds.contains(trackId) {
+            trackIds.append(trackId)
             dateModified = Date()
         }
     }
     
-    mutating func removeTrack(_ trackPath: String) {
-        trackPaths.removeAll { $0 == trackPath }
+    mutating func removeTrack(_ trackId: Int) {
+        trackIds.removeAll { $0 == trackId }
         dateModified = Date()
     }
     
     mutating func moveTrack(from sourceIndex: Int, to destinationIndex: Int) {
-        guard sourceIndex >= 0 && sourceIndex < trackPaths.count,
-              destinationIndex >= 0 && destinationIndex < trackPaths.count else { return }
+        guard sourceIndex >= 0 && sourceIndex < trackIds.count,
+              destinationIndex >= 0 && destinationIndex < trackIds.count else { return }
         
-        let trackPath = trackPaths.remove(at: sourceIndex)
-        trackPaths.insert(trackPath, at: destinationIndex)
+        let trackId = trackIds.remove(at: sourceIndex)
+        trackIds.insert(trackId, at: destinationIndex)
         dateModified = Date()
     }
     
@@ -60,4 +60,3 @@ struct Playlist: Identifiable, Codable, Hashable {
         return lhs.id == rhs.id
     }
 }
-

@@ -13,6 +13,15 @@ enum CollectionType: String, Codable {
     case shared = "shared"
 }
 
+enum WaveformStatus: Int, Codable, Equatable {
+    /// Never analyzed — queue generation.
+    case missing = 0
+    /// Analyzed; file was missing (empty blob). Do not auto-retry.
+    case empty = 1
+    /// Samples exist in the `waveforms` table.
+    case ready = 2
+}
+
 // MARK: - TimeMarker
 struct TimeMarker: Codable, Identifiable, Equatable {
     let id = UUID()
@@ -64,7 +73,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
     let isUrl: Bool
     let duration: Int // milliseconds
     let timeMarkers: [TimeMarker]
-    let waveformData: [Double]?
+    let waveformStatus: WaveformStatus
     let rating: Int // 0-5 stars
     let comment: String
     let generalTags: [String]
@@ -95,7 +104,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
         isUrl: Bool,
         duration: Int,
         timeMarkers: [TimeMarker] = [],
-        waveformData: [Double]? = nil,
+        waveformStatus: WaveformStatus = .missing,
         rating: Int = 0,
         comment: String = "",
         generalTags: [String] = [],
@@ -116,7 +125,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
         self.isUrl = isUrl
         self.duration = duration
         self.timeMarkers = timeMarkers
-        self.waveformData = waveformData
+        self.waveformStatus = waveformStatus
         self.rating = rating
         self.comment = comment
         self.generalTags = generalTags
@@ -161,7 +170,8 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
     var bpmSortValue: Int { bpm ?? Int.min }
     var isUrlSortValue: Int { isUrl ? 1 : 0 }
     var timeMarkersCount: Int { timeMarkers.count }
-    var waveformPointCount: Int { waveformData?.count ?? 0 }
+    var waveformPointCount: Int { waveformStatus == .ready ? WaveformCodec.binCount : 0 }
+    var needsWaveformAnalysis: Bool { !isUrl && waveformStatus == .missing }
     var generalTagsText: String { generalTags.joined(separator: ", ") }
     var dateAddedSortValue: Int { Int(dateAdded.timeIntervalSince1970) }
     
@@ -232,7 +242,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
                 && lhs.rating == rhs.rating
                 && lhs.comment == rhs.comment
                 && lhs.generalTags == rhs.generalTags
-                && lhs.waveformPointCount == rhs.waveformPointCount
+                && lhs.waveformStatus == rhs.waveformStatus
         }
         // Otherwise, compare by key identity plus user-editable fields
         return lhs.path == rhs.path
@@ -249,7 +259,7 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
             && lhs.rating == rhs.rating
             && lhs.comment == rhs.comment
             && lhs.generalTags == rhs.generalTags
-            && lhs.waveformPointCount == rhs.waveformPointCount
+            && lhs.waveformStatus == rhs.waveformStatus
     }
     
     // MARK: - Update Helper
@@ -270,12 +280,16 @@ struct Track: Identifiable, Codable, Comparable, Equatable, Hashable {
             isUrl: self.isUrl,
             duration: self.duration,
             timeMarkers: self.timeMarkers,
-            waveformData: updates["waveformData"] as? [Double] ?? self.waveformData,
+            waveformStatus: updates["waveformStatus"] as? WaveformStatus ?? self.waveformStatus,
             rating: updates["rating"] as? Int ?? self.rating,
             comment: updates["comment"] as? String ?? self.comment,
             generalTags: updates["generalTags"] as? [String] ?? self.generalTags,
             dateAdded: self.dateAdded
         )
+    }
+
+    func withWaveformStatus(_ status: WaveformStatus) -> Track {
+        withUpdates(["waveformStatus": status as Any])
     }
 }
 

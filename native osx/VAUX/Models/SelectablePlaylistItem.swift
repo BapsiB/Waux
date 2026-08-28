@@ -4,7 +4,7 @@ import Foundation
 protocol SelectablePlaylistItem: Identifiable, Hashable {
     var id: String { get }
     var name: String { get }
-    var trackPaths: [String] { get }
+    var trackIds: [Int] { get }
     var duration: TimeInterval { get }
     var formattedDuration: String { get }
     var dateCreated: Date { get }
@@ -19,7 +19,7 @@ extension Playlist: SelectablePlaylistItem {
 
 // Extension to make PlaylistFolder conform to SelectablePlaylistItem
 extension PlaylistFolder: SelectablePlaylistItem {
-    var trackPaths: [String] {
+    var trackIds: [Int] {
         // This will be computed by the PlaylistService based on all playlists in this folder
         // For now, return empty array - the service will provide the actual implementation
         return []

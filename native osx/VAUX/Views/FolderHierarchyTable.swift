@@ -221,7 +221,7 @@ struct FolderHierarchyTable: View {
                     collectionService: collectionService,
                     slot: waveformServiceHolder.waveformStore.slot(
                         for: track.id ?? -1,
-                        seeding: track.waveformData
+                        loadIfNeeded: track.waveformStatus == .ready
                     )
                 )
                 .id("waveform-\(track.id ?? -1)")
