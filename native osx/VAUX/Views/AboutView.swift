@@ -5,10 +5,10 @@ struct AboutView: View {
     
     var body: some View {
         VStack(spacing: 24) {
-            // App Icon
-            Image(systemName: "music.note")
-                .font(.system(size: 64))
-                .foregroundColor(.blue)
+            Image("Logo")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 96, height: 96)
             
             // App Name and Version
             VStack(spacing: 8) {
