@@ -40,7 +40,7 @@ struct ContentView: View {
                         // Sidebar
                         PlaylistSidebar(
                             playlistService: playlistService,
-                            selectedItem: $selectedItem
+                            selectedItem: selectedItemBinding
                         )
                         
                         // Main area
@@ -52,7 +52,7 @@ struct ContentView: View {
                             playlistTracks: playlistTracks,
                             isLoadingFolderTracks: isLoadingFolderTracks,
                             showingFolderPicker: $showingFolderPicker,
-                            selectedItem: $selectedItem,
+                            selectedItem: selectedItemBinding,
                             isImportingNewFolder: $isImportingNewFolder,
                             initialLoadComplete: initialLoadComplete,
                             onPlaylistTracksChanged: {
@@ -107,9 +107,6 @@ struct ContentView: View {
             Button("OK") { }
         } message: {
             Text(errorMessage)
-        }
-        .onChange(of: selectedItem) { newItem in
-            handleSelectedItemChange(newItem)
         }
         .onChange(of: menuActionState.shouldOpenFolder) { shouldOpen in
             if shouldOpen {
@@ -278,6 +275,19 @@ struct ContentView: View {
         print("No last folder to load or failed to load last folder")
     }
     
+    /// Keep `playlistTracks` in the same state transaction as `selectedItem`.
+    /// Updating them in `onChange` lets SwiftUI render one frame with a playlist
+    /// selected and an empty/stale filter, which rebuilds the full library table.
+    private var selectedItemBinding: Binding<SelectableItem?> {
+        Binding(
+            get: { selectedItem },
+            set: { newValue in
+                selectedItem = newValue
+                handleSelectedItemChange(newValue)
+            }
+        )
+    }
+
     private func handleSelectedItemChange(_ newItem: SelectableItem?) {
         guard let item = newItem else {
             playlistTracks = []

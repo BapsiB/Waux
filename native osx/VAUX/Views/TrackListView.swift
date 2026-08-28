@@ -187,6 +187,10 @@ struct TrackTable: View {
     @ViewBuilder
     private func waveformTableCell(for displayItem: TrackDisplayItem) -> some View {
         let p = WaveformColumn.playbackParameters(track: displayItem.track, audioService: audioService)
+        let slot = waveformServiceHolder.waveformStore.slot(
+            for: displayItem.track.id ?? -1,
+            loadIfNeeded: displayItem.track.waveformStatus == .ready
+        )
         WaveformColumn(
             track: displayItem.track,
             playbackProgress: p.progress,
@@ -195,10 +199,7 @@ struct TrackTable: View {
             audioService: audioService,
             waveformServiceHolder: waveformServiceHolder,
             collectionService: collectionService,
-            slot: waveformServiceHolder.waveformStore.slot(
-                for: displayItem.track.id ?? -1,
-                loadIfNeeded: displayItem.track.waveformStatus == .ready
-            )
+            slot: slot
         )
         .id("waveform-\(displayItem.track.id ?? -1)")
         .help(tooltipForDisplayItem(displayItem))
@@ -844,16 +845,28 @@ struct TrackListView: View {
     }
     
     var filteredDisplayItems: [TrackDisplayItem] {
-        let tracks = filteredTracks
-        let displayItems = trackDisplayService.convertTracksToDisplayItems(tracks)
-        let searchFilteredItems = searchService.filterDisplayItems(displayItems)
+        buildDisplayItems(from: filteredTracks)
+    }
+
+    private func buildDisplayItems(from tracks: [Track]) -> [TrackDisplayItem] {
+        let converted = trackDisplayService.convertTracksToDisplayItems(tracks)
+        let searchFilteredItems = searchService.filterDisplayItems(converted)
         let sortedItems = sortGroupAware(searchFilteredItems, using: sortOrder)
         return trackDisplayService.filterCollapsedGroups(sortedItems)
     }
     
-    private func updateDisplayItems() {
-        displayItems = filteredDisplayItems
-        lastFilteredTrackIds = filteredTrackIds
+    private func updateDisplayItems(trackIds: [Int]? = nil) {
+        let tracks: [Track]
+        let ids: [Int]
+        if let trackIds {
+            tracks = collectionService.tracks(ids: trackIds)
+            ids = trackIds
+        } else {
+            tracks = filteredTracks
+            ids = filteredTrackIds
+        }
+        displayItems = buildDisplayItems(from: tracks)
+        lastFilteredTrackIds = ids
     }
 
     /// Prefer cached rows when the ID list is unchanged so waveform/playback
@@ -1112,7 +1125,10 @@ struct TrackListView: View {
             if newIds == lastFilteredTrackIds {
                 return
             }
-            updateDisplayItems()
+            // Use the published IDs, not `tracksFilter` on this view value.
+            // SwiftUI can fire this closure from a stale struct that still
+            // has the previous filter (the full library), which rebuilt 7k rows.
+            updateDisplayItems(trackIds: newIds)
             
             // Preserve selection for display items that still exist
             let newDisplayItemIds: Set<String> = Set(displayItems.map { $0.id })

@@ -276,8 +276,6 @@ struct WaveformView: View {
                         context.draw(text, at: textPoint, anchor: .leading)
                     }
                 }
-
-
             }
             .contentShape(Rectangle()) // Make the entire area tappable
             .gesture(
@@ -488,53 +486,55 @@ struct WaveformColumn: View {
 
     @ViewBuilder
     private func columnBodyContent() -> some View {
-        Group {
-            if let data = resolvedWaveformData, !data.isEmpty {
-                WaveformListCell(
-                    track: track,
-                    waveformData: data,
-                    playbackProgress: playbackProgress,
-                    isPlayingThisTrack: isPlayingThisTrack,
-                    highDetailWaveform: highDetailWaveform,
-                    audioService: audioService
-                )
-                .equatable()
-            } else if track.waveformStatus == .empty || resolvedWaveformData?.isEmpty == true {
-                if emptyWaveformFileExists() {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Analyzing…")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .onAppear {
-                        waveformServiceHolder.ensure(collectionService: collectionService)
-                        waveformServiceHolder.service?.analyzeIfMissing(track)
-                    }
-                } else {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .foregroundColor(.orange)
-                        Text("File missing")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                }
-            } else {
+        if let data = resolvedWaveformData, !data.isEmpty {
+            WaveformListCell(
+                track: track,
+                waveformData: data,
+                playbackProgress: playbackProgress,
+                isPlayingThisTrack: isPlayingThisTrack,
+                highDetailWaveform: highDetailWaveform,
+                audioService: audioService
+            )
+            .equatable()
+        } else if track.waveformStatus == .empty || resolvedWaveformData?.isEmpty == true {
+            if emptyWaveformFileExists() {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text("Analyzing…")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                .onAppear {
+                    waveformServiceHolder.ensure(collectionService: collectionService)
+                    waveformServiceHolder.service?.analyzeIfMissing(track)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundColor(.orange)
+                    Text("File missing")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Analyzing…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
     }
 
+    /// Cheap existence check only. Do not call `resolveTrackPathForWaveform` from
+    /// the view body — that can recursively search the library on the main thread.
     private func emptyWaveformFileExists() -> Bool {
-        let resolvedPath = collectionService.resolveTrackPathForWaveform(track)
-        let url = URL(fileURLWithPath: resolvedPath)
-        return FileManager.default.fileExists(atPath: url.path)
+        let path = track.path
+        if path.hasPrefix("/") {
+            return FileManager.default.fileExists(atPath: path)
+        }
+        return true
     }
 }
 
