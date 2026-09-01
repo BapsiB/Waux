@@ -760,7 +760,10 @@ struct TrackTable: View {
 
 struct TrackListView: View {
     @ObservedObject var collectionService: CollectionService
-    @ObservedObject var audioService: AudioService
+    /// Not observed on purpose: this body never reads playback state, and observing it
+    /// would re-evaluate the whole view (including `filteredTrackIds`) on every playback
+    /// progress tick. `TrackTable` holds its own `@ObservedObject` reference for the UI.
+    let audioService: AudioService
     let tracksFilter: [Track]? // If provided, only show these tracks; otherwise show all tracks
     @ObservedObject var searchService: SearchService
     @ObservedObject var playlistService: PlaylistService
@@ -867,13 +870,18 @@ struct TrackListView: View {
         }
         displayItems = buildDisplayItems(from: tracks)
         lastFilteredTrackIds = ids
+        // Warm the waveform cache for every analyzed track in the list before
+        // its row scrolls into view (bulk-loaded in chunks by the store).
+        waveformServiceHolder.waveformStore.prewarm(
+            ids: tracks.filter { $0.waveformStatus == .ready }.compactMap(\.id)
+        )
     }
 
     /// Prefer cached rows when the ID list is unchanged so waveform/playback
     /// redraws do not regroup. When the filter changes, compute immediately so
     /// the table does not paint one frame of the previous playlist.
-    private var resolvedDisplayItems: [TrackDisplayItem] {
-        if filteredTrackIds == lastFilteredTrackIds {
+    private func resolvedDisplayItems(trackIds: [Int]) -> [TrackDisplayItem] {
+        if trackIds == lastFilteredTrackIds {
             return displayItems
         }
         return filteredDisplayItems
@@ -1002,7 +1010,11 @@ struct TrackListView: View {
     }
     
     var body: some View {
-        let items = resolvedDisplayItems
+        // Compute once per body evaluation; `resolvedDisplayItems` and the
+        // `onChange` below would otherwise each run the (potentially full)
+        // search filter over the library.
+        let trackIds = filteredTrackIds
+        let items = resolvedDisplayItems(trackIds: trackIds)
         VStack {
             TrackTable(
                 displayItems: items,
@@ -1121,7 +1133,7 @@ struct TrackListView: View {
                 saveVisibleColumns()
             }
         }
-        .onChange(of: filteredTrackIds) { newIds in
+        .onChange(of: trackIds) { newIds in
             if newIds == lastFilteredTrackIds {
                 return
             }

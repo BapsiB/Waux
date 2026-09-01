@@ -14,9 +14,14 @@ final class TrackWaveformSlot: ObservableObject {
 
 final class WaveformDataStore {
     private var slots: [Int: TrackWaveformSlot] = [:]
+    /// Rows enqueued because they became visible; always served before bulk prewarm loads.
+    private var priorityIds: Set<Int> = []
+    /// Bulk prewarm loads, processed in small chunks so scrolling stays responsive.
     private var queuedIds: Set<Int> = []
     private var resolvedIds: Set<Int> = []
     private var flushTask: Task<Void, Never>?
+    private static let chunkSize = 400
+    private static let bulkChunkPauseNanos: UInt64 = 8_000_000
     weak var collectionService: CollectionService?
 
     func slot(for id: Int, loadIfNeeded: Bool = true) -> TrackWaveformSlot {
@@ -32,9 +37,24 @@ final class WaveformDataStore {
         return slot
     }
 
+    /// Schedules background loads for the given ids so rows are populated before
+    /// they scroll into view. Loads requested via `slot(for:)` (visible rows)
+    /// keep priority over this bulk queue.
+    func prewarm(ids: [Int]) {
+        guard collectionService != nil else { return }
+        var pending: Set<Int> = []
+        for id in ids where id >= 0 && !resolvedIds.contains(id) && !priorityIds.contains(id) {
+            pending.insert(id)
+        }
+        guard !pending.isEmpty else { return }
+        queuedIds.formUnion(pending)
+        scheduleFlush()
+    }
+
     func apply(trackId: Int, data: [Double]?) {
         resolvedIds.insert(trackId)
         queuedIds.remove(trackId)
+        priorityIds.remove(trackId)
         if let existing = slots[trackId] {
             existing.data = data
         } else {
@@ -46,6 +66,8 @@ final class WaveformDataStore {
 
     func invalidate(trackId: Int) {
         resolvedIds.remove(trackId)
+        priorityIds.remove(trackId)
+        queuedIds.remove(trackId)
         slots[trackId]?.data = nil
     }
 
@@ -53,6 +75,7 @@ final class WaveformDataStore {
         flushTask?.cancel()
         flushTask = nil
         resolvedIds.removeAll()
+        priorityIds.removeAll()
         queuedIds.removeAll()
         for slot in slots.values {
             slot.data = nil
@@ -60,8 +83,9 @@ final class WaveformDataStore {
     }
 
     private func enqueueLoad(_ id: Int) {
-        guard id >= 0, !resolvedIds.contains(id) else { return }
-        queuedIds.insert(id)
+        guard id >= 0, collectionService != nil, !resolvedIds.contains(id), !priorityIds.contains(id) else { return }
+        queuedIds.remove(id)
+        priorityIds.insert(id)
         scheduleFlush()
     }
 
@@ -77,16 +101,40 @@ final class WaveformDataStore {
 
     @MainActor
     private func flush() async {
-        guard let collectionService else { return }
-        let ids = queuedIds.filter { !resolvedIds.contains($0) }
-        queuedIds.removeAll()
-        guard !ids.isEmpty else { return }
-        let loaded = await collectionService.loadWaveformBins(ids: Array(ids))
-        for id in ids {
-            resolvedIds.insert(id)
-            if let bins = loaded[id] {
-                apply(trackId: id, data: bins)
+        while !Task.isCancelled {
+            guard let collectionService else { return }
+
+            // Serve visible rows first.
+            let priority = Array(priorityIds.prefix(Self.chunkSize))
+            if !priority.isEmpty {
+                for id in priority {
+                    priorityIds.remove(id)
+                    resolvedIds.insert(id)
+                }
+                let loaded = await collectionService.loadWaveformBins(ids: priority)
+                for id in priority {
+                    if let bins = loaded[id] {
+                        apply(trackId: id, data: bins)
+                    }
+                }
+                continue
             }
+
+            // Then drain the bulk prewarm queue in chunks, yielding between
+            // chunks so the main thread (scrolling, playback) stays responsive.
+            let chunk = Array(queuedIds.prefix(Self.chunkSize))
+            for id in chunk {
+                queuedIds.remove(id)
+                resolvedIds.insert(id)
+            }
+            guard !chunk.isEmpty else { return }
+            let loaded = await collectionService.loadWaveformBins(ids: chunk)
+            for id in chunk {
+                if let bins = loaded[id] {
+                    apply(trackId: id, data: bins)
+                }
+            }
+            try? await Task.sleep(nanoseconds: Self.bulkChunkPauseNanos)
         }
     }
 }
@@ -517,6 +565,12 @@ struct WaveformColumn: View {
                         .foregroundColor(.orange)
                 }
             }
+        } else if track.waveformStatus == .ready {
+            // The waveform exists (status `.ready`) but the slot is still being
+            // populated from the database after the row appeared. Render a
+            // quiet placeholder instead of an "Analyzing…" spinner so fast
+            // scrolling does not flash the label on every newly visible row.
+            Color.clear
         } else {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
